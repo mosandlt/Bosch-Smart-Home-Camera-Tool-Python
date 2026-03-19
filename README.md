@@ -46,9 +46,11 @@ of Bosch's software was distributed. Only network protocol observations were use
 | Feature | Command |
 |---------|---------|
 | Camera status (ONLINE / OFFLINE) | `status` |
+| Full camera info + live stream URLs | `info` |
 | Latest event snapshot (motion-triggered JPEG) | `snapshot` |
 | Live snapshot — current image, ~1.5 s | `liveshot` |
-| Live video stream in ffplay window | `live` |
+| **Live stream — 30fps H.264 + AAC audio** | `live` |
+| Live stream in VLC | `live --vlc` |
 | Download all events (JPEG + MP4) | `download` |
 | Recent event list | `events` |
 | Automatic token via browser login | `get_token.py` |
@@ -93,13 +95,16 @@ Run without arguments to get the menu:
 ╚══════════════════════════════════════════════════════════╝
 
   1)  Camera status (ONLINE / OFFLINE)
-  2)  Latest event snapshot — Outdoor
-  3)  Latest event snapshot — Indoor
-  4)  Latest event snapshot — ALL cameras
-  5)  Live snapshot — Outdoor  (remote/local)
-  6)  Live snapshot — Indoor  (remote/local)
-  7)  Live stream — Outdoor (ffplay video window)
-  8)  Live stream — Indoor (ffplay video window)
+  2)  Camera info (full details + stream URLs)
+  3)  Latest event snapshot — Outdoor
+  4)  Latest event snapshot — Indoor
+  5)  Latest event snapshot — ALL cameras
+  6)  Live snapshot — Outdoor  (remote/local)
+  7)  Live snapshot — Indoor  (remote/local)
+  8)  Live stream — Outdoor (ffplay, audio+video)
+  9)  Live stream — Indoor (ffplay, audio+video)
+  10) Live stream — Outdoor (VLC, audio+video)
+  11) Live stream — Indoor (VLC, audio+video)
   ...
   0)  Exit
 ```
@@ -109,16 +114,18 @@ Press a number, the command runs, then press Enter to return to the menu.
 ### 3. CLI usage
 
 ```bash
-# Status
+# Status & Info
 python3 bosch_camera.py status
+python3 bosch_camera.py info               # full details + live stream URLs
 
 # Snapshots
 python3 bosch_camera.py snapshot Outdoor          # latest motion-triggered JPEG
 python3 bosch_camera.py liveshot Outdoor          # current live image (~1.5s)
 python3 bosch_camera.py snapshot --live           # all cameras, live
 
-# Live video (ffplay window, ~1 fps MJPEG)
-python3 bosch_camera.py live Outdoor
+# Live stream — 30fps H.264 + AAC audio
+python3 bosch_camera.py live Outdoor              # opens in ffplay
+python3 bosch_camera.py live Outdoor --vlc        # opens in VLC
 
 # Download events
 python3 bosch_camera.py download                  # all cameras
@@ -293,24 +300,29 @@ cloud is unreachable.
 
 ---
 
-### Live Video Stream
+### Live Video Stream — 30fps + Audio
 
-Standard RTSP players (VLC, ffplay) **cannot** open the `rtsp://` URL from
-the proxy — the camera uses a proprietary RTSP-over-HTTPS tunnel that
-requires the Bosch app's custom protocol stack.
+**Key discovery:** The proxy exposes two ports:
+- Port `42090` — HTTP only (`snap.jpg`, video-only ~1fps fallback)
+- Port `443` — **RTSP/1.0 over TLS** (`rtsps://`) — full 30fps H.264 + AAC audio ✅
 
-The tool works around this by polling `snap.jpg` and serving it as MJPEG:
+URL from `PUT /connection REMOTE` → `urls[0]` = `proxy-NN:42090/{hash}`:
+replace port `42090` → `443`, use `rtsps://` scheme.
 
-```
-1. PUT /connection REMOTE → get proxy snap URL
-2. Start Python HTTP server on localhost:PORT
-3. Background thread fetches snap.jpg every 1 second
-4. HTTP server serves frames as multipart/x-mixed-replace (MJPEG)
-5. ffplay opens http://localhost:PORT → displays live video window
-6. Press Q in ffplay to stop
+**Default: ffplay** (opened in a window, `live` command):
+```bash
+ffplay -rtsp_transport tcp -tls_verify 0 \
+  "rtsps://proxy-NN.live.cbs.boschsecurity.com:443/{hash}/rtsp_tunnel?inst=1&enableaudio=1&fmtp=1&maxSessionDuration=60"
 ```
 
-This gives ~1 fps live view at full 1920×1080 resolution.
+**VLC option** (`live --vlc`): VLC can't skip TLS cert verification, so the tool pipes via ffmpeg:
+```
+ffmpeg (pulls rtsps:// with -tls_verify 0) → mpegts stdout → VLC stdin (-)
+```
+
+Stream specs: **H.264 Main 1920×1080 30fps + AAC-LC 16kHz mono ~48kbps**
+
+No auth needed — the session hash is the credential. Session lasts ~60s.
 
 ---
 
@@ -398,14 +410,22 @@ SSL:       Use verify=False — Bosch uses a private root CA not in the system s
 ### Live Proxy Endpoints (after PUT /connection)
 
 ```
+# Port 42090 — HTTP only
 https://proxy-NN.live.cbs.boschsecurity.com:42090/{hash}/snap.jpg
   → Current camera image (1920×1080 JPEG, no auth needed)
 
 https://proxy-NN.live.cbs.boschsecurity.com:42090/{hash}/snap.jpg?JpegSize=1206
   → Smaller image (1206px wide)
 
-rtsp://proxy-NN.live.cbs.boschsecurity.com:42090/{hash}/rtsp_tunnel?inst=1&enableaudio=1&fmtp=1&maxSessionDuration=60
-  → RTSP stream (proprietary tunnel, not openable with standard players)
+# Port 443 — RTSP/1.0 over TLS  ✅ WORKING
+rtsps://proxy-NN.live.cbs.boschsecurity.com:443/{hash}/rtsp_tunnel?inst=1&enableaudio=1&fmtp=1&maxSessionDuration=60
+  → Full 30fps H.264 1920×1080 + AAC 16kHz audio
+  → Open with: ffplay -rtsp_transport tcp -tls_verify 0 -i "rtsps://..."
+  → Or: ffmpeg -rtsp_transport tcp -tls_verify 0 -i "rtsps://..." -c copy out.mkv
+
+# Port 42090 — RTSP tunnel (proprietary, NOT openable with standard players)
+rtsp://proxy-NN.live.cbs.boschsecurity.com:42090/{hash}/rtsp_tunnel?...
+  → Silently drops all connections
 ```
 
 ---
@@ -508,14 +528,12 @@ tool/
 
 ## Known Limitations
 
-- **Live video is ~1 fps** — the `snap.jpg` polling approach is a workaround
-  for the proprietary RTSP tunnel. True video streaming would require
-  reverse-engineering the Bosch app's RTSP-over-HTTPS protocol.
 - **Proxy session = 60 s** — after 60 seconds the proxy hash expires and
   the live stream stops. The `live` command opens a new session each time.
-- **No audio** — the snap.jpg approach is video only.
 - **Cloud dependency** — everything goes through `residential.cbs.boschsecurity.com`.
   There is no documented local API on the SHC for camera images.
+- **VLC needs ffmpeg** — the `live --vlc` option requires ffmpeg to proxy the stream,
+  because VLC cannot skip TLS certificate verification for `rtsps://`.
 
 ---
 
