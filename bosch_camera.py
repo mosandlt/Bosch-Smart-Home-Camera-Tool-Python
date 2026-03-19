@@ -872,21 +872,68 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
         print(f"\n  ⏹️   Live view stopped.")
 
 
-def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "") -> None:
+def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "", use_vlc: bool = False) -> None:
     """
     Open live audio+video stream via rtsps:// (RTSP over TLS on port 443).
-    Uses VLC on macOS. Falls back to snap.jpg MJPEG loop if VLC is unavailable.
+    Uses ffplay by default. VLC does not support Bosch's self-signed TLS cert.
+    Falls back to snap.jpg MJPEG loop if no player is available.
+    """
+    ffplay = shutil.which("ffplay") or "/opt/homebrew/bin/ffplay"
+    mpv    = shutil.which("mpv")
 
-    Discovery: the cloud proxy speaks real RTSP/1.0 over TLS on port 443.
-    Port 42090 (from the API response) only serves HTTP snap.jpg and silently
-    drops all RTSP connections. Replace port 42090 → 443 and use rtsps://.
+def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "", use_vlc: bool = False) -> None:
+    """
+    Open live audio+video stream via rtsps:// (RTSP over TLS on port 443).
+    use_vlc=True opens in VLC (macOS only, uses osascript to bring window to front).
+    Default uses ffplay. Falls back to snap.jpg MJPEG loop if no player available.
     """
     ffplay = shutil.which("ffplay") or "/opt/homebrew/bin/ffplay"
     mpv    = shutil.which("mpv")
     vlc    = "/Applications/VLC.app/Contents/MacOS/VLC"
 
-    if ffplay and os.path.exists(ffplay):
-        # ffplay handles rtsps:// fine from subprocess (unlike MJPEG which needs a window session)
+    if use_vlc and os.path.exists(vlc):
+        # VLC can't skip TLS verification for rtsps://, so proxy via ffmpeg:
+        # ffmpeg pulls rtsps:// and re-muxes to MPEG-TS over HTTP on localhost
+        ffmpeg = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
+        if not ffmpeg or not os.path.exists(ffmpeg):
+            print("  ⚠️   ffmpeg not found — needed to proxy stream for VLC. Install: brew install ffmpeg")
+            return
+        import socket as _socket
+        with _socket.socket() as _s:
+            _s.bind(("127.0.0.1", 0))
+            http_port = _s.getsockname()[1]
+        local_url = f"http://127.0.0.1:{http_port}/live"
+        ffmpeg_cmd = [
+            ffmpeg, "-loglevel", "warning",
+            "-rtsp_transport", "tcp", "-tls_verify", "0",
+            "-i", rtsps_url,
+            "-c", "copy", "-f", "mpegts",
+            f"http://127.0.0.1:{http_port}/live",
+        ]
+        # ffmpeg can't serve HTTP — use pipe to VLC's stdin instead
+        # Pipe: ffmpeg → stdout (mpegts) → VLC stdin
+        ffmpeg_pipe = [
+            ffmpeg, "-loglevel", "warning",
+            "-rtsp_transport", "tcp", "-tls_verify", "0",
+            "-i", rtsps_url,
+            "-c", "copy", "-f", "mpegts", "pipe:1",
+        ]
+        print(f"  ▶️   Launching VLC via ffmpeg pipe (audio+video)...")
+        proxy = subprocess.Popen(ffmpeg_pipe, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        proc  = subprocess.Popen([vlc, "-"], stdin=proxy.stdout, stderr=subprocess.DEVNULL)
+        proxy.stdout.close()
+        time.sleep(1.5)
+        subprocess.Popen(["osascript", "-e", 'tell application "VLC" to activate'],
+                         stderr=subprocess.DEVNULL)
+        try:
+            proc.wait()
+        except KeyboardInterrupt:
+            proc.kill()
+        finally:
+            proxy.kill()
+            print(f"\n  ⏹️   Live view stopped.")
+        return
+    elif ffplay and os.path.exists(ffplay):
         cmd = [ffplay,
                "-rtsp_transport", "tcp",
                "-tls_verify", "0",
@@ -900,13 +947,9 @@ def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "
                "--rtsp-tls-verification=no", rtsps_url]
         print(f"  ▶️   Launching mpv (audio+video): {rtsps_url}")
         proc = subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
-    elif os.path.exists(vlc):
-        # VLC via open -a — TLS verification may block self-signed certs
-        cmd = ["open", "-a", "VLC", "--args", rtsps_url]
-        print(f"  ▶️   Launching VLC (audio+video): {rtsps_url}")
-        proc = subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
     else:
-        print("  ⚠️   No VLC or mpv found — falling back to snap.jpg MJPEG (video only).")
+        print("  ⚠️   No player found (ffplay/mpv) — falling back to snap.jpg MJPEG (video only).")
+        print("      Install with: brew install ffmpeg")
         if fallback_snap_url:
             _live_snap_loop(fallback_snap_url, cam_name)
         return
@@ -990,7 +1033,7 @@ def cmd_live(cfg: dict, args) -> None:
                     f"/rtsp_tunnel?inst=1&enableaudio=1&fmtp=1&maxSessionDuration=60"
                 )
                 print(f"  📡  RTSPS URL: {rtsps_url}")
-                _open_rtsps_stream(rtsps_url, name, proxy_url)
+                _open_rtsps_stream(rtsps_url, name, proxy_url, use_vlc=getattr(args, "vlc", False))
             else:
                 print("  ⚠️   No URLs in response.")
         else:
@@ -1029,6 +1072,93 @@ def cmd_config(cfg: dict, args) -> None:
     print(f"\n  Token age: {check_token_age(cfg)}")
 
 
+def cmd_info(cfg: dict, args) -> None:
+    """Show full camera information from the API."""
+    token   = get_token(cfg)
+    session = make_session(token)
+
+    r = session.get(f"{CLOUD_API}/v11/video_inputs", timeout=15)
+    if r.status_code == 401:
+        print("  ❌  Token expired.")
+        return
+    r.raise_for_status()
+    cameras = r.json()
+
+    print(f"\n── Camera Info ──────────────────────────────────────────────")
+    print(f"   Token age: {check_token_age(cfg)}\n")
+
+    for cam in cameras:
+        name   = cam.get("title", cam.get("id"))
+        status = cam.get("connectionStatus", "?")
+        icon   = "🟢" if status == "ONLINE" else "🔴"
+        model  = cam.get("hardwareVersion", "?")
+        fw     = cam.get("firmwareVersion", "?")
+        mac    = cam.get("macAddress", "?")
+        priv   = cam.get("privacyMode", "?")
+        rec    = "✅ ON" if cam.get("recordingOn") else "❌ OFF"
+        unread = cam.get("numberOfUnreadEvents", 0)
+        tz     = cam.get("timeZone", "?")
+        alarm  = cam.get("alarmType") or "NONE"
+        notif  = cam.get("notificationsEnabledStatus", "?")
+
+        print(f"  {icon}  {name}")
+        print(f"      ID:            {cam.get('id')}")
+        print(f"      Model:         {model}   FW: {fw}")
+        print(f"      MAC:           {mac}")
+        print(f"      Status:        {status}")
+        print(f"      Privacy mode:  {priv}")
+        print(f"      Recording:     {rec}")
+        print(f"      Unread events: {unread}")
+        print(f"      Timezone:      {tz}")
+        print(f"      Alarm:         {alarm}")
+        print(f"      Notifications: {notif}")
+
+        notifs = cam.get("notifications", {})
+        notif_parts = [k for k, v in notifs.items() if v]
+        if notif_parts:
+            print(f"      Notif. types:  {', '.join(notif_parts)}")
+
+        fs = cam.get("featureSupport", {})
+        print(f"      Features:      light={fs.get('light')}, sound={fs.get('sound')}, "
+              f"viewAngle={fs.get('viewingAngle')}°, panLimit={fs.get('panLimit')}°")
+
+        fst = cam.get("featureStatus", {})
+        print(f"      Light sched.:  {fst.get('scheduleStatus')}  "
+              f"on={fst.get('generalLightOnTime')} off={fst.get('generalLightOffTime')}")
+        print(f"      Light on motion: {fst.get('lightOnMotion')}  "
+              f"follow-up={fst.get('lightOnMotionFollowUpTimeSeconds')}s")
+        print(f"      Sound recording: {cam.get('soundIsOnForRecording')}")
+
+        # ── Streaming URLs (live connection) ──────────────────────────────
+        cam_id_local = cam.get("id", "")
+        print(f"      Fetching stream URLs...")
+        try:
+            sr = session.put(
+                f"{CLOUD_API}/v11/video_inputs/{cam_id_local}/connection",
+                json={"type": "REMOTE"},
+                headers={"Content-Type": "application/json"},
+                timeout=15,
+            )
+            if sr.status_code == 200:
+                sd = sr.json()
+                urls = sd.get("urls", [])
+                if urls:
+                    u = urls[0]
+                    proxy_host = u.split(":")[0]
+                    hash_path  = u.split("/", 1)[1]
+                    snap_url   = sd.get("imageUrlScheme", "https://{url}/snap.jpg").replace("{url}", u)
+                    rtsps_url  = (f"rtsps://{proxy_host}:443/{hash_path}"
+                                  f"/rtsp_tunnel?inst=1&enableaudio=1&fmtp=1&maxSessionDuration=60")
+                    print(f"      Snap URL:      {snap_url}")
+                    print(f"      RTSPS URL:     {rtsps_url}")
+                    print(f"      Stream:        H.264 1920×1080 30fps + AAC 16kHz (session ~60s)")
+            else:
+                print(f"      Stream URLs:   unavailable (HTTP {sr.status_code})")
+        except Exception as e:
+            print(f"      Stream URLs:   error — {e}")
+        print()
+
+
 def cmd_rescan(cfg: dict, args) -> None:
     """Re-discover cameras from API and update config."""
     token   = get_token(cfg)
@@ -1062,9 +1192,10 @@ def cmd_menu(cfg: dict) -> None:
     print()
 
     print("  1)  Camera status (ONLINE / OFFLINE)")
-    for i, name in enumerate(cam_names, start=2):
+    print("  2)  Camera info (full details + stream URLs)")
+    for i, name in enumerate(cam_names, start=3):
         print(f"  {i})  Latest event snapshot — {name}")
-    offset = 2 + len(cam_names)
+    offset = 3 + len(cam_names)
 
     print(f"  {offset})  Latest event snapshot — ALL cameras")
     offset += 1
@@ -1076,7 +1207,12 @@ def cmd_menu(cfg: dict) -> None:
 
     live_start = offset
     for i, name in enumerate(cam_names, start=offset):
-        print(f"  {i})  Live stream — {name} (RTSP → VLC / mpv)")
+        print(f"  {i})  Live stream — {name} (ffplay, audio+video)")
+        offset += 1
+
+    live_vlc_start = offset
+    for i, name in enumerate(cam_names, start=offset):
+        print(f"  {i})  Live stream — {name} (VLC, audio+video)")
         offset += 1
 
     dl_start = offset
@@ -1103,6 +1239,8 @@ def cmd_menu(cfg: dict) -> None:
         snaps_only = False
         clips_only = False
         re_download = False
+        live = False
+        vlc = False
 
     a = A()
     try:
@@ -1113,11 +1251,12 @@ def cmd_menu(cfg: dict) -> None:
     if c == 0:
         sys.exit(0)
     elif c == 1:        cmd_status(cfg, a)
-    elif 2 <= c < 2 + len(cam_names):
-        a.cam = cam_names[c - 2]
+    elif c == 2:        cmd_info(cfg, a)
+    elif 3 <= c < 3 + len(cam_names):
+        a.cam = cam_names[c - 3]
         a.live = False
         cmd_snapshot(cfg, a)
-    elif c == 2 + len(cam_names):
+    elif c == 3 + len(cam_names):
         a.live = False
         cmd_snapshot(cfg, a)
     elif liveshot_start <= c < liveshot_start + len(cam_names):
@@ -1126,6 +1265,11 @@ def cmd_menu(cfg: dict) -> None:
         cmd_snapshot(cfg, a)
     elif live_start <= c < live_start + len(cam_names):
         a.cam = cam_names[c - live_start]
+        a.vlc = False
+        cmd_live(cfg, a)
+    elif live_vlc_start <= c < live_vlc_start + len(cam_names):
+        a.cam = cam_names[c - live_vlc_start]
+        a.vlc = True
         cmd_live(cfg, a)
     elif dl_start <= c < dl_start + len(cam_names):
         a.cam = cam_names[c - dl_start]
@@ -1151,8 +1295,9 @@ def main():
         epilog="""
 Commands:
   status               Camera list with ONLINE/OFFLINE status
+  info                 Full camera info + stream URLs
   snapshot [name]      Save + open latest snapshot (name: partial camera name)
-  live     [name]      Open live stream in VLC/mpv
+  live     [name]      Open live stream (audio+video, ffplay by default)
   download [name]      Bulk download all events (JPEG + MP4)
   events   [name]      Show recent event list
   config               Show current config file contents
@@ -1168,6 +1313,7 @@ Run without arguments for the interactive menu.
     parser.add_argument("--clips-only",   action="store_true",    help="Only MP4 clips")
     parser.add_argument("--re-download",  action="store_true",    help="Re-download existing files")
     parser.add_argument("--live",         action="store_true",    help="Use live snapshot methods (proxy/local)")
+    parser.add_argument("--vlc",          action="store_true",    help="Open live stream in VLC instead of ffplay")
 
     args = parser.parse_args()
 
@@ -1195,6 +1341,7 @@ Run without arguments for the interactive menu.
 
     dispatch = {
         "status":   cmd_status,
+        "info":     cmd_info,
         "snapshot": cmd_snapshot,
         "live":     cmd_live,
         "stream":   cmd_live,
