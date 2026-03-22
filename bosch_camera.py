@@ -56,7 +56,7 @@ urllib3.disable_warnings()
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "1.6.0"
+VERSION     = "1.7.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -698,7 +698,13 @@ def cmd_snapshot(cfg: dict, args) -> None:
     cameras = get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
     live    = getattr(args, "live", False)
-    hq      = getattr(args, "hq", False)
+    quality = getattr(args, "quality", None)
+    if quality == "high":
+        hq = True
+    elif quality is not None:
+        hq = False
+    else:
+        hq = getattr(args, "hq", False)
 
     for name, cam_info in cams.items():
         mode_str = "Live Snapshot" if live else "Latest Event Snapshot"
@@ -1087,8 +1093,18 @@ def cmd_live(cfg: dict, args) -> None:
     session = make_session(token)
     cameras = get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
-    hq      = getattr(args, "hq", False)
-    inst    = getattr(args, "inst", 2)
+
+    # Quality preset overrides --hq/--inst
+    quality = getattr(args, "quality", None)
+    if quality == "high":
+        hq   = True
+        inst = getattr(args, "inst", 2) if getattr(args, "inst", 2) != 2 else 1
+    elif quality == "low":
+        hq   = False
+        inst = getattr(args, "inst", 2) if getattr(args, "inst", 2) != 2 else 4
+    else:
+        hq   = getattr(args, "hq", False)
+        inst = getattr(args, "inst", 2)
 
     for name, cam_info in cams.items():
         print(f"\n── Live Stream: {name} ──────────────────────────────────────")
@@ -3056,6 +3072,12 @@ def main():
         action="store_true",
         help="Request highQualityVideo=true in PUT /connection (higher resolution)",
     )
+    p_snap.add_argument(
+        "--quality",
+        choices=["auto", "high", "low"],
+        metavar="Q",
+        help="Quality preset: auto (default) | high (highQualityVideo=true) | low",
+    )
 
     # ── liveshot aliases ───────────────────────────────────────────────────────
     for _alias in ("liveshot", "livesnap", "live-snapshot"):
@@ -3119,6 +3141,12 @@ def main():
         metavar="N",
         help="Stream instance number in RTSPS URL (default: 2)",
     )
+    p_live.add_argument(
+        "--quality",
+        choices=["auto", "high", "low"],
+        metavar="Q",
+        help="Quality preset: auto (inst=2, default) | high (inst=1, 30Mbps) | low (inst=4, 1.9Mbps)",
+    )
 
     # stream alias
     p_stream = subparsers.add_parser(
@@ -3135,6 +3163,8 @@ def main():
                           help="Request highQualityVideo=true in PUT /connection")
     p_stream.add_argument("--inst", type=int, default=2, metavar="N",
                           help="Stream instance number in RTSPS URL (default: 2)")
+    p_stream.add_argument("--quality", choices=["auto", "high", "low"], metavar="Q",
+                          help="Quality preset: auto | high (30Mbps) | low (1.9Mbps)")
 
     # ── download ───────────────────────────────────────────────────────────────
     p_dl = subparsers.add_parser(
