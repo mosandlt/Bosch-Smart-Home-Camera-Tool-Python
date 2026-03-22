@@ -2,7 +2,7 @@
 
 > **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras.
 > Live snapshots, event downloads, live video stream, privacy mode, light, notifications, pan control, RCP protocol reads, and real-time event watching — all from the command line.
-> No official API. No app needed after setup. **v1.6.0**
+> No official API. No app needed after setup. **v1.7.0**
 
 ---
 
@@ -51,7 +51,8 @@ of Bosch's software was distributed. Only network protocol observations were use
 | Live snapshot — current image, ~1.5 s | `liveshot` |
 | **Live stream — 30fps H.264 + AAC audio** | `live` |
 | Live stream in VLC | `live --vlc` |
-| Live stream — high quality | `live --hq` |
+| Live stream — high quality | `live --hq` or `live --quality high` |
+| Live stream — low bandwidth | `live --quality low` |
 | Live stream — select instance | `live --inst N` |
 | Download all events (JPEG + MP4) | `download` |
 | Recent event list | `events` |
@@ -141,6 +142,9 @@ python3 bosch_camera.py live Outdoor              # opens in ffplay
 python3 bosch_camera.py live Outdoor --vlc        # opens in VLC
 python3 bosch_camera.py live Outdoor --hq         # request high-quality (highest bitrate tier)
 python3 bosch_camera.py live Outdoor --inst 1     # use stream instance 1 instead of 2
+python3 bosch_camera.py live Garten --quality high    # 30 Mbps stream (inst=1, highQualityVideo=true)
+python3 bosch_camera.py live Garten --quality low     # low bandwidth (inst=4, ~1.9 Mbps)
+python3 bosch_camera.py live Garten --quality auto    # default balanced (inst=2, ~7.5 Mbps)
 
 # Download events
 python3 bosch_camera.py download                  # all cameras
@@ -225,6 +229,18 @@ python3 bosch_camera.py token browser            # force new browser login
 python3 bosch_camera.py config                   # show current config
 python3 bosch_camera.py rescan                   # re-discover cameras
 ```
+
+---
+
+## What's New in v1.7.0
+
+- **`--quality` flag for `live` and `snapshot`**: convenience preset that sets both `highQualityVideo` and `inst` in one flag.
+
+| `--quality` | `highQualityVideo` | `inst` | Approx. bitrate | Notes |
+|-------------|-------------------|--------|----------------|-------|
+| `auto` (default) | `false` | `2` | ~7.5 Mbps | iOS app default, balanced |
+| `high` | `true` | `1` | ~30 Mbps | Primary encoder, maximum quality |
+| `low` | `false` | `4` | ~1.9 Mbps | Low bandwidth / remote access |
 
 ---
 
