@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bosch Smart Home Camera — All-in-one Standalone Tool
-Version: 5.0.0
+Version: 5.1.0
 =====================================================
 No hardcoded camera IDs or credentials.
 All configuration is stored in bosch_config.json (created on first run).
@@ -62,7 +62,7 @@ urllib3.disable_warnings()
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "5.0.0"
+VERSION     = "5.1.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -4522,6 +4522,140 @@ def cmd_clip_request(cfg: dict, args) -> None:
         print(f"  Poll with 'events {name}' to check when clips become 'Done'.")
 
 
+def cmd_timestamp(cfg: dict, args) -> None:
+    """Get or set time/date overlay on camera video.
+
+    Usage:
+      python3 bosch_camera.py timestamp [cam-name]        → show current state
+      python3 bosch_camera.py timestamp [cam-name] on     → enable timestamp overlay
+      python3 bosch_camera.py timestamp [cam-name] off    → disable timestamp overlay
+
+    API: GET/PUT /v11/video_inputs/{id}/timestamp
+         Body: {"result": true/false}
+    """
+    token   = get_token(cfg)
+    session = make_session(token)
+    cameras = get_cameras(cfg, session)
+    cam_arg = getattr(args, "cam", None)
+    action  = getattr(args, "action", None)
+
+    if cam_arg and cam_arg.lower() in ("on", "off") and action is None:
+        action  = cam_arg.lower()
+        cam_arg = None
+
+    cams = resolve_cam(cfg, cam_arg)
+
+    for name, cam_info in cams.items():
+        cam_id = cam_info["id"]
+        print(f"\n── Timestamp Overlay: {name} ─────────────────────────────────────")
+
+        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/timestamp", timeout=10)
+        if r.status_code == 401:
+            print("  ❌  Token expired.")
+            return
+        if r.status_code == 444:
+            print(f"  ⚠️   Camera offline or unavailable")
+            continue
+        if r.status_code != 200:
+            print(f"  ❌  Could not fetch timestamp state: HTTP {r.status_code}")
+            continue
+        data    = r.json()
+        current = data.get("result", False)
+        icon    = "🕐" if current else "🕐"
+        print(f"  {icon}  Timestamp overlay:  {'ENABLED' if current else 'DISABLED'}")
+
+        if action is None:
+            print(f"\n  Run with 'on' or 'off' to toggle. E.g.:")
+            print(f"    python3 bosch_camera.py timestamp {name.lower()} on")
+            continue
+
+        new_state = action == "on"
+        if new_state == current:
+            print(f"  ✅  Already {'ENABLED' if current else 'DISABLED'} — no change needed.")
+            continue
+
+        print(f"  🔄  Setting timestamp overlay → {'ENABLED' if new_state else 'DISABLED'}...")
+        pr = session.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/timestamp",
+            json={"result": new_state},
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        if pr.status_code in (200, 201, 204):
+            print(f"  ✅  Timestamp overlay {'ENABLED' if new_state else 'DISABLED'}.")
+        elif pr.status_code == 444:
+            print(f"  ⚠️   Camera offline or unavailable")
+        else:
+            print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
+
+
+def cmd_notification_types(cfg: dict, args) -> None:
+    """Show or toggle per-type notification settings.
+
+    Usage:
+      python3 bosch_camera.py notification-types [cam-name]
+      python3 bosch_camera.py notification-types [cam-name] --set movement=on person=off
+
+    API: GET/PUT /v11/video_inputs/{id}/notifications
+    """
+    token   = get_token(cfg)
+    session = make_session(token)
+    cameras = get_cameras(cfg, session)
+    cam_arg = getattr(args, "cam", None)
+    sets    = getattr(args, "set", None)
+
+    cams = resolve_cam(cfg, cam_arg)
+
+    for name, cam_info in cams.items():
+        cam_id = cam_info["id"]
+        print(f"\n── Notification Types: {name} ─────────────────────────────────────")
+
+        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/notifications", timeout=10)
+        if r.status_code == 401:
+            print("  ❌  Token expired.")
+            return
+        if r.status_code == 444:
+            print(f"  ⚠️   Camera offline or unavailable")
+            continue
+        if r.status_code != 200:
+            print(f"  ❌  Could not fetch notification types: HTTP {r.status_code}")
+            continue
+        data = r.json()
+        for key, val in sorted(data.items()):
+            icon = "✅" if val else "❌"
+            print(f"  {icon}  {key}: {'ON' if val else 'OFF'}")
+
+        if not sets:
+            print(f"\n  Toggle with: --set movement=on person=off audio=on")
+            continue
+
+        # Parse --set pairs
+        for pair in sets:
+            key, _, val_str = pair.partition("=")
+            if val_str.lower() in ("on", "true", "1"):
+                data[key] = True
+            elif val_str.lower() in ("off", "false", "0"):
+                data[key] = False
+            else:
+                print(f"  ⚠️   Invalid value for {key}: {val_str} (use on/off)")
+                continue
+
+        print(f"\n  🔄  Updating notification types...")
+        pr = session.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/notifications",
+            json=data,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        if pr.status_code in (200, 201, 204):
+            print(f"  ✅  Notification types updated.")
+            for key, val in sorted(data.items()):
+                icon = "✅" if val else "❌"
+                print(f"  {icon}  {key}: {'ON' if val else 'OFF'}")
+        else:
+            print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
+
+
 def main():
     # ── Top-level parser ───────────────────────────────────────────────────────
     parser = argparse.ArgumentParser(
@@ -5529,6 +5663,51 @@ def main():
         epilog="  Example:\n    python3 bosch_camera.py account",
     )
 
+    # ── timestamp ──────────────────────────────────────────────────────────
+    p_ts = subparsers.add_parser(
+        "timestamp",
+        help="Get or set time/date overlay on camera video",
+        description=(
+            "🕐  timestamp — Control the time/date overlay on camera video\n"
+            "\n"
+            "  API: GET/PUT /v11/video_inputs/{id}/timestamp\n"
+            "       Body: {\"result\": true/false}"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py timestamp\n"
+            "    python3 bosch_camera.py timestamp kamera on\n"
+            "    python3 bosch_camera.py timestamp garten off"
+        ),
+    )
+    p_ts.add_argument("cam", nargs="?", metavar="<camera>",
+                       help="Camera name (optional, default: all)")
+    p_ts.add_argument("action", nargs="?", metavar="on|off",
+                       help="on = show overlay, off = hide overlay")
+
+    # ── notification-types ─────────────────────────────────────────────────
+    p_nt = subparsers.add_parser(
+        "notification-types",
+        help="Show or toggle per-type notification settings",
+        description=(
+            "🔔  notification-types — Per-type notification toggles\n"
+            "\n"
+            "  Types: movement, person, audio, trouble, cameraAlarm\n"
+            "  API: GET/PUT /v11/video_inputs/{id}/notifications"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py notification-types\n"
+            "    python3 bosch_camera.py notification-types kamera --set movement=on person=off"
+        ),
+    )
+    p_nt.add_argument("cam", nargs="?", metavar="<camera>",
+                       help="Camera name (optional, default: all)")
+    p_nt.add_argument("--set", nargs="+", metavar="key=on|off",
+                       help="Set notification types (e.g. movement=on person=off)")
+
     # ── parse ──────────────────────────────────────────────────────────────────
     args = parser.parse_args()
 
@@ -5603,10 +5782,12 @@ def main():
         "profile":       cmd_profile,
         "account":       cmd_account,
         "intercom":      cmd_intercom,
-        "rcp":           cmd_rcp,
-        "token":         cmd_token,
-        "config":        cmd_config,
-        "rescan":        cmd_rescan,
+        "rcp":                cmd_rcp,
+        "token":              cmd_token,
+        "config":             cmd_config,
+        "rescan":             cmd_rescan,
+        "timestamp":          cmd_timestamp,
+        "notification-types": cmd_notification_types,
     }
     if cmd not in dispatch:
         print(f"❌  Unknown command '{cmd}'. Run without arguments for the menu.")

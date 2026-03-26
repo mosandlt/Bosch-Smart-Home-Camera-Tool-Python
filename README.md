@@ -2,7 +2,7 @@
 
 > **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras.
 > Live snapshots, event downloads, live video stream, privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, and real-time event watching — all from the command line.
-> No official API. No app needed after setup. **v5.0.0**
+> No official API. No app needed after setup. **v5.1.0**
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
@@ -68,7 +68,7 @@ of Bosch's software was distributed. Only network protocol observations were use
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
 - [CLI Reference](#cli-reference)
-- [What's New in v5.0.0](#whats-new-in-v500)
+- [What's New in v5.1.0](#whats-new-in-v510)
 - [How It Works](#how-it-works)
 - [Cloud API Reference](#cloud-api-reference)
 - [RCP Protocol — Low-Level Camera Reads](#rcp-protocol--low-level-camera-reads)
@@ -125,6 +125,8 @@ of Bosch's software was distributed. Only network protocol observations were use
 | **Rename a camera** | `rename [cam] "New Name"` |
 | **User profile management** | `profile [--name\|--language]` |
 | **Account info & feature flags** | `account` |
+| **Timestamp overlay — show/hide clock on video** | `timestamp [cam] [on\|off]` |
+| **Notification type toggles** | `notification-types [cam] [--set movement=on person=off]` |
 | Automatic token via browser login | `get_token.py` |
 | Silent token renewal / token fix | `token [fix\|browser]` |
 
