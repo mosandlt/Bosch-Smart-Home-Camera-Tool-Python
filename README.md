@@ -427,7 +427,7 @@ python3 bosch_camera.py rescan                   # re-discover cameras
 All TLS proxy sockets now enable `SO_KEEPALIVE` with 10 s idle / 5 s interval / 3 probes — detects dead connections before the OS default timeout, preventing zombie proxy threads on LOCAL streams.
 
 **Directional select timeout**
-Separate read timeouts for camera-to-client (90 s, tolerates slow H.264 encoder startup) vs client-to-camera (10 s, detects client disconnect quickly). Improves stability of long-running LOCAL streams.
+Camera-to-client direction has no timeout (dark/still outdoor scenes produce sparse RTP packets — TCP keep-alive handles dead connection detection). Client-to-camera direction uses 120 s timeout (FFmpeg sends periodic RTCP/keepalive). Prevents false proxy teardown during low-bitrate nighttime streams.
 
 <details>
 <summary><strong>v7.0.0</strong></summary>
