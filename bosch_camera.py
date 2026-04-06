@@ -62,7 +62,7 @@ urllib3.disable_warnings()
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "7.2.0"
+VERSION     = "7.3.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -4268,6 +4268,102 @@ def cmd_zones(cfg: dict, args) -> None:
         print(f"\n  JSON: {_json.dumps(zones)}")
 
 
+def cmd_privacy_masks(cfg: dict, args) -> None:
+    """Manage privacy mask zones (cloud API).
+
+    Usage:
+      python3 bosch_camera.py privacy-masks [cam]                  → list current masks
+      python3 bosch_camera.py privacy-masks [cam] set --json '[{"x":0.0,"y":0.0,"w":0.3,"h":0.3}]'
+      python3 bosch_camera.py privacy-masks [cam] clear            → remove all masks
+
+    API: GET/POST /v11/video_inputs/{id}/privacy_masks
+    Coordinates: normalized 0.0–1.0 (x, y = top-left corner, w = width, h = height)
+    Note: Returns HTTP 443 when privacy mode is active.
+    """
+    import json as _json
+    token   = get_token(cfg)
+    session = make_session(token)
+    cameras = get_cameras(cfg, session)
+    cam_arg = getattr(args, "cam", None)
+    sub     = getattr(args, "sub", None)
+
+    MASKS_SUBS = ("set", "clear")
+    if cam_arg and cam_arg.lower() in MASKS_SUBS and not sub:
+        sub, cam_arg = cam_arg.lower(), None
+    if sub:
+        sub = sub.lower()
+
+    cams = resolve_cam(cfg, cam_arg)
+
+    for name, cam_info in cams.items():
+        cam_id = cam_info["id"]
+        print(f"\n── Privacy Masks: {name} ──────────────────────────────────────")
+
+        if sub == "set":
+            masks_json = getattr(args, "json", None)
+            if not masks_json:
+                print("  ❌  --json is required. Example: --json '[{\"x\":0.0,\"y\":0.0,\"w\":0.3,\"h\":0.3}]'")
+                continue
+            try:
+                masks = _json.loads(masks_json)
+            except _json.JSONDecodeError as e:
+                print(f"  ❌  Invalid JSON: {e}")
+                continue
+            if not isinstance(masks, list):
+                print("  ❌  Masks must be a JSON array of objects with x, y, w, h")
+                continue
+            print(f"  ✏️   Setting {len(masks)} mask(s)...")
+            r = session.post(
+                f"{CLOUD_API}/v11/video_inputs/{cam_id}/privacy_masks",
+                json=masks,
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
+            if r.status_code in (200, 204):
+                print(f"  ✅  {len(masks)} mask(s) set.")
+            elif r.status_code == 443:
+                print(f"  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+            else:
+                print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
+            continue
+
+        if sub == "clear":
+            print(f"  🗑️   Clearing all masks...")
+            r = session.post(
+                f"{CLOUD_API}/v11/video_inputs/{cam_id}/privacy_masks",
+                json=[],
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
+            if r.status_code in (200, 204):
+                print(f"  ✅  All masks cleared.")
+            elif r.status_code == 443:
+                print(f"  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+            else:
+                print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
+            continue
+
+        # Default: list masks
+        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/privacy_masks", timeout=10)
+        if r.status_code == 401:
+            print("  ❌  Token expired.")
+            return
+        if r.status_code == 443:
+            print(f"  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+            continue
+        if r.status_code != 200:
+            print(f"  ❌  Could not fetch masks: HTTP {r.status_code}")
+            continue
+        masks = r.json()
+        if not masks:
+            print(f"  (no privacy masks configured)")
+            continue
+        print(f"  {len(masks)} mask(s):\n")
+        for i, m in enumerate(masks):
+            print(f"  Mask {i+1}: x={m.get('x', 0):.4f}  y={m.get('y', 0):.4f}  w={m.get('w', 0):.4f}  h={m.get('h', 0):.4f}")
+        print(f"\n  JSON: {_json.dumps(masks)}")
+
+
 def cmd_rename(cfg: dict, args) -> None:
     """Rename a camera via the Bosch cloud API.
 
@@ -5714,6 +5810,7 @@ def main():
         "rules":         cmd_rules,
         "friends":       cmd_friends,
         "zones":         cmd_zones,
+        "privacy-masks": cmd_privacy_masks,
         "rename":        cmd_rename,
         "profile":       cmd_profile,
         "account":       cmd_account,

@@ -2,7 +2,7 @@
 
 > **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innenkamera, Gen1+Gen2).
 > Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, and real-time event watching — all from the command line.
-> No official API. No app needed after setup. **v7.2.0**
+> No official API. No app needed after setup. **v7.3.0**
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
@@ -120,6 +120,7 @@ of Bosch's software was distributed. Only network protocol observations were use
 | **Privacy sound — audible privacy indicator** | `privacy-sound [cam] [on\|off]` |
 | **Cloud automation rules** | `rules [cam] [list\|add\|edit\|delete]` |
 | **Motion detection zones** | `zones [cam] [list\|set\|clear]` |
+| **Privacy mask zones** | `privacy-masks [cam] [list\|set\|clear]` |
 | **Camera sharing with friends** | `friends [list\|invite\|share\|unshare\|resend\|remove]` |
 | **Rename a camera** | `rename [cam] "New Name"` |
 | **User profile management** | `profile [--name\|--language]` |
@@ -349,6 +350,11 @@ python3 bosch_camera.py rules Outdoor delete RULE_ID  # delete a rule
 python3 bosch_camera.py zones Outdoor                  # list current motion zones
 python3 bosch_camera.py zones Outdoor set --json '[{"x":0.0,"y":0.3,"w":0.67,"h":0.7}]'  # set zones
 python3 bosch_camera.py zones Outdoor clear            # remove all zones
+
+# Privacy mask zones
+python3 bosch_camera.py privacy-masks Outdoor          # list current privacy masks
+python3 bosch_camera.py privacy-masks Outdoor set --json '[{"x":0.0,"y":0.0,"w":0.3,"h":0.3}]'
+python3 bosch_camera.py privacy-masks Outdoor clear    # remove all masks
 
 python3 bosch_camera.py friends                       # list all shared contacts
 python3 bosch_camera.py friends invite user@example.com  # invite a new friend
@@ -1590,6 +1596,7 @@ tool/
 
 | Version | Changes |
 |---------|---------|
+| **v7.3.0** | **Privacy masks command** (`privacy-masks`): list, set, and clear privacy mask zones via cloud API. Same coordinate system as motion zones (normalized 0.0–1.0). |
 | **v7.2.0** | **Motion zones command** (`zones`): list, set, and clear motion detection zones via cloud API (normalized 0.0–1.0 coordinates). **Rules edit extended:** `edit` now supports `--name`, `--start`, `--end`, `--days` in addition to `--active`/`--inactive`. HTTP 443 handling (privacy mode blocks zone access). |
 | **v7.1.0** | TCP keep-alive on TLS proxy sockets (10 s idle / 5 s interval / 3 probes). Directional select timeout for stable LOCAL streams. |
 | **v7.0.0** | LOCAL LAN streaming with TLS proxy. Menu: local stream entries + exit with "q". Code cleanup. |
