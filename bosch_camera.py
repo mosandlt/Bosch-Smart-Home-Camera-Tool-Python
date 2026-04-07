@@ -62,9 +62,19 @@ urllib3.disable_warnings()
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "8.0.0"
+VERSION     = "8.0.3"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
+
+# Human-readable display names for camera hardware versions
+HW_DISPLAY_NAMES = {
+    "INDOOR": "360 Innenkamera",
+    "OUTDOOR": "Eyes Außenkamera",
+    "CAMERA_360": "360 Innenkamera",
+    "CAMERA_EYES": "Eyes Außenkamera",
+    "HOME_Eyes_Outdoor": "Eyes Außenkamera II",
+    "HOME_Eyes_Indoor": "Eyes Innenkamera II",
+}
 
 # ConnectionType enum — confirmed working values (discovered 2026-03-19)
 # REMOTE = cloud proxy snap.jpg (fast ~1.5s, no credentials needed)
@@ -1314,7 +1324,28 @@ def cmd_info(cfg: dict, args) -> None:
     cameras = r.json()
 
     print(f"\n── Camera Info ──────────────────────────────────────────────")
-    print(f"   Token age: {check_token_age(cfg)}\n")
+    print(f"   Token age: {check_token_age(cfg)}")
+
+    # Protocol version check
+    try:
+        pr = session.get(
+            f"{CLOUD_API}/protocol_support",
+            params={"protocol": "11", "client": f"pythonV{VERSION}"},
+            timeout=10,
+        )
+        if pr.status_code == 200:
+            pd = pr.json()
+            proto_state = pd.get("state", pd.get("status", "UNKNOWN"))
+            if proto_state != "SUPPORTED":
+                print(f"   ⚠️  Protocol v11 state: {proto_state} — API changes may affect this tool")
+            else:
+                print(f"   Protocol: v11 ({proto_state})")
+        else:
+            print(f"   Protocol check: HTTP {pr.status_code}")
+    except Exception:
+        pass
+
+    print()
 
     for cam in cameras:
         name   = cam.get("title", cam.get("id"))
@@ -1333,7 +1364,8 @@ def cmd_info(cfg: dict, args) -> None:
 
         print(f"  {icon}  {name}")
         print(f"      ID:            {cam_id}")
-        print(f"      Model:         {model}   FW: {fw}")
+        model_name = HW_DISPLAY_NAMES.get(model, model)
+        print(f"      Model:         {model_name} ({model})   FW: {fw}")
         print(f"      MAC:           {mac}")
         print(f"      Status:        {status}")
         print(f"      Privacy mode:  {priv}")
@@ -1553,6 +1585,34 @@ def cmd_info(cfg: dict, args) -> None:
 
         print()
 
+    # ── Feature flags (account-level, shown with --full) ──────────────
+    if full:
+        print(f"── Feature Flags ─────────────────────────────────────────────")
+        try:
+            ffr = session.get(f"{CLOUD_API}/v11/feature_flags", timeout=10)
+            if ffr.status_code == 200:
+                flags = ffr.json()
+                if isinstance(flags, dict):
+                    parts = [f"{k}={v}" for k, v in flags.items()]
+                    print(f"   {', '.join(parts)}")
+                elif isinstance(flags, list):
+                    parts = []
+                    for flag in flags:
+                        if isinstance(flag, dict):
+                            fname = flag.get("name", flag.get("key", "?"))
+                            fval  = flag.get("value", flag.get("enabled", "?"))
+                            parts.append(f"{fname}={fval}")
+                        else:
+                            parts.append(str(flag))
+                    print(f"   {', '.join(parts)}")
+                else:
+                    print(f"   {json.dumps(flags)}")
+            else:
+                print(f"   ⚠️  Feature flags: HTTP {ffr.status_code}")
+        except Exception:
+            pass
+        print()
+
 
 def cmd_privacy(cfg: dict, args) -> None:
     """Get or set privacy mode for a camera via the Bosch cloud API.
@@ -1661,6 +1721,11 @@ def cmd_light(cfg: dict, args) -> None:
          Response: HTTP 204 on success.
     Only available for cameras with featureSupport.light = true (outdoor camera).
 
+    Extended syntax:
+      light [cam] front on/off      → toggle front light only
+      light [cam] wall on/off       → toggle wallwasher only
+      light [cam] intensity <0-100> → set front light brightness
+
     featureStatus fields (shown in status view):
       scheduleStatus         — ALWAYS_OFF / ALWAYS_ON / SCHEDULE
       frontIlluminatorInGeneralLightOn  — general light mode enabled
@@ -1678,6 +1743,14 @@ def cmd_light(cfg: dict, args) -> None:
     if cam_arg and cam_arg.lower() in ("on", "off") and action is None:
         action  = cam_arg.lower()
         cam_arg = None
+    # Allow "light front on" / "light wall off" / "light intensity 50"
+    if cam_arg and cam_arg.lower() in ("front", "wall", "intensity"):
+        component = cam_arg.lower()
+        cam_arg = None
+        action = f"{component} {action}" if action else component
+    elif action and action.lower() in ("front", "wall", "intensity"):
+        extra = getattr(args, "extra_args", [])
+        action = f"{action.lower()} {extra[0]}" if extra else action.lower()
 
     cams = resolve_cam(cfg, cam_arg)
 
@@ -1719,20 +1792,76 @@ def cmd_light(cfg: dict, args) -> None:
         print(f"  🏃  Light on motion:     {'YES' if on_motion else 'NO'}  "
               f"(follow-up: {follow_up}s)")
 
+        # Also show current override state
+        try:
+            ovr = session.get(
+                f"{CLOUD_API}/v11/video_inputs/{cam_id}/lighting_override",
+                timeout=10,
+            ).json()
+            ovr_front = ovr.get("frontLightOn", False)
+            ovr_wall  = ovr.get("wallwasherOn", False)
+            ovr_int   = ovr.get("frontLightIntensity")
+            print(f"  ── Override (instant) ──")
+            print(f"  {'💡' if ovr_front else '🌑'}  Front light:         {'ON' if ovr_front else 'OFF'}"
+                  + (f"  (intensity: {ovr_int:.0%})" if ovr_int is not None else ""))
+            print(f"  {'💡' if ovr_wall else '🌑'}  Wallwasher:          {'ON' if ovr_wall else 'OFF'}")
+        except Exception:
+            pass
+
         if action is None:
             print()
-            print(f"  Run with 'on' or 'off' to toggle the manual override. E.g.:")
-            print(f"    python3 bosch_camera.py light {name.lower()} on")
+            print(f"  Commands:")
+            print(f"    light {name.lower()} on              # both lights ON 100%")
+            print(f"    light {name.lower()} off             # both lights OFF")
+            print(f"    light {name.lower()} front on/off    # front light only")
+            print(f"    light {name.lower()} wall on/off     # wallwasher only")
+            print(f"    light {name.lower()} intensity 50    # front light 50%")
             continue
 
-        # Set manual light override via cloud API
-        new_state = action.upper()
-        print(f"\n  🔄  Setting light override → {new_state}...")
-        if action == "on":
-            body = {"frontLightOn": True, "wallwasherOn": True, "frontLightIntensity": 1.0}
-        else:
-            body = {"frontLightOn": False, "wallwasherOn": False}
+        # Read current override state to preserve components
+        try:
+            cur = session.get(
+                f"{CLOUD_API}/v11/video_inputs/{cam_id}/lighting_override",
+                timeout=10,
+            ).json()
+        except Exception:
+            cur = {}
+        cur_front = cur.get("frontLightOn", False)
+        cur_wall  = cur.get("wallwasherOn", False)
+        cur_int   = cur.get("frontLightIntensity") or 1.0
 
+        # Parse action: "on", "off", "front on", "wall off", "intensity 50"
+        parts = action.split()
+        if parts[0] in ("front", "wall", "intensity") and len(parts) >= 2:
+            component = parts[0]
+            val = parts[1]
+            if component == "front":
+                cur_front = val.lower() == "on"
+                desc = f"front light → {'ON' if cur_front else 'OFF'}"
+            elif component == "wall":
+                cur_wall = val.lower() == "on"
+                desc = f"wallwasher → {'ON' if cur_wall else 'OFF'}"
+            elif component == "intensity":
+                cur_int = max(0.0, min(1.0, int(val) / 100))
+                cur_front = True  # intensity implies front on
+                desc = f"front light intensity → {int(cur_int * 100)}%"
+        elif action == "on":
+            cur_front = True
+            cur_wall = True
+            cur_int = 1.0
+            desc = "all lights → ON"
+        else:
+            cur_front = False
+            cur_wall = False
+            desc = "all lights → OFF"
+
+        body = {
+            "frontLightOn": cur_front,
+            "wallwasherOn": cur_wall,
+            "frontLightIntensity": cur_int,
+        }
+
+        print(f"\n  🔄  Setting light override: {desc}...")
         pr = session.put(
             f"{CLOUD_API}/v11/video_inputs/{cam_id}/lighting_override",
             json=body,
@@ -1740,8 +1869,9 @@ def cmd_light(cfg: dict, args) -> None:
             timeout=10,
         )
         if pr.status_code in (200, 201, 204):
-            icon_new = "💡" if action == "on" else "🌑"
-            print(f"  {icon_new}  Light override set to {new_state}.")
+            print(f"  💡  Done. Front={'ON' if cur_front else 'OFF'}  "
+                  f"Wall={'ON' if cur_wall else 'OFF'}  "
+                  f"Intensity={int(cur_int * 100)}%")
         else:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
@@ -4167,6 +4297,103 @@ def cmd_friends(cfg: dict, args) -> None:
         print()
 
 
+def cmd_accept_invite(cfg: dict, args) -> None:
+    """Accept an incoming friend/camera sharing invitation.
+
+    Usage:
+      python3 bosch_camera.py accept-invite TOKEN
+
+    API: POST /v11/friends/accept
+    """
+    token   = get_token(cfg)
+    session = make_session(token)
+    invite_token = getattr(args, "token", None)
+
+    if not invite_token:
+        print("  ❌  Invitation token is required. Usage: accept-invite TOKEN")
+        return
+
+    print(f"\n── Accept Friend Invitation ───────────────────────────────────")
+    print(f"  📨  Accepting invitation...")
+
+    r = session.post(
+        f"{CLOUD_API}/v11/friends/accept",
+        json={"token": invite_token},
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+    )
+    if r.status_code in (200, 201, 204):
+        print(f"  ✅  Invitation accepted!")
+        try:
+            data = r.json()
+            print(f"      {json.dumps(data, indent=2)}")
+        except Exception:
+            pass
+    elif r.status_code == 444:
+        print(f"  ⚠️   Camera offline or unavailable for this operation")
+        try:
+            print(f"       {r.json()}")
+        except Exception:
+            print(f"       {r.text[:200]}")
+    else:
+        print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
+
+
+def cmd_shared_with_friends(cfg: dict, args) -> None:
+    """Show which friends have access to a specific camera.
+
+    Usage:
+      python3 bosch_camera.py shared [cam-name]
+
+    API: GET /v11/video_inputs/{id}/shared_with_friends
+    """
+    token   = get_token(cfg)
+    session = make_session(token)
+    cameras = get_cameras(cfg, session)
+    cams    = resolve_cam(cfg, getattr(args, "cam", None))
+
+    print(f"\n── Shared With Friends ────────────────────────────────────────")
+
+    for cam_name, cam_info in cams.items():
+        cam_id = cam_info["id"]
+        model  = cam_info.get("hardwareVersion", "?")
+        model_name = HW_DISPLAY_NAMES.get(model, model)
+        print(f"\n  📷  {cam_name} ({model_name})")
+
+        r = session.get(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/shared_with_friends",
+            timeout=10,
+        )
+        if r.status_code == 200:
+            friends = r.json()
+            if not friends:
+                print(f"      (not shared with anyone)")
+                continue
+            if isinstance(friends, list):
+                print(f"      Shared with {len(friends)} friend(s):")
+                for friend in friends:
+                    fid    = friend.get("id", friend.get("friendId", "?"))
+                    email  = friend.get("email", friend.get("invitationEmail", "?"))
+                    nick   = friend.get("nickName", "?")
+                    status = friend.get("status", friend.get("invitationStatus", "?"))
+                    icon   = "✅" if status in ("ACCEPTED", "ACTIVE") else "⏳"
+                    print(f"      {icon}  {nick} ({email})")
+                    print(f"          ID:     {fid}")
+                    print(f"          Status: {status}")
+                    share_time = friend.get("shareTime", {})
+                    if share_time:
+                        print(f"          From:   {share_time.get('start', '?')}")
+                        print(f"          Until:  {share_time.get('end', 'permanent')}")
+            else:
+                print(f"      {json.dumps(friends, indent=2)}")
+        elif r.status_code == 444:
+            print(f"      ⚠️   Camera offline or unavailable")
+        else:
+            print(f"      ❌  HTTP {r.status_code}  {r.text[:200]}")
+
+    print()
+
+
 def cmd_zones(cfg: dict, args) -> None:
     """Manage motion detection zones (cloud API).
 
@@ -5704,6 +5931,52 @@ def main():
     p_friends.add_argument("--days", type=int, metavar="N",
                            help="Share duration in days (for share; omit = permanent)")
 
+    # ── accept-invite ─────────────────────────────────────────────────────
+    p_accept = subparsers.add_parser(
+        "accept-invite",
+        help="Accept an incoming friend/camera sharing invitation",
+        description=(
+            "📨  accept-invite — Accept a friend invitation\n"
+            "\n"
+            "  Accepts an incoming camera sharing invitation using the\n"
+            "  invitation token received from a friend.\n"
+            "\n"
+            "  API: POST /v11/friends/accept"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py accept-invite ABC123TOKEN"
+        ),
+    )
+    p_accept.add_argument(
+        "token",
+        metavar="TOKEN",
+        help="Invitation token from the friend invitation",
+    )
+
+    # ── shared ────────────────────────────────────────────────────────────
+    p_shared = subparsers.add_parser(
+        "shared",
+        help="Show which friends have access to a camera",
+        description=(
+            "🔗  shared — Show friends with access to a camera\n"
+            "\n"
+            "  Lists all friends who have been granted access to\n"
+            "  a specific camera via camera sharing.\n"
+            "\n"
+            "  API: GET /v11/video_inputs/{id}/shared_with_friends"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py shared\n"
+            "    python3 bosch_camera.py shared Garten"
+        ),
+    )
+    p_shared.add_argument("cam", nargs="?", metavar="<camera>",
+                          help="Camera name (optional, default: all cameras)")
+
     # ── rename ────────────────────────────────────────────────────────────
     p_rename = subparsers.add_parser(
         "rename",
@@ -5894,6 +6167,8 @@ def main():
         "privacy-sound": cmd_privacy_sound,
         "rules":         cmd_rules,
         "friends":       cmd_friends,
+        "accept-invite": cmd_accept_invite,
+        "shared":        cmd_shared_with_friends,
         "zones":         cmd_zones,
         "privacy-masks": cmd_privacy_masks,
         "lighting-schedule": cmd_lighting_schedule,
