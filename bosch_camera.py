@@ -49,12 +49,16 @@ import sys
 import json
 import time
 import shutil
+import signal
 import datetime
 import argparse
+import threading
 import subprocess
 import urllib3
 
 import requests
+from requests.adapters import HTTPAdapter
+from typing import Optional
 
 # Suppress InsecureRequestWarning only for local camera calls (self-signed certs).
 # Cloud API and Keycloak calls use verify=True and do not trigger this warning.
@@ -64,7 +68,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.0.0"
+VERSION     = "10.1.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -146,10 +150,16 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    """Save config to file."""
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(cfg, f, indent=2)
-    os.chmod(CONFIG_FILE, 0o600)
+    """Save config to file.
+
+    Serialized via _CONFIG_LOCK so concurrent writes (main thread saving a fresh
+    bearer token + FCM credentials-update callback firing from a background
+    thread) cannot interleave and produce a corrupt JSON file.
+    """
+    with _CONFIG_LOCK:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(cfg, f, indent=2)
+        os.chmod(CONFIG_FILE, 0o600)
 
 
 def _create_default_config() -> None:
@@ -183,6 +193,25 @@ def _is_token_expired(token: str) -> bool:
     except Exception:
         pass
     return False
+
+
+def _is_token_near_expiry(token_str: str, buffer_secs: int = 60) -> bool:
+    """Return True if the JWT bearer token expires within buffer_secs seconds.
+
+    Fail-safe: returns True (treat as near-expiry) if decoding fails.
+    Uses only stdlib: base64, json, time.
+    """
+    import base64 as _b64, json as _json
+    try:
+        parts = token_str.split(".")
+        if len(parts) >= 2:
+            pad  = len(parts[1]) % 4
+            body = _b64.urlsafe_b64decode(parts[1] + "=" * pad)
+            exp  = _json.loads(body).get("exp", 0)
+            return exp == 0 or (exp - time.time()) < buffer_secs
+    except Exception:
+        pass
+    return True
 
 
 def get_token(cfg: dict) -> str:
@@ -296,11 +325,92 @@ def handle_401(cfg: dict) -> str:
 
 # ══════════════════════════ SESSION ═══════════════════════════════════════════
 
+# Cached global session — reuses a single TCP/TLS connection pool across all API
+# calls (avoids handshake-per-request). Token updates only touch the Authorization
+# header, so the underlying pool stays warm.
+_HTTP_SESSION: Optional[requests.Session] = None
+
+
 def make_session(token: str) -> requests.Session:
-    s = requests.Session()
-    s.headers.update({"Authorization": f"Bearer {token}", "Accept": "application/json"})
-    s.verify = False
-    return s
+    """Return the cached module-level session, updating the Bearer token header.
+
+    On first call, creates a requests.Session with a connection-pooled HTTPAdapter
+    (pool_connections=10, pool_maxsize=20, max_retries=0 — retries are handled
+    explicitly by _request_with_retry). Subsequent calls just swap the token on
+    the existing session so connections are reused.
+    """
+    global _HTTP_SESSION
+    if _HTTP_SESSION is None:
+        s = requests.Session()
+        adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
+        s.mount("https://", adapter)
+        s.mount("http://", adapter)
+        s.verify = False
+        _HTTP_SESSION = s
+    _HTTP_SESSION.headers.update({
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    })
+    return _HTTP_SESSION
+
+
+# Lock serializing bosch_config.json writes (FCM creds-update callback may fire
+# from a background thread while the main thread is also saving tokens).
+_CONFIG_LOCK = threading.Lock()
+
+
+# Set by SIGTERM/SIGINT handlers so long-running loops (watch, FCM) can exit
+# cleanly instead of relying solely on KeyboardInterrupt propagation.
+_STOP_REQUESTED = threading.Event()
+
+
+def _install_stop_handlers() -> None:
+    """Install SIGINT/SIGTERM handlers that flip _STOP_REQUESTED.
+
+    Safe to call multiple times — later calls just re-install the same handler.
+    Only installs in the main thread (signal.signal() raises otherwise).
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return
+    def _handler(signum, frame):
+        _STOP_REQUESTED.set()
+    try:
+        signal.signal(signal.SIGINT, _handler)
+        signal.signal(signal.SIGTERM, _handler)
+    except (ValueError, OSError):
+        # signal.signal() can fail in odd embedding contexts — ignore.
+        pass
+
+
+def _request_with_retry(session: requests.Session, method: str, url: str,
+                         max_attempts: int = 3, **kwargs) -> requests.Response:
+    """Issue an HTTP request with exponential backoff on transient failures.
+
+    Retries only on HTTP 5xx responses and on requests.exceptions.Timeout /
+    ConnectionError. Auth/client errors (401/403/404, etc.) pass through on the
+    first attempt — the caller decides how to react.
+
+    Backoff: 1s, 2s, 4s between attempts (max_attempts=3 → up to 2 retries).
+    """
+    last_exc: Optional[BaseException] = None
+    for attempt in range(max_attempts):
+        try:
+            r = session.request(method, url, **kwargs)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_exc = e
+            if attempt == max_attempts - 1:
+                raise
+            time.sleep(2 ** attempt)
+            continue
+        # Retry only on server-side errors.
+        if 500 <= r.status_code < 600 and attempt < max_attempts - 1:
+            time.sleep(2 ** attempt)
+            continue
+        return r
+    # Unreachable — loop either returns a response or re-raises. Keep for safety.
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("unreachable: _request_with_retry loop exited without result")
 
 
 # ══════════════════════════ CAMERA DISCOVERY ══════════════════════════════════
@@ -400,8 +510,10 @@ def api_ping(session: requests.Session, cam_id: str) -> str:
 
 
 def api_get_events(session: requests.Session, cam_id: str, limit: int = 400) -> list:
-    r = session.get(
-        f"{CLOUD_API}/v11/events?videoInputId={cam_id}&limit={limit}", timeout=30
+    r = _request_with_retry(
+        session, "GET",
+        f"{CLOUD_API}/v11/events?videoInputId={cam_id}&limit={limit}",
+        timeout=30,
     )
     if r.status_code == 401:
         return []
@@ -548,25 +660,57 @@ def cmd_events(cfg: dict, args) -> None:
 
 # ══════════════════════════ LIVE SNAPSHOT METHODS ═══════════════════════════
 
-def snap_from_proxy(cam_info: dict, token: str, hq: bool = False) -> bytes | None:
+def snap_from_proxy(cam_info: dict, token: str, hq: bool = False,
+                     cfg: Optional[dict] = None) -> bytes | None:
     """
     Live snapshot via PUT /connection.
     Tries LOCAL first (faster on home network), then REMOTE (cloud proxy).
     If snap.jpg returns 404 (proxy session expired), automatically re-requests
     a fresh connection and retries once.
     hq=True requests highQualityVideo in the connection payload.
+    If cfg is provided and we receive a 401 on PUT /connection, refresh the
+    token once and retry. On second 401 we fail hard with a clear message.
     Returns JPEG bytes or None.
     """
     cam_id  = cam_info.get("id", "")
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    # Mutable list so the inner closure can update the header after a token refresh.
+    headers_box = [{"Authorization": f"Bearer {token}", "Content-Type": "application/json"}]
+
+    def _put_connection(conn_type: str) -> requests.Response:
+        """PUT /connection with one-shot token refresh on 401."""
+        r = requests.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
+            headers=headers_box[0],
+            json={"type": conn_type, "highQualityVideo": hq},
+            timeout=15,
+        )
+        if r.status_code == 401 and cfg is not None:
+            print("  🔄  Token expired (401) — refreshing once...")
+            try:
+                new_token = get_token(cfg)
+            except Exception as e:
+                print(f"  ❌  Token refresh failed: {e}")
+                print("      Run `bosch-camera login` (or `python3 get_token.py`).")
+                return r
+            headers_box[0] = {"Authorization": f"Bearer {new_token}",
+                              "Content-Type": "application/json"}
+            # Also update the cached session so subsequent calls use the new token.
+            make_session(new_token)
+            r = requests.put(
+                f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
+                headers=headers_box[0],
+                json={"type": conn_type, "highQualityVideo": hq},
+                timeout=15,
+            )
+            if r.status_code == 401:
+                print("  ❌  Still 401 after refresh — token could not be refreshed. "
+                      "Run `bosch-camera login`.")
+        return r
 
     def _fetch_snap(conn_type: str) -> bytes | None:
         label = "local" if conn_type == "LOCAL" else "cloud proxy"
         print(f"  🌐  Opening {label} connection...")
-        r = requests.put(
-            f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
-            headers=headers, json={"type": conn_type, "highQualityVideo": hq}, timeout=15,
-        )
+        r = _put_connection(conn_type)
         if r.status_code != 200:
             return None
         data     = r.json()
@@ -590,11 +734,9 @@ def snap_from_proxy(cam_info: dict, token: str, hq: bool = False) -> bytes | Non
             return snap_r.content
         elif snap_r.status_code == 404:
             print(f"  ⚠️   Proxy session expired (404) — re-requesting connection...")
-            # Retry once with a fresh connection
-            r2 = requests.put(
-                f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
-                headers=headers, json={"type": conn_type, "highQualityVideo": hq}, timeout=15,
-            )
+            # Retry once with a fresh connection (reuses the refreshed token if
+            # the first PUT already triggered a token renewal).
+            r2 = _put_connection(conn_type)
             if r2.status_code == 200:
                 data2     = r2.json()
                 urls2     = data2.get("urls", [])
@@ -735,7 +877,7 @@ def cmd_snapshot(cfg: dict, args) -> None:
 
         if live:
             # ── Method 1: Cloud proxy live snap ───────────────────────────────
-            data = snap_from_proxy(cam_info, token, hq=hq)
+            data = snap_from_proxy(cam_info, token, hq=hq, cfg=cfg)
             if data:
                 _save_and_open(data, name, "", "proxy_live")
                 continue
@@ -928,11 +1070,13 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
     srv.listen(2)
 
     def _proxy_thread():
+        _reconnect_attempts = [0]
         while True:
             try:
                 client, _ = srv.accept()
             except OSError:
                 break
+            conn_start = time.time()
             try:
                 raw = socket.create_connection((cam_host, cam_port), timeout=10)
                 # TCP keep-alive to prevent OS from dropping idle connections
@@ -944,8 +1088,17 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
                 except (AttributeError, OSError):
                     pass
                 tls = ctx.wrap_socket(raw, server_hostname=cam_host)
-            except Exception:
+            except Exception as _proxy_exc:
                 client.close()
+                _reconnect_attempts[0] += 1
+                if _reconnect_attempts[0] > 3:
+                    print(
+                        f"  [TLS proxy] {cam_host}:{cam_port} — "
+                        f"3 consecutive connection failures, giving up.",
+                        file=sys.stderr,
+                    )
+                    break
+                time.sleep(2 ** (_reconnect_attempts[0] - 1))  # 1s, 2s, 4s
                 continue
             client.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
@@ -974,6 +1127,16 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
             t2 = threading.Thread(target=_pipe, args=(tls, client, True), daemon=True)
             t1.start()
             t2.start()
+            # Reset failure counter after the connection stays up 30s+.
+            def _reset_on_stable(start, counter):
+                t1.join(timeout=30)
+                if time.time() - start >= 30:
+                    counter[0] = 0
+            threading.Thread(
+                target=_reset_on_stable,
+                args=(conn_start, _reconnect_attempts),
+                daemon=True,
+            ).start()
 
     t = threading.Thread(target=_proxy_thread, daemon=True)
     t.start()
@@ -1215,6 +1378,7 @@ def cmd_live(cfg: dict, args) -> None:
         # LOCAL response gives user/password + LAN IP — credentials embedded in RTSP URL.
         force_local = getattr(args, "local", False)
         type_candidates = ["LOCAL"] if force_local else ["REMOTE", "LOCAL"]
+        token_refreshed = False  # refresh the bearer at most once per camera
         for type_val in type_candidates:
             r = session.put(
                 url,
@@ -1222,13 +1386,32 @@ def cmd_live(cfg: dict, args) -> None:
                 headers={"Content-Type": "application/json"},
                 timeout=15,
             )
+            if r.status_code == 401 and not token_refreshed:
+                # One-shot refresh: update the cached session's Authorization
+                # header and retry this single connection type immediately.
+                print("  🔄  Token expired (401) — refreshing once...")
+                try:
+                    new_token = get_token(cfg)
+                except Exception as e:
+                    print(f"  ❌  Token refresh failed: {e}")
+                    print("      Run `bosch-camera login` (or `python3 get_token.py`).")
+                    break
+                token = new_token
+                session = make_session(token)
+                token_refreshed = True
+                r = session.put(
+                    url,
+                    json={"type": type_val, "highQualityVideo": hq},
+                    headers={"Content-Type": "application/json"},
+                    timeout=15,
+                )
             if r.status_code in (200, 201):
                 result      = r.json()
                 result_type = type_val
                 print(f"  ✅  ConnectionType '{type_val}' worked!")
                 break
             elif r.status_code == 401:
-                print("  ❌  Token expired.")
+                print("  ❌  Token could not be refreshed — run `bosch-camera login`.")
                 break
 
         if result:
@@ -2196,8 +2379,13 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
     def on_notification(notification, persistent_id, obj=None):
         """Called on each FCM push — fetch events for all cameras."""
         now_str = datetime.datetime.now().strftime("%H:%M:%S")
-        # Re-get token in case it was refreshed
+        # Re-get token in case it was refreshed. make_session() returns the
+        # cached module-level Session with the Authorization header updated, so
+        # the connection pool is shared across all FCM-triggered fetches.
         tok = cfg["account"].get("bearer_token", token)
+        # Pre-emptive token refresh before making API calls.
+        if _is_token_near_expiry(tok):
+            tok = get_token(cfg)
         sess = make_session(tok)
 
         for name, cam_id in cam_ids.items():
@@ -2310,7 +2498,7 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
         await client.start()
 
         try:
-            while True:
+            while not _STOP_REQUESTED.is_set():
                 await asyncio.sleep(1)
                 if duration and (time.time() - start_time[0]) >= duration:
                     print(f"\n  Duration of {duration}s reached — stopping.")
@@ -2318,7 +2506,13 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
         except asyncio.CancelledError:
             pass
         finally:
-            await client.stop()
+            # Ensure FCM client is always shut down cleanly, even on SIGTERM.
+            try:
+                await client.stop()
+            except Exception as e:
+                print(f"  [warn] FCM client.stop() raised: {e}", file=sys.stderr)
+
+    _install_stop_handlers()
 
     try:
         import asyncio
@@ -2417,19 +2611,34 @@ def cmd_watch(cfg: dict, args) -> None:
     total_new  = 0
 
     def _renew_session() -> tuple[str, requests.Session]:
+        # With cached module-level session, this only refreshes the Bearer token
+        # on the shared Session object — no new connection pool is created.
         t = get_token(cfg)
         s = make_session(t)
         return t, s
 
+    _install_stop_handlers()
+
     try:
-        while True:
+        while not _STOP_REQUESTED.is_set():
             if duration and (time.time() - start_time) >= duration:
                 print(f"\n  Duration of {duration}s reached — stopping.")
                 break
 
-            time.sleep(interval)
+            # Sleep in short slices so SIGTERM/SIGINT is honored promptly.
+            slept = 0.0
+            while slept < interval and not _STOP_REQUESTED.is_set():
+                time.sleep(min(1.0, interval - slept))
+                slept += 1.0
+            if _STOP_REQUESTED.is_set():
+                break
 
             now_str = datetime.datetime.now().strftime("%H:%M:%S")
+
+            # Pre-emptive token refresh: renew before the token expires
+            # rather than waiting for a 401 response.
+            if _is_token_near_expiry(token):
+                token, session = _renew_session()
 
             for name, cam_info in cams.items():
                 cam_id  = cam_info["id"]
@@ -2437,7 +2646,9 @@ def cmd_watch(cfg: dict, args) -> None:
                 # Fetch latest events; retry once on 401
                 try:
                     events = api_get_events(session, cam_id, limit=20)
-                except Exception:
+                except Exception as e:
+                    print(f"  [warn] event fetch failed for {name}: {e}",
+                          file=sys.stderr)
                     events = []
 
                 if not events and session.headers.get("Authorization", ""):
@@ -2445,7 +2656,9 @@ def cmd_watch(cfg: dict, args) -> None:
                     try:
                         token, session = _renew_session()
                         events = api_get_events(session, cam_id, limit=20)
-                    except Exception:
+                    except Exception as e:
+                        print(f"  [warn] event re-fetch after renew failed for {name}: {e}",
+                              file=sys.stderr)
                         events = []
 
                 baseline = last_seen.get(name, "")
@@ -6130,25 +6343,10 @@ def main():
     # ── parse ──────────────────────────────────────────────────────────────────
     args = parser.parse_args()
 
-    # Provide sensible defaults for attributes that some subparsers don't define,
-    # so all cmd_* functions can safely use getattr(args, "...", default).
-    _defaults = dict(
-        cam=None, action=None, sub=None, sub_arg=None, share_cam=None,
-        limit=None,
-        re_download=False,
-        live=False, vlc=False, full=False, minutes=None,
-        interval=30, duration=0,
-        enable=False, disable=False, sensitivity=None,
-        threshold=None, sound_on=False, sound_off=False, push=False,
-        signal=None, signal_sender=None, signal_recipients=None,
-        push_mode="auto", speaker_level=50,
-        rule_name=None, start="00:00", end="23:59", days="0,1,2,3,4,5,6",
-        rule_id=None, active=False, inactive=False,
-        new_name=None, display_name=None, marketing=None,
-    )
-    for _k, _v in _defaults.items():
-        if not hasattr(args, _k):
-            setattr(args, _k, _v)
+    # Note: cmd_* functions read optional args exclusively via
+    # getattr(args, "name", fallback) with per-call fallbacks. We deliberately do
+    # NOT pre-populate missing attributes here — the previous `_defaults` dict
+    # has been removed so argparse's own Namespace is the single source of truth.
 
     # Load (or create) config
     cfg = load_config()
