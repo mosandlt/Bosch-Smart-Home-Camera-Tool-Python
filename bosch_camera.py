@@ -68,7 +68,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.1.2"
+VERSION     = "10.2.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -803,7 +803,10 @@ def snap_from_local(cam_info: dict) -> bytes | None:
     if not local_ip or not username or not password:
         return None
 
-    url = f"https://{local_ip}/snap.jpg"
+    # Append ?JpegSize=1206 — without it the camera triggers a slow on-demand
+    # full-sensor capture (~6–10 s when idle). With it, the cached path serves
+    # in ~1.4 s. Verified empirically; matches HA integration v10.4.5 fix.
+    url = f"https://{local_ip}/snap.jpg?JpegSize=1206"
     print(f"  🏠  Trying local camera snapshot: {url}")
     try:
         from requests.auth import HTTPDigestAuth
@@ -1799,6 +1802,24 @@ def cmd_info(cfg: dict, args) -> None:
                 if d:
                     ip_str = rcp_parse_ip(d) if len(d) == 4 else rcp_parse_string(d)
                     print(f"      LAN IP:        {ip_str}  (via RCP)")
+
+                # Privacy mask cross-check (0x0d00 P_OCTET, 4 bytes, byte[1]==1 means ON)
+                # Bosch cloud /v11/video_inputs.privacyMode has been observed
+                # to misreport `OFF` for ONLINE cams in privacy (Gen2 Outdoor
+                # FW 9.40.25, 2026-04-27 — matches HA integration v10.4.8 fix).
+                # RCP reads camera hardware directly; flag any mismatch.
+                d = rcp_read(_rcp_url, "0x0d00", _rcp_sessionid)
+                if d and len(d) >= 2:
+                    rcp_priv_on = d[1] == 1
+                    cloud_priv_on = (priv == "ON") if priv in ("ON", "OFF") else None
+                    if cloud_priv_on is not None and cloud_priv_on != rcp_priv_on:
+                        print(
+                            f"      ⚠️  Privacy MISMATCH: cloud='{priv}', "
+                            f"hardware={'ON' if rcp_priv_on else 'OFF'} (via RCP) "
+                            f"— trust hardware; cloud can lag/lie"
+                        )
+                    else:
+                        print(f"      Privacy (RCP): {'ON' if rcp_priv_on else 'OFF'}  (matches cloud)")
 
             except RuntimeError as _rcp_err:
                 print(f"      RCP:           unavailable ({_rcp_err})")
