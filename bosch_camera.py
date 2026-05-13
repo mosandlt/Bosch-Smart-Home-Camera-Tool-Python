@@ -2314,7 +2314,7 @@ def _get_fcm_ios_api_key() -> str:
 def _get_fcm_api_key() -> str:
     """Return the Google API key for FCM registration.
 
-    Switched 2026-04-20 to the official OSS key provided by Bosch (***).
+    Switched 2026-04-20 to the vendor-sanctioned OSS key.
     Firebase Installations + FCM registration permissions confirmed working.
     """
     import base64
