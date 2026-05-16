@@ -99,7 +99,7 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 | **Snapshots** | ✅ Native `Camera.image` | ✅ `snapshot` command | ✅ File-store + base64 DP |
 | **Live RTSP stream (LAN)** | ✅ via HA Stream component | ✅ ffmpeg/RTSPS output | ✅ TLS proxy → local RTSP |
 | **WebRTC (sub-second latency)** | ✅ via integrated go2rtc | ❌ | ❌ |
-| **Dual-stream URL (main + sub)** | ❌ | ❌ | ✅ `stream_url` + `stream_url_sub` *(v0.5.3 experimental)* |
+| **Dual-stream URL (main + sub)** | ✅ `sensor.bosch_<n>_stream_url` + `_sub` *(v12.4.0, opt-in per cam)* | ❌ | ✅ `stream_url` + `stream_url_sub` *(v0.5.3 experimental)* |
 | **External recorder (BlueIris, Frigate)** | ✅ via go2rtc | ✅ stdout pipe | ✅ Digest-creds URL + LAN bind option |
 | **Privacy mode** | ✅ switch entity | ✅ command | ✅ DP |
 | **Front spotlight (Gen1/Gen2)** | ✅ light entity | ✅ command | ✅ DP |
@@ -121,7 +121,7 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 | **ioBroker VIS dashboard** | n/a | n/a | ✅ via `snapshot_path` + `stream_url` |
 | **Cloud-relay REMOTE fallback** | ✅ auto-switch when LAN unreachable | ✅ remote mode | ❌ *(LOCAL-only by design)* |
 | **Browser-based admin / config UI** | ✅ HA Config Flow | n/a (CLI) | ✅ JSON-config tabs |
-| **UI languages** | DE · EN · FR · NL · IT · ES | EN only (CLI output) | EN · DE · FR · ES · IT · NL · PL · PT · RU · UK · ZH-CN |
+| **UI languages** | EN · DE · FR · ES · IT · NL · PL · PT · RU · UK · ZH-Hans *(v12.4.0)* | EN only (CLI output) | EN · DE · FR · ES · IT · NL · PL · PT · RU · UK · ZH-CN |
 
 **Legend:** ✅ supported · ❌ not supported / not planned · n/a not applicable for this platform.
 
