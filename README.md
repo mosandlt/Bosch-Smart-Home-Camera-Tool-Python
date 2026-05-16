@@ -175,6 +175,23 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 | Automatic token via browser login | `get_token.py` |
 | Silent token renewal / token fix | `token [fix\|browser]` |
 
+### Architecture
+
+```mermaid
+flowchart LR
+    CLI[CLI<br/>bosch_camera.py] -->|OAuth2 PKCE<br/>token refresh| Cloud[Bosch CBS API<br/>residential.cbs<br/>.boschsecurity.com]
+    CLI -->|REST: video_inputs<br/>events / privacy /<br/>lighting / rules / ...| Cloud
+    Cloud -->|FCM push<br/>watch --push| CLI
+    CLI -->|PUT /connection<br/>type=LOCAL| Cloud
+    CLI -->|spawn| Proxy[TLS proxy<br/>localhost:&lt;port&gt;]
+    Proxy -->|RTSP over TLS| Cam[Bosch Camera<br/>LAN :443]
+    Cloud -.->|type=REMOTE<br/>cloud relay| CRP[proxy-NN.live<br/>.cbs.boschsecurity.com]
+    Proxy -.->|REMOTE| CRP
+    Proxy -->|rtsp://127.0.0.1| Player[ffplay / VLC /<br/>ffmpeg pipe]
+    CLI -->|Signal sendTo<br/>watch --signal| Signal[signal-cli<br/>REST API]
+    CLI -->|file write| Files[snapshots/<br/>downloads/<br/>bosch_config.json]
+```
+
 ---
 
 ## Prerequisites — Setting Up a New Camera
@@ -224,6 +241,26 @@ On first run the tool:
 5. Asks for the local IP of each camera (optional, press Enter to skip)
 6. Opens the interactive menu
 
+#### Browser OAuth2 PKCE flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CLI as CLI / get_token.py
+    participant Browser
+    participant Bosch as Bosch SingleKey ID
+    CLI->>CLI: generate PKCE verifier + state, start localhost callback server
+    CLI->>Browser: open https://smarthome.authz.bosch.com/.../auth?challenge=...
+    Browser->>Bosch: login (credentials, captcha, MFA)
+    Bosch->>Browser: 302 to http://localhost:PORT/?code=...&state=...
+    Browser->>CLI: callback request
+    CLI->>Bosch: POST /token (code + PKCE verifier)
+    Bosch-->>CLI: access_token + refresh_token
+    CLI->>CLI: write refresh_token to bosch_config.json
+    CLI->>Bosch: GET /v11/video_inputs (with bearer)
+    Bosch-->>CLI: camera list → saved to bosch_config.json
+```
+
 ### 2. Interactive menu
 
 Run without arguments to get the menu:
@@ -272,6 +309,19 @@ python3 bosch_camera.py liveshot Outdoor --hq     # high-quality live snapshot
 ```
 
 ### Live Stream — 30fps H.264 + AAC Audio
+
+```mermaid
+flowchart LR
+    CLI[CLI: live cmd] -->|PUT /connection<br/>type=LOCAL or REMOTE| Cloud[Bosch CBS API]
+    Cloud -->|rtspUrl + creds<br/>+ bufferingTime| CLI
+    CLI -->|spawn TLS proxy<br/>localhost:&lt;port&gt;| Proxy
+    Cloud -.->|LOCAL only| Cam[Camera 192.168.x.y:443]
+    Cloud -.->|REMOTE only| Relay[proxy-NN.live<br/>.cbs.boschsecurity.com]
+    Proxy[TLS proxy<br/>localhost] -->|TLS tunnel| Cam
+    Proxy -.->|TLS tunnel<br/>cert SAN mismatch ignored| Relay
+    Proxy -->|rtsp://127.0.0.1:&lt;port&gt;<br/>/rtsp_tunnel?inst=N| Player[ffplay / VLC]
+    CLI -.->|hourly session renew<br/>~60s before maxSessionDuration| Cloud
+```
 
 ```bash
 python3 bosch_camera.py live Outdoor              # opens in ffplay
