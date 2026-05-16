@@ -183,8 +183,8 @@ flowchart LR
     CLI -->|REST: video_inputs<br/>events / privacy /<br/>lighting / rules / ...| Cloud
     Cloud -->|FCM push<br/>watch --push| CLI
     CLI -->|PUT /connection<br/>type=LOCAL| Cloud
-    CLI -->|spawn| Proxy[TLS proxy<br/>localhost:&lt;port&gt;]
-    Proxy -->|RTSP over TLS| Cam[Bosch Camera<br/>LAN :443]
+    CLI -->|spawn| Proxy["TLS proxy<br/>localhost:&lt;port&gt;"]
+    Proxy -->|RTSP over TLS| Cam["Bosch Camera<br/>LAN :443"]
     Cloud -.->|type=REMOTE<br/>cloud relay| CRP[proxy-NN.live<br/>.cbs.boschsecurity.com]
     Proxy -.->|REMOTE| CRP
     Proxy -->|rtsp://127.0.0.1| Player[ffplay / VLC /<br/>ffmpeg pipe]
@@ -312,14 +312,14 @@ python3 bosch_camera.py liveshot Outdoor --hq     # high-quality live snapshot
 
 ```mermaid
 flowchart LR
-    CLI[CLI: live cmd] -->|PUT /connection<br/>type=LOCAL or REMOTE| Cloud[Bosch CBS API]
+    CLI["CLI: live cmd"] -->|PUT /connection<br/>type=LOCAL or REMOTE| Cloud[Bosch CBS API]
     Cloud -->|rtspUrl + creds<br/>+ bufferingTime| CLI
     CLI -->|spawn TLS proxy<br/>localhost:&lt;port&gt;| Proxy
-    Cloud -.->|LOCAL only| Cam[Camera 192.168.x.y:443]
+    Cloud -.->|LOCAL only| Cam["Camera 192.168.x.y:443"]
     Cloud -.->|REMOTE only| Relay[proxy-NN.live<br/>.cbs.boschsecurity.com]
     Proxy[TLS proxy<br/>localhost] -->|TLS tunnel| Cam
     Proxy -.->|TLS tunnel<br/>cert SAN mismatch ignored| Relay
-    Proxy -->|rtsp://127.0.0.1:&lt;port&gt;<br/>/rtsp_tunnel?inst=N| Player[ffplay / VLC]
+    Proxy -->|"rtsp://127.0.0.1:&lt;port&gt;<br/>/rtsp_tunnel?inst=N"| Player[ffplay / VLC]
     CLI -.->|hourly session renew<br/>~60s before maxSessionDuration| Cloud
 ```
 
