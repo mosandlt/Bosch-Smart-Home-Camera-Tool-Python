@@ -70,7 +70,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.3.0"
+VERSION     = "10.4.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -2548,6 +2548,118 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
         print(f"\n\n  Stopped after {elapsed}s. Total new events: {total_new[0]}")
 
 
+class MotionEdgeTracker:
+    """
+    Track motion state with rising/falling edge detection and hysteresis.
+
+    State machine:
+      inactive → active  : rising edge  (first motion event after quiet period)
+      active   → inactive: falling edge (no events for quiet_secs seconds)
+
+    Usage::
+        tracker = MotionEdgeTracker(quiet_secs=30)
+        edge = tracker.update(new_events)  # returns "rising", "falling", or None
+    """
+
+    INACTIVE: str = "inactive"
+    ACTIVE: str = "active"
+
+    def __init__(self, quiet_secs: int = 30) -> None:
+        self.quiet_secs: int = quiet_secs
+        self._state: str = self.INACTIVE
+        # Timestamp of last seen motion event; float('-inf') = never seen any event
+        self._last_event_time: float = float("-inf")
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    def update(self, events: list[dict], now: Optional[float] = None) -> Optional[str]:
+        """
+        Process a list of new motion-related events and return an edge transition.
+
+        Parameters
+        ----------
+        events:
+            New events since last poll (may be empty). Each dict must have at
+            least a ``"timestamp"`` key (ISO-8601 string) or will be ignored for
+            timing; the *presence* of any event counts as a motion signal.
+        now:
+            Wall-clock time (``time.time()``). Defaults to ``time.time()``.
+            Supplied explicitly by tests via freezegun-controlled time.
+
+        Returns
+        -------
+        ``"rising"``
+            Transitioned from inactive → active.
+        ``"falling"``
+            Transitioned from active → inactive (hysteresis expired).
+        ``None``
+            No state change.
+        """
+        if now is None:
+            now = time.time()
+
+        has_events = bool(events)
+
+        if has_events:
+            self._last_event_time = now
+            if self._state == self.INACTIVE:
+                self._state = self.ACTIVE
+                return "rising"
+            # Already active — motion continues, reset quiet timer (done above)
+            return None
+
+        # No new events — check if quiet period has elapsed
+        if self._state == self.ACTIVE:
+            quiet_elapsed = now - self._last_event_time
+            if self.quiet_secs == 0 or quiet_elapsed >= self.quiet_secs:
+                self._state = self.INACTIVE
+                return "falling"
+
+        return None
+
+    def active_duration(self, now: Optional[float] = None) -> float:
+        """Return how many seconds we have been continuously active (0 if inactive)."""
+        if self._state == self.INACTIVE:
+            return 0.0
+        if now is None:
+            now = time.time()
+        return max(0.0, now - self._last_event_time)
+
+
+# ── Motion snapshot helpers ────────────────────────────────────────────────────
+
+_MOTION_SNAPSHOT_KEEP = 100   # max snapshots per camera in captures/<cam>/
+
+
+def _motion_snapshot_dir(cam_name: str) -> str:
+    """Return (and create) the captures/<cam> directory for motion snapshots."""
+    d = os.path.join(BASE_DIR, "captures", cam_name)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _motion_snapshot_cleanup(cam_name: str, keep: int = _MOTION_SNAPSHOT_KEEP) -> None:
+    """Delete oldest motion_*.jpg files if count exceeds *keep*."""
+    d = _motion_snapshot_dir(cam_name)
+    snaps = sorted(
+        [f for f in os.listdir(d) if f.startswith("motion_") and f.endswith(".jpg")]
+    )
+    excess = len(snaps) - keep
+    if excess > 0:
+        for fname in snaps[:excess]:
+            try:
+                os.remove(os.path.join(d, fname))
+            except OSError:
+                pass
+        print(t("watch.motion.cleanup_purged", count=excess, kept=keep))
+
+
 def cmd_watch(cfg: dict, args) -> None:
     """
     Watch for new camera events by polling GET /v11/events every N seconds.
@@ -2571,6 +2683,19 @@ def cmd_watch(cfg: dict, args) -> None:
     signal_sender = getattr(args, "signal_sender", "") or ""
     signal_recipients_str = getattr(args, "signal_recipients", "") or ""
     signal_recipients = [r.strip() for r in signal_recipients_str.split(",") if r.strip()] if signal_recipients_str else []
+
+    # Motion edge tracking flags
+    quiet_secs: int = getattr(args, "quiet_secs", 30) or 30
+    motion_auto_snap: bool = getattr(args, "auto_snapshot", False)
+    track_motion: bool = getattr(args, "track_motion", False) or motion_auto_snap
+
+    # One MotionEdgeTracker per camera (keyed by camera name)
+    motion_trackers: dict[str, MotionEdgeTracker] = {}
+    # Timestamp of rising edge (per camera) — used to compute duration on falling edge
+    motion_rise_time: dict[str, float] = {}
+    if track_motion:
+        for cam_name in cams:
+            motion_trackers[cam_name] = MotionEdgeTracker(quiet_secs=quiet_secs)
 
     if signal_url:
         print(f"  📨  Signal alerts → {signal_url} (sender={signal_sender}, recipients={signal_recipients})")
@@ -2739,6 +2864,48 @@ def cmd_watch(cfg: dict, args) -> None:
                             api_mark_events_read(session, read_ids)
                         except Exception:
                             pass
+
+                # ── Motion edge tracking ───────────────────────────────────
+                # Called every poll iteration (new_events may be []) so that
+                # the hysteresis timer fires even when no events arrive.
+                if track_motion and name in motion_trackers:
+                    tracker = motion_trackers[name]
+                    edge = tracker.update(new_events)
+                    if edge == "rising":
+                        ts_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        motion_rise_time[name] = time.time()
+                        print(t("watch.motion.rising", camera=name, timestamp=ts_now))
+                        # Auto-snapshot on rising edge
+                        if motion_auto_snap:
+                            snap_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                            snap_dir = _motion_snapshot_dir(name)
+                            snap_path = os.path.join(snap_dir, f"motion_{snap_ts}.jpg")
+                            snap_data: Optional[bytes] = None
+                            try:
+                                snap_data = snap_from_proxy(
+                                    cam_info, token, hq=False, cfg=cfg
+                                )
+                            except Exception:
+                                pass
+                            if snap_data is None:
+                                try:
+                                    snap_data = snap_from_local(cam_info)
+                                except Exception:
+                                    pass
+                            if snap_data:
+                                try:
+                                    with open(snap_path, "wb") as _sf:
+                                        _sf.write(snap_data)
+                                    print(t("watch.motion.snapshot_saved", path=snap_path))
+                                    _motion_snapshot_cleanup(name)
+                                except Exception as _se:
+                                    print(t("watch.motion.snapshot_failed", reason=str(_se)))
+                            else:
+                                print(t("watch.motion.snapshot_failed", reason="no image data"))
+                    elif edge == "falling":
+                        rise_t = motion_rise_time.pop(name, time.time())
+                        duration_secs = int(time.time() - rise_t)
+                        print(t("watch.motion.falling", camera=name, duration_secs=duration_secs))
 
     except KeyboardInterrupt:
         elapsed = int(time.time() - start_time)
@@ -5911,6 +6078,12 @@ def main():
                          help="Signal sender number (your registered signal-cli number)")
     p_watch.add_argument("--push-mode", choices=["auto", "android", "ios", "polling"], default="auto",
                          help="Push notification mode: auto (try ios->android->polling), android, ios, polling")
+    p_watch.add_argument("--track-motion", action="store_true", dest="track_motion",
+                         help=t("help.watch.track_motion"))
+    p_watch.add_argument("--auto-snapshot", action="store_true", dest="auto_snapshot",
+                         help=t("help.watch.auto_snapshot"))
+    p_watch.add_argument("--quiet-secs", type=int, default=30, metavar="N", dest="quiet_secs",
+                         help=t("help.watch.quiet_secs"))
 
     # ── intercom ────────────────────────────────────────────────────────────────
     p_intercom = subparsers.add_parser(

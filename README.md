@@ -533,6 +533,12 @@ python3 bosch_camera.py watch --push --push-mode auto      # try iOS first, then
 python3 bosch_camera.py watch --push --push-mode ios       # FCM push via iOS credentials
 python3 bosch_camera.py watch --push --push-mode android   # FCM push via Android credentials
 python3 bosch_camera.py watch --push --push-mode polling   # disable FCM, use periodic polling only
+
+# Motion edge tracking (rising/falling transitions with hysteresis)
+python3 bosch_camera.py watch --track-motion              # print rising/falling edge events
+python3 bosch_camera.py watch Outdoor --track-motion --quiet-secs 60  # custom hysteresis (60s)
+python3 bosch_camera.py watch --auto-snapshot             # capture JPEG on every rising edge
+python3 bosch_camera.py watch Outdoor --auto-snapshot --quiet-secs 45  # snapshot + 45s hysteresis
 ```
 
 ### Token Management
