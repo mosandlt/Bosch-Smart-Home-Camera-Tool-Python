@@ -42,6 +42,11 @@ Usage (CLI):
   python3 bosch_camera.py account                          # feature flags, contracts, purchases
   python3 bosch_camera.py config                           # show current config
   python3 bosch_camera.py rescan                           # re-discover cameras
+  python3 bosch_camera.py nvr status [<cam-name>]          # NVR status (BETA)
+  python3 bosch_camera.py nvr list   [<cam-name>] [--limit N]
+  python3 bosch_camera.py nvr prune  [<cam-name>] [--keep N]
+  python3 bosch_camera.py nvr upload [<cam-name>] [--clip PATH]
+  python3 bosch_camera.py watch      [<cam-name>] --auto-record  # motion → MP4 (BETA)
 """
 
 import os
@@ -70,7 +75,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.6.0"
+VERSION     = "10.7.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -132,6 +137,24 @@ DEFAULT_CONFIG = {
             "local_ip / local_username / local_password per camera: "
             "enables direct local snap.jpg (HTTP Digest auth). "
             "local_ip and credentials are optional — cloud API works without them."
+        ),
+    },
+    "nvr": {
+        "max_clips":      50,
+        "max_duration":   60,
+        "smb": {
+            "host":                "",
+            "share":               "",
+            "username":            "",
+            "password":            "",
+            "path":                "",
+            "delete_after_upload": False,
+        },
+        "_note": (
+            "nvr.max_clips: keep only the N most recent clips per camera (FIFO). "
+            "nvr.max_duration: maximum single clip length in seconds. "
+            "nvr.smb.*: optional SMB/NAS upload — requires 'pip install smbprotocol'. "
+            "Leave nvr.smb.host empty to disable upload."
         ),
     },
 }
@@ -2932,6 +2955,346 @@ def _motion_snapshot_cleanup(cam_name: str, keep: int = _MOTION_SNAPSHOT_KEEP) -
         print(t("watch.motion.cleanup_purged", count=excess, kept=keep))
 
 
+# ══════════════════════════ NVR (BETA) ═══════════════════════════════════════
+#
+# Mini-NVR: motion-triggered local MP4 recording via ffmpeg segment muxer.
+#
+# Storage layout:  captures/<cam>/nvr/YYYY-MM-DD/HHMMSS.mp4
+# FIFO eviction:   oldest clips deleted when count exceeds nvr.max_clips.
+# SMB upload:      optional, via smbprotocol library; sequential, own connection
+#                  cache per upload to avoid SMB credit starvation (see
+#                  knowledge-base/smb-credit-starvation.md).
+#
+# BETA limitations (see README):
+#   - RTSP URL must already be resolved (camera must have been live at least once).
+#   - ffmpeg is required (brew install ffmpeg / apt-get install ffmpeg).
+#   - smbprotocol is optional; install with: pip install smbprotocol
+#   - No H.265 transcoding — clips are remuxed as-is from the RTSP stream.
+#   - clip naming is second-precision; rapid consecutive recordings may collide
+#     (TODO: add sub-second suffix if needed).
+
+_NVR_DEFAULT_MAX_CLIPS = 50
+_NVR_DEFAULT_MAX_DURATION = 60   # seconds per clip
+
+
+def _nvr_clip_dir(cam_name: str, base_dir: Optional[str] = None) -> str:
+    """Return (and create) captures/<cam>/nvr/YYYY-MM-DD/ for today."""
+    root = base_dir or BASE_DIR
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    d = os.path.join(root, "captures", cam_name, "nvr", date_str)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _nvr_clip_path(cam_name: str, base_dir: Optional[str] = None) -> str:
+    """Return full path for a new clip: .../nvr/YYYY-MM-DD/HHMMSS.mp4"""
+    clip_dir = _nvr_clip_dir(cam_name, base_dir)
+    ts = datetime.datetime.now().strftime("%H%M%S")
+    return os.path.join(clip_dir, f"{ts}.mp4")
+
+
+def _nvr_all_clips(cam_name: str, base_dir: Optional[str] = None) -> list[str]:
+    """Return sorted list of all MP4 clip paths for a camera (oldest first)."""
+    root = base_dir or BASE_DIR
+    nvr_root = os.path.join(root, "captures", cam_name, "nvr")
+    clips: list[str] = []
+    if not os.path.isdir(nvr_root):
+        return clips
+    for day_dir in sorted(os.listdir(nvr_root)):
+        day_path = os.path.join(nvr_root, day_dir)
+        if not os.path.isdir(day_path):
+            continue
+        for fname in sorted(os.listdir(day_path)):
+            if fname.endswith(".mp4"):
+                clips.append(os.path.join(day_path, fname))
+    return clips
+
+
+def _nvr_prune(cam_name: str, keep: int = _NVR_DEFAULT_MAX_CLIPS,
+               base_dir: Optional[str] = None) -> tuple[int, int]:
+    """FIFO: delete oldest clips so at most *keep* remain.
+
+    Returns (removed_count, kept_count).
+    """
+    clips = _nvr_all_clips(cam_name, base_dir)
+    excess = len(clips) - keep
+    removed = 0
+    if excess > 0:
+        for path in clips[:excess]:
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError:
+                pass
+        # Remove empty day-directories
+        root = base_dir or BASE_DIR
+        nvr_root = os.path.join(root, "captures", cam_name, "nvr")
+        if os.path.isdir(nvr_root):
+            for day_dir in os.listdir(nvr_root):
+                day_path = os.path.join(nvr_root, day_dir)
+                try:
+                    if os.path.isdir(day_path) and not os.listdir(day_path):
+                        os.rmdir(day_path)
+                except OSError:
+                    pass
+    kept = len(_nvr_all_clips(cam_name, base_dir))
+    return removed, kept
+
+
+def _nvr_disk_mb(cam_name: str, base_dir: Optional[str] = None) -> float:
+    """Return total disk usage of NVR clips for a camera in MiB."""
+    clips = _nvr_all_clips(cam_name, base_dir)
+    total = 0
+    for p in clips:
+        try:
+            total += os.path.getsize(p)
+        except OSError:
+            pass
+    return total / (1024 * 1024)
+
+
+def _start_motion_recording(
+    cam: dict,
+    output_dir: Optional[str] = None,
+    max_duration: int = _NVR_DEFAULT_MAX_DURATION,
+    base_dir: Optional[str] = None,
+) -> Optional["subprocess.Popen[bytes]"]:
+    """Start an ffmpeg process that records the camera RTSP stream to an MP4 file.
+
+    Uses the RTSP URL stored in cam['last_live'] (set when the camera was last
+    opened via the 'live' command).  If no RTSP URL is available, returns None.
+
+    The process writes a single MP4 file (not segmented) capped at *max_duration*
+    seconds via ffmpeg's -t flag.  The caller is responsible for terminating the
+    process early on a falling motion edge.
+
+    Returns the subprocess.Popen object so the caller can wait() / terminate() it,
+    or None on error.
+
+    TODO: add RTSP URL auto-resolution via PUT /connection when last_live is empty.
+    """
+    last_live = cam.get("last_live") or {}
+    rtsp_url = last_live.get("rtsp_url", "")
+    if not rtsp_url:
+        # Fallback: build a best-effort RTSP URL from proxy_url if present
+        proxy_url = last_live.get("proxy_url", "")
+        if proxy_url and proxy_url.startswith("rtsps://"):
+            rtsp_url = proxy_url
+    if not rtsp_url:
+        return None
+
+    cam_name = cam.get("name", "unknown")
+    out_path = _nvr_clip_path(cam_name, base_dir)
+
+    ffmpeg_cmd = [
+        "ffmpeg", "-y",
+        "-rtsp_transport", "tcp",
+        "-i", rtsp_url,
+        "-t", str(max_duration),
+        "-c", "copy",
+        "-movflags", "+faststart",
+        out_path,
+    ]
+
+    try:
+        proc = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # Attach the output path as a custom attribute so callers can reference it
+        proc._nvr_out_path = out_path  # type: ignore[attr-defined]
+        return proc
+    except FileNotFoundError:
+        # ffmpeg not installed
+        return None
+    except Exception:
+        return None
+
+
+def _nvr_smb_upload(clip_path: str, cfg: dict) -> tuple[bool, str]:
+    """Upload *clip_path* to the configured SMB share.
+
+    Best-practice: fresh connection_cache per upload session (avoids SMB credit
+    starvation when multiple uploads run — see knowledge-base/smb-credit-starvation.md).
+
+    Returns (success: bool, message: str).
+    """
+    smb_cfg = cfg.get("nvr", {}).get("smb", {})
+    host = smb_cfg.get("host", "").strip()
+    share = smb_cfg.get("share", "").strip()
+    username = smb_cfg.get("username", "").strip()
+    password = smb_cfg.get("password", "").strip()
+    remote_path = smb_cfg.get("path", "").strip().lstrip("/\\")
+
+    if not host:
+        return False, t("nvr.upload.not_configured")
+
+    try:
+        import smbclient  # type: ignore[import-unresolved]
+        import smbclient.shutil as smb_shutil  # type: ignore[import-unresolved]
+    except ImportError:
+        return False, t("err.smb.library_missing")
+
+    fname = os.path.basename(clip_path)
+    # Build remote directory path inside the share
+    remote_dir_parts = [f"\\\\{host}\\{share}"]
+    if remote_path:
+        remote_dir_parts.append(remote_path.replace("/", "\\"))
+    remote_dir = "\\".join(remote_dir_parts)
+    remote_file = remote_dir + "\\" + fname
+
+    # Fresh connection_cache per upload — prevents credit starvation
+    conn_cache: dict = {}
+
+    t_start = time.time()
+    try:
+        # Ensure remote directory exists
+        smbclient.makedirs(
+            remote_dir,
+            username=username,
+            password=password,
+            connection_cache=conn_cache,
+            exist_ok=True,
+        )
+        file_size = os.path.getsize(clip_path)
+        with open(clip_path, "rb") as local_f:
+            with smbclient.open_file(
+                remote_file,
+                mode="wb",
+                username=username,
+                password=password,
+                connection_cache=conn_cache,
+            ) as remote_f:
+                shutil.copyfileobj(local_f, remote_f)
+
+        duration_secs = round(time.time() - t_start, 1)
+        return True, t(
+            "nvr.upload.success",
+            bytes=file_size,
+            duration_secs=duration_secs,
+        )
+    except Exception as exc:
+        return False, t("nvr.upload.failed", reason=str(exc))
+    finally:
+        # Explicitly close connection to release SMB credits
+        try:
+            smbclient.reset_connection_cache(connection_cache=conn_cache)
+        except Exception:
+            pass
+
+
+# ── NVR state (in-process; resets on restart) ────────────────────────────────
+# Maps camera name → active Popen (None if not recording)
+_nvr_active: dict[str, Optional["subprocess.Popen[bytes]"]] = {}
+_nvr_start_times: dict[str, float] = {}   # camera name → epoch when recording started
+
+
+def _nvr_is_recording(cam_name: str) -> bool:
+    proc = _nvr_active.get(cam_name)
+    return proc is not None and proc.poll() is None
+
+
+def _nvr_recording_duration(cam_name: str) -> int:
+    """Seconds since this camera's recording started (0 if not recording)."""
+    if not _nvr_is_recording(cam_name):
+        return 0
+    return int(time.time() - _nvr_start_times.get(cam_name, time.time()))
+
+
+# ── NVR sub-command handlers ──────────────────────────────────────────────────
+
+def _cmd_nvr_status(cfg: dict, args) -> None:
+    cam_arg = getattr(args, "cam", None)
+    cams = resolve_cam(cfg, cam_arg)
+    base_dir = BASE_DIR
+    for name in cams:
+        clips = _nvr_all_clips(name, base_dir)
+        disk_mb = round(_nvr_disk_mb(name, base_dir), 1)
+        print(t("nvr.status.summary", camera=name, clip_count=len(clips), disk_mb=disk_mb))
+        if _nvr_is_recording(name):
+            dur = _nvr_recording_duration(name)
+            print(t("nvr.status.recording", camera=name, duration_secs=dur))
+
+
+def _cmd_nvr_list(cfg: dict, args) -> None:
+    cam_arg = getattr(args, "cam", None)
+    limit = getattr(args, "limit", 20) or 20
+    cams = resolve_cam(cfg, cam_arg)
+    for name in cams:
+        clips = _nvr_all_clips(name)
+        clips_to_show = clips[-limit:][::-1]  # newest first
+        print(f"\n  {name}: {len(clips)} clip(s) total\n")
+        for p in clips_to_show:
+            try:
+                size_kb = round(os.path.getsize(p) / 1024, 1)
+            except OSError:
+                size_kb = 0.0
+            print(f"    {p}  ({size_kb} KB)")
+
+
+def _cmd_nvr_prune(cfg: dict, args) -> None:
+    cam_arg = getattr(args, "cam", None)
+    keep = getattr(args, "keep", None)
+    if keep is None:
+        keep = cfg.get("nvr", {}).get("max_clips", _NVR_DEFAULT_MAX_CLIPS)
+    cams = resolve_cam(cfg, cam_arg)
+    for name in cams:
+        removed, kept = _nvr_prune(name, keep=keep)
+        print(t("nvr.prune.done", camera=name, removed=removed, kept=kept))
+
+
+def _cmd_nvr_upload(cfg: dict, args) -> None:
+    smb_cfg = cfg.get("nvr", {}).get("smb", {})
+    host = smb_cfg.get("host", "").strip()
+    if not host:
+        print(t("nvr.upload.not_configured"))
+        return
+
+    cam_arg = getattr(args, "cam", None)
+    clip_arg = getattr(args, "clip", None)
+    delete_after = smb_cfg.get("delete_after_upload", False)
+
+    if clip_arg:
+        clips_to_upload = [clip_arg]
+    else:
+        cams = resolve_cam(cfg, cam_arg)
+        clips_to_upload = []
+        for name in cams:
+            clips_to_upload.extend(_nvr_all_clips(name))
+
+    if not clips_to_upload:
+        print("  [NVR] No clips to upload.")
+        return
+
+    share = smb_cfg.get("share", "")
+    for clip_path in clips_to_upload:
+        print(t("nvr.upload.started", path=clip_path, host=host, share=share))
+        ok, msg = _nvr_smb_upload(clip_path, cfg)
+        print(f"  {msg}")
+        if ok and delete_after:
+            try:
+                os.remove(clip_path)
+            except OSError:
+                pass
+
+
+def cmd_nvr(cfg: dict, args) -> None:
+    """BETA: Mini-NVR sub-command dispatcher (status / list / prune / upload)."""
+    sub = getattr(args, "nvr_sub", None)
+    handlers = {
+        "status": _cmd_nvr_status,
+        "list":   _cmd_nvr_list,
+        "prune":  _cmd_nvr_prune,
+        "upload": _cmd_nvr_upload,
+    }
+    if sub not in handlers:
+        print(t("help.nvr.subcommand"))
+        print("  Subcommands: status | list | prune | upload")
+        return
+    handlers[sub](cfg, args)
+
+
 def cmd_watch(cfg: dict, args) -> None:
     """
     Watch for new camera events by polling GET /v11/events every N seconds.
@@ -2959,7 +3322,13 @@ def cmd_watch(cfg: dict, args) -> None:
     # Motion edge tracking flags
     quiet_secs: int = getattr(args, "quiet_secs", 30) or 30
     motion_auto_snap: bool = getattr(args, "auto_snapshot", False)
-    track_motion: bool = getattr(args, "track_motion", False) or motion_auto_snap
+    auto_record: bool = getattr(args, "auto_record", False)
+    track_motion: bool = getattr(args, "track_motion", False) or motion_auto_snap or auto_record
+
+    # NVR config (used when auto_record=True)
+    nvr_cfg = cfg.get("nvr", {})
+    nvr_max_clips = nvr_cfg.get("max_clips", _NVR_DEFAULT_MAX_CLIPS)
+    nvr_max_duration = nvr_cfg.get("max_duration", _NVR_DEFAULT_MAX_DURATION)
 
     # One MotionEdgeTracker per camera (keyed by camera name)
     motion_trackers: dict[str, MotionEdgeTracker] = {}
@@ -3147,6 +3516,20 @@ def cmd_watch(cfg: dict, args) -> None:
                         ts_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         motion_rise_time[name] = time.time()
                         print(t("watch.motion.rising", camera=name, timestamp=ts_now))
+                        # Auto-record on rising edge (BETA)
+                        if auto_record and not _nvr_is_recording(name):
+                            proc = _start_motion_recording(
+                                cam_info,
+                                max_duration=nvr_max_duration,
+                            )
+                            if proc is not None:
+                                out_path = getattr(proc, "_nvr_out_path", "?")
+                                _nvr_active[name] = proc
+                                _nvr_start_times[name] = time.time()
+                                print(t("nvr.recording.started", camera=name, path=out_path))
+                            else:
+                                print(t("nvr.recording.failed", camera=name,
+                                        reason="ffmpeg not found or no RTSP URL"))
                         # Auto-snapshot on rising edge
                         if motion_auto_snap:
                             snap_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3178,6 +3561,38 @@ def cmd_watch(cfg: dict, args) -> None:
                         rise_t = motion_rise_time.pop(name, time.time())
                         duration_secs = int(time.time() - rise_t)
                         print(t("watch.motion.falling", camera=name, duration_secs=duration_secs))
+                        # Stop NVR recording on falling edge (BETA)
+                        if auto_record and _nvr_is_recording(name):
+                            proc = _nvr_active.pop(name, None)
+                            if proc is not None:
+                                proc.terminate()
+                                try:
+                                    proc.wait(timeout=5)
+                                except subprocess.TimeoutExpired:
+                                    proc.kill()
+                                out_path = getattr(proc, "_nvr_out_path", "?")
+                                clip_bytes = 0
+                                try:
+                                    clip_bytes = os.path.getsize(out_path)
+                                except OSError:
+                                    pass
+                                print(t("nvr.recording.stopped", camera=name,
+                                        duration_secs=duration_secs, bytes=clip_bytes))
+                                # FIFO prune after new clip
+                                _nvr_prune(name, keep=nvr_max_clips)
+                                # Auto-upload if SMB configured
+                                smb_host = cfg.get("nvr", {}).get("smb", {}).get("host", "").strip()
+                                if smb_host and out_path != "?":
+                                    smb_share = cfg.get("nvr", {}).get("smb", {}).get("share", "")
+                                    print(t("nvr.upload.started", path=out_path,
+                                            host=smb_host, share=smb_share))
+                                    ok, msg = _nvr_smb_upload(out_path, cfg)
+                                    print(f"  {msg}")
+                                    if ok and cfg.get("nvr", {}).get("smb", {}).get("delete_after_upload", False):
+                                        try:
+                                            os.remove(out_path)
+                                        except OSError:
+                                            pass
 
     except KeyboardInterrupt:
         elapsed = int(time.time() - start_time)
@@ -6388,6 +6803,60 @@ def main():
                          help=t("help.watch.auto_snapshot"))
     p_watch.add_argument("--quiet-secs", type=int, default=30, metavar="N", dest="quiet_secs",
                          help=t("help.watch.quiet_secs"))
+    p_watch.add_argument("--auto-record", action="store_true", dest="auto_record",
+                         help=t("help.watch.auto_record"))
+
+    # ── nvr (BETA) ──────────────────────────────────────────────────────────────
+    p_nvr = subparsers.add_parser(
+        "nvr",
+        help=t("help.nvr.subcommand"),
+        description=(
+            "📹  nvr — BETA: motion-triggered local recording + optional SMB/NAS upload\n"
+            "\n"
+            "  Subcommands:\n"
+            "    status [cam]              — show clip count, disk usage, live recording\n"
+            "    list   [cam] [--limit N]  — list clips (newest first)\n"
+            "    prune  [cam] [--keep N]   — manually run FIFO eviction\n"
+            "    upload [cam] [--clip PATH] — upload to SMB/NAS (requires smbprotocol)\n"
+            "\n"
+            "  Config (bosch_config.json):\n"
+            "    nvr.max_clips      — FIFO limit (default 50)\n"
+            "    nvr.max_duration   — max clip seconds (default 60)\n"
+            "    nvr.smb.host / .share / .username / .password / .path\n"
+            "    nvr.smb.delete_after_upload — remove local file after successful upload\n"
+            "\n"
+            "  ⚠️  BETA — test before use in production. Requires ffmpeg."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py nvr status\n"
+            "    python3 bosch_camera.py nvr status Garten\n"
+            "    python3 bosch_camera.py nvr list Garten --limit 10\n"
+            "    python3 bosch_camera.py nvr prune Garten --keep 20\n"
+            "    python3 bosch_camera.py nvr upload Garten\n"
+            "    python3 bosch_camera.py nvr upload --clip captures/Garten/nvr/2026-05-17/120000.mp4"
+        ),
+    )
+    nvr_sub = p_nvr.add_subparsers(dest="nvr_sub", metavar="<subcommand>")
+
+    p_nvr_status = nvr_sub.add_parser("status", help="Show NVR status")
+    p_nvr_status.add_argument("cam", nargs="?", help="Camera name (optional)")
+
+    p_nvr_list = nvr_sub.add_parser("list", help="List recorded clips")
+    p_nvr_list.add_argument("cam", nargs="?", help="Camera name (optional)")
+    p_nvr_list.add_argument("--limit", type=int, default=20, metavar="N",
+                            help="Max clips to show (default: 20)")
+
+    p_nvr_prune = nvr_sub.add_parser("prune", help="FIFO prune old clips")
+    p_nvr_prune.add_argument("cam", nargs="?", help="Camera name (optional)")
+    p_nvr_prune.add_argument("--keep", type=int, default=None, metavar="N",
+                             help="Keep N most recent clips (default: nvr.max_clips from config)")
+
+    p_nvr_upload = nvr_sub.add_parser("upload", help="Upload clips to SMB/NAS")
+    p_nvr_upload.add_argument("cam", nargs="?", help="Camera name (optional)")
+    p_nvr_upload.add_argument("--clip", metavar="PATH",
+                              help="Upload a specific clip (default: all pending)")
 
     # ── intercom ────────────────────────────────────────────────────────────────
     p_intercom = subparsers.add_parser(
@@ -6903,6 +7372,7 @@ def main():
         "pan":           cmd_pan,
         "notifications": cmd_notifications,
         "watch":         cmd_watch,
+        "nvr":           cmd_nvr,
         "motion":        cmd_motion,
         "audio-alarm":   cmd_audio_alarm,
         "recording":     cmd_recording,

@@ -1,8 +1,8 @@
 # Bosch Smart Home Camera — Python CLI Tool
 
 > **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innenkamera, Gen1+Gen2).
-> Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, and real-time event watching — all from the command line.
-> No official API. No app needed after setup. **v10.6.0**
+> Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, real-time event watching, and **Mini-NVR (BETA)** — all from the command line.
+> No official API. No app needed after setup. **v10.7.0**
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
@@ -111,8 +111,8 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 | **Auto-snapshot on motion** | ✅ refreshes Camera entity | n/a | ✅ writes `last_event_image` base64 *(v0.5.3)* |
 | **Synthetic motion trigger (external sensor)** | ✅ service | n/a | ✅ DP |
 | **Cloud clip download (history ~30 d)** | ✅ via Media Browser | ✅ download command | ❌ *(parked — no community request yet)* |
-| **Mini-NVR (motion-triggered local recording)** | ✅ *(v11.2.0 BETA)* | ❌ | ❌ |
-| **SMB / NAS clip upload** | ✅ | ❌ | ❌ |
+| **Mini-NVR (motion-triggered local recording)** | ✅ *(v11.2.0 BETA)* | ✅ *(v10.7.0 BETA)* | ❌ |
+| **SMB / NAS clip upload** | ✅ | ✅ *(v10.7.0 BETA)* | ❌ |
 | **Audio-alarm sensitivity (Gen2)** | ✅ select | ✅ command | ❌ |
 | **Camera sharing (friends)** | ❌ | ✅ command | ❌ |
 | **Pan / tilt (360° Gen1)** | ✅ services | ✅ command | ❌ |
@@ -176,6 +176,8 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 | **Notification type toggles** | `notification-types [cam] [--set movement=on person=off]` |
 | Automatic token via browser login | `get_token.py` |
 | Silent token renewal / token fix | `token [fix\|browser]` |
+| **Mini-NVR: motion-triggered MP4 recording (BETA)** | `watch [cam] --auto-record` |
+| **NVR status / list / prune / upload (BETA)** | `nvr <status\|list\|prune\|upload> [cam]` |
 
 ### Architecture
 
@@ -1748,10 +1750,81 @@ tool/
 
 ---
 
+## NVR (BETA)
+
+> **BETA — test before use in production. API and config keys may change.**
+
+The Mini-NVR records motion-triggered MP4 clips locally via ffmpeg, with optional upload to a SMB/NAS share.
+
+### Requirements
+
+- `ffmpeg` (already required for `live` command): `brew install ffmpeg` / `apt-get install ffmpeg`
+- `smbprotocol` (only for SMB upload): `pip install smbprotocol`
+
+### Quick Start
+
+```bash
+# Start watching + auto-record on motion
+python3 bosch_camera.py watch Garten --auto-record
+
+# Clips land in: captures/Garten/nvr/YYYY-MM-DD/HHMMSS.mp4
+
+# Show status
+python3 bosch_camera.py nvr status Garten
+
+# List last 10 clips
+python3 bosch_camera.py nvr list Garten --limit 10
+
+# Manually prune to 20 most recent clips
+python3 bosch_camera.py nvr prune Garten --keep 20
+
+# Upload all clips to NAS
+python3 bosch_camera.py nvr upload Garten
+```
+
+### Configuration (`bosch_config.json`)
+
+```json
+"nvr": {
+  "max_clips": 50,
+  "max_duration": 60,
+  "smb": {
+    "host": "nas.local",
+    "share": "Backup",
+    "username": "user",
+    "password": "secret",
+    "path": "bosch/nvr",
+    "delete_after_upload": false
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `nvr.max_clips` | `50` | FIFO clip limit per camera — oldest deleted automatically |
+| `nvr.max_duration` | `60` | Max clip length in seconds; clip is closed early on falling edge |
+| `nvr.smb.host` | `""` | NAS hostname or IP; leave empty to disable SMB upload |
+| `nvr.smb.share` | `""` | SMB share name |
+| `nvr.smb.username` | `""` | SMB username |
+| `nvr.smb.password` | `""` | SMB password |
+| `nvr.smb.path` | `""` | Remote subdirectory inside the share |
+| `nvr.smb.delete_after_upload` | `false` | Remove local file after successful upload |
+
+### BETA Limitations
+
+- RTSP URL must be pre-resolved: run `live <cam>` once before `watch --auto-record` so the URL is cached in `last_live`.
+- Clip names are second-precision; two clips starting in the same second on the same camera will collide. (TODO: add sub-second suffix)
+- No automatic RTSP URL refresh during a long watch session. If the stream URL rotates (Bosch renews it ~every hour), recording will fail silently until the next rising edge forces a re-check.
+- SMB upload is synchronous and happens in the watch loop — large clips may add latency on slow NAS links. (TODO: background upload thread)
+- No H.265 transcoding — stream is remuxed as-is; clip codec depends on camera firmware.
+
+---
+
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| **v10.7.0** | **Mini-NVR (BETA).** `watch --auto-record`: motion rising edge → ffmpeg MP4 clip, falling edge → clean stop. `nvr` subcommand: `status`, `list`, `prune`, `upload`. FIFO clip eviction (default 50 per camera). Optional SMB/NAS upload via `smbprotocol` with per-upload fresh connection cache (avoids SMB credit starvation). 13 new i18n keys across all 11 languages. +370 LOC, +46 tests. |
 | **v10.2.1** | **Revert privacy-mode cross-check from v10.2.0.** A/B testing 2026-04-27 (toggle privacy ON↔OFF, read RCP 0x0d00 before and after) proved `0x0d00 byte[1]` stays `1` independent of the user-facing privacy-mode toggle. That byte does not represent the mode flag — `rcp_findings.txt`'s "PRIVACY MASK state" label refers to a separate static configuration. The "Privacy MISMATCH" line therefore produced a permanent false positive. The Bosch cloud `/v11/video_inputs.privacyMode` field is the correct source. **Kept:** the v10.2.0 `?JpegSize=1206` snap.jpg latency fix (still valid). |
 | **v10.2.0** | **Cross-version sync with HA integration v10.4.5 + v10.4.8.** Two changes: **(1) Fix: LOCAL `snap.jpg` is now ~1.4 s instead of ~6–10 s when the camera is idle.** Append `?JpegSize=1206` to the local snap URL — without the parameter, the camera triggers a slow on-demand full-sensor capture; with it, the cached path serves quickly. Same fix that landed in HA integration v10.4.5; the Python CLI was using the unparameterised URL on the local Digest path (`bosch_camera.py:806`). **(2) New: privacy-mode cross-check in `--status` RCP block.** Bosch cloud `/v11/video_inputs.privacyMode` has been observed to misreport `'OFF'` for ONLINE cameras that are physically in privacy (Gen2 Outdoor, FW 9.40.25, 2026-04-27). The CLI now reads RCP `0x0d00` via the cloud-proxy session it already has open and compares byte[1] to the cloud-reported `privacyMode`. On mismatch it prints a `⚠️  Privacy MISMATCH: cloud='OFF', hardware=ON (via RCP)` line — the camera hardware is authoritative. Read-only diagnostic; no behavior change in any other path. The HA integration takes the corresponding fix one step further by overriding its internal cache so the privacy switch flips automatically. The CLI just surfaces the discrepancy at status time. |
 | **v10.1.2** | **Atomic save_config.** `save_config()` now writes to a temp file in the same directory and `os.replace()`s atomically (POSIX rename guarantee), so a crash during write can no longer leave a half-written `bosch_config.json` that breaks the next startup. |
