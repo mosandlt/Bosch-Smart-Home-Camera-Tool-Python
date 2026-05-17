@@ -194,7 +194,12 @@ def _merge_defaults(cfg: dict, defaults: dict) -> None:
 # ══════════════════════════ TOKEN MANAGEMENT ══════════════════════════════════
 
 def _is_token_expired(token: str) -> bool:
-    """Return True if the JWT bearer token is expired or expiring within 60s."""
+    """Return True if the JWT bearer token is expired or expiring within 60s.
+
+    Fail-safe: returns True (treat as expired) if the token cannot be decoded.
+    Matches _is_token_near_expiry semantics so an undecodable token never
+    bypasses a refresh and gets sent to the cloud API.
+    """
     import base64 as _b64, json as _json
     try:
         parts = token.split(".")
@@ -202,10 +207,10 @@ def _is_token_expired(token: str) -> bool:
             pad  = len(parts[1]) % 4
             body = _b64.urlsafe_b64decode(parts[1] + "=" * pad)
             exp  = _json.loads(body).get("exp", 0)
-            return exp > 0 and (exp - time.time()) < 60
+            return exp == 0 or (exp - time.time()) < 60
     except Exception:
         pass
-    return False
+    return True
 
 
 def _is_token_near_expiry(token_str: str, buffer_secs: int = 60) -> bool:

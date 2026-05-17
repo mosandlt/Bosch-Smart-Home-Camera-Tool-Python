@@ -6,3 +6,8 @@ __pycache__/
 _live_stream.m3u
 test_local_*.jpg
 test_remote_*.jpg
+.venv/
+.pytest_cache/
+*.egg-info/
+htmlcov/
+.coverage
