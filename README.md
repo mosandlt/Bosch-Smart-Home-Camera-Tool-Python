@@ -2,7 +2,7 @@
 
 > **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innenkamera, Gen1+Gen2).
 > Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, and real-time event watching — all from the command line.
-> No official API. No app needed after setup. **v10.2.1**
+> No official API. No app needed after setup. **v10.6.0**
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
@@ -98,7 +98,7 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 | **Login** | OAuth2 PKCE (browser) | OAuth2 PKCE (browser) | OAuth2 PKCE (browser) |
 | **Snapshots** | ✅ Native `Camera.image` | ✅ `snapshot` command | ✅ File-store + base64 DP |
 | **Live RTSP stream (LAN)** | ✅ via HA Stream component | ✅ ffmpeg/RTSPS output | ✅ TLS proxy → local RTSP |
-| **WebRTC (sub-second latency)** | ✅ via integrated go2rtc | ❌ | ❌ |
+| **WebRTC (sub-second latency)** | ✅ via integrated go2rtc | ✅ *(v10.6.0)* `live --webrtc` | ❌ |
 | **Dual-stream URL (main + sub)** | ✅ `sensor.bosch_<n>_stream_url` + `_sub` *(v12.4.0, opt-in per cam)* | ✅ `info` shows both · `live --sub` *(v10.5.0)* | ✅ `stream_url` + `stream_url_sub` *(v0.5.3 experimental)* |
 | **External recorder (BlueIris, Frigate)** | ✅ via go2rtc | ✅ stdout pipe | ✅ Digest-creds URL + LAN bind option |
 | **Privacy mode** | ✅ switch entity | ✅ command | ✅ DP |
@@ -144,6 +144,7 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 | Live stream — low bandwidth | `live --quality low` |
 | Live stream — select instance | `live --inst N` |
 | **Live stream sub-stream (lower bandwidth)** | `live --sub` |
+| **Live stream WebRTC (sub-second latency, browser)** | `live --webrtc [cam]` |
 | **Live stream LOCAL (LAN, TLS proxy)** | `live --local [cam]` |
 | **Live stream LOCAL + best quality** | `live --local --quality high [cam]` |
 | **Privacy mode — get/set via cloud API** | `privacy [cam] [on\|off]` |
@@ -332,7 +333,36 @@ python3 bosch_camera.py live Outdoor --inst 1     # use stream instance 1 instea
 python3 bosch_camera.py live Outdoor --quality high    # 30 Mbps stream (inst=1, highQualityVideo=true)
 python3 bosch_camera.py live Outdoor --quality low     # low bandwidth (inst=4, ~1.9 Mbps)
 python3 bosch_camera.py live Outdoor --quality auto    # default balanced (inst=2, ~7.5 Mbps)
+python3 bosch_camera.py live Outdoor --webrtc          # sub-second WebRTC in browser via go2rtc
 ```
+
+### WebRTC Streaming
+
+`live --webrtc` provides sub-second latency using [go2rtc](https://github.com/AlexxIT/go2rtc) as a local media server. Instead of ffplay/VLC, the stream opens in your browser.
+
+**Install go2rtc:**
+
+```bash
+# macOS
+brew install go2rtc
+
+# or download from https://github.com/AlexxIT/go2rtc/releases
+```
+
+**Use:**
+
+```bash
+python3 bosch_camera.py live Outdoor --webrtc               # default port 1984
+python3 bosch_camera.py live Outdoor --webrtc --webrtc-port 8090
+python3 bosch_camera.py live Outdoor --webrtc --go2rtc-binary /opt/go2rtc
+```
+
+The CLI starts go2rtc, writes a temp config, waits until the HTTP port is ready, then opens `http://localhost:1984/stream.html?src=bosch_cam` in your default browser. Press Ctrl+C to stop go2rtc and clean up.
+
+**Notes:**
+- Works with REMOTE stream (cloud proxy `rtsps://`) out of the box — go2rtc handles the TLS cert skip internally.
+- LOCAL mode (`--local --webrtc`) also works: the Python TLS proxy starts first, then go2rtc connects to `rtsp://127.0.0.1:<proxy-port>/...`.
+- Default ICE: Google STUN. For remote networks (NAT), you may need a TURN server (not yet configurable via CLI — edit the temp config if needed).
 
 ### Download Events
 

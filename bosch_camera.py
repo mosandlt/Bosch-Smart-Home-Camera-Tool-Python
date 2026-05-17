@@ -70,7 +70,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.5.0"
+VERSION     = "10.6.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -1417,12 +1417,206 @@ def _build_stream_urls(
     return (main_url, sub_url)
 
 
+# ── WebRTC / go2rtc helper ────────────────────────────────────────────────────
+#
+# go2rtc config format (YAML), minimal for single-camera use:
+#
+#   api:
+#     listen: ":1984"   # HTTP API + WebRTC signaling
+#   webrtc:
+#     listen: ":8555"   # ICE/RTP (TCP+UDP)
+#   streams:
+#     bosch_cam: rtsps://user:pass@host:443/rtsp_tunnel?inst=2&...
+#
+# Browser URL: http://localhost:<port>/stream.html?src=bosch_cam
+# WHEP URL:    http://localhost:<port>/api/webrtc?src=bosch_cam
+#
+# Bosch RTSPS caveat: go2rtc connects to the RTSPS URL via its built-in RTSP
+# client with InsecureSkipVerify (rtsps:// scheme accepted without cert check).
+# No need for the Python TLS proxy for this path.
+#
+# TODO: ICE/TURN server config for remote-network (NAT traversal) not supported
+#       in this implementation. go2rtc defaults to Google STUN servers. Add
+#       --webrtc-ice-server flag if needed in a future iteration.
+
+def _build_go2rtc_config(rtsps_url: str, stream_name: str = "bosch_cam", port: int = 1984) -> str:
+    """Build a minimal go2rtc YAML config string for a single RTSPS source.
+
+    Args:
+        rtsps_url:   Full rtsps:// URL (from _build_stream_urls, REMOTE mode).
+        stream_name: Key used in go2rtc streams map; also appears in browser URL.
+        port:        go2rtc HTTP/WebRTC-signaling port (default 1984).
+
+    Returns:
+        YAML string ready to write to a temp file.
+    """
+    return (
+        f"api:\n"
+        f"  listen: \":{port}\"\n"
+        f"webrtc:\n"
+        f"  listen: \":8555\"\n"
+        f"streams:\n"
+        f"  {stream_name}: \"{rtsps_url}\"\n"
+    )
+
+
+class Go2rtcError(RuntimeError):
+    """Raised when go2rtc cannot be started."""
+
+
+def _start_go2rtc_with_camera(
+    rtsps_url: str,
+    *,
+    port: int = 1984,
+    go2rtc_bin: str = "go2rtc",
+    stream_name: str = "bosch_cam",
+    start_timeout: float = 10.0,
+) -> tuple[subprocess.Popen, str]:
+    """Start go2rtc as a subprocess and wait until its HTTP port is reachable.
+
+    Args:
+        rtsps_url:     Full rtsps:// URL for the camera stream.
+        port:          HTTP port for go2rtc API + WebRTC signaling (default 1984).
+        go2rtc_bin:    Name or path of the go2rtc binary (searched in PATH if bare name).
+        stream_name:   Key for the stream entry in go2rtc config.
+        start_timeout: Seconds to wait for go2rtc's HTTP port to become available.
+
+    Returns:
+        Tuple ``(Popen handle, browser URL)``.
+
+    Raises:
+        Go2rtcError: binary not found, port already in use, or startup timeout.
+    """
+    import socket
+    import tempfile
+
+    # 1. Resolve binary
+    resolved_bin: Optional[str] = shutil.which(go2rtc_bin)
+    if resolved_bin is None:
+        # If the caller passed an absolute path, shutil.which still returns None
+        # for non-PATH paths, so check existence directly.
+        if os.path.isfile(go2rtc_bin) and os.access(go2rtc_bin, os.X_OK):
+            resolved_bin = go2rtc_bin
+        else:
+            raise Go2rtcError(t("err.webrtc.binary_not_found", path=go2rtc_bin))
+
+    # 2. Check port availability (fail fast before spawning)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+        _s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            _s.bind(("127.0.0.1", port))
+        except OSError:
+            raise Go2rtcError(t("err.webrtc.port_in_use", port=port))
+
+    # 3. Write temp config
+    config_yaml = _build_go2rtc_config(rtsps_url, stream_name=stream_name, port=port)
+    tmp_cfg = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".yaml", prefix="bosch_go2rtc_", delete=False
+    )
+    tmp_cfg.write(config_yaml)
+    tmp_cfg.flush()
+    tmp_cfg.close()
+    cfg_path = tmp_cfg.name
+
+    # 4. Spawn go2rtc
+    proc = subprocess.Popen(
+        [resolved_bin, "-config", cfg_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # 5. Wait for HTTP port to accept connections (poll with 0.2s sleep)
+    deadline = time.time() + start_timeout
+    port_ready = False
+    while time.time() < deadline:
+        # Check if process exited prematurely
+        if proc.poll() is not None:
+            os.unlink(cfg_path)
+            raise Go2rtcError(t("cmd.live.webrtc.timeout", timeout=int(start_timeout)))
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                port_ready = True
+                break
+        except OSError:
+            time.sleep(0.2)
+
+    if not port_ready:
+        proc.terminate()
+        try:
+            os.unlink(cfg_path)
+        except OSError:
+            pass
+        raise Go2rtcError(t("cmd.live.webrtc.timeout", timeout=int(start_timeout)))
+
+    # 6. Register cleanup: terminate + unlink config on SIGTERM
+    _orig_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def _cleanup_go2rtc(signum, frame):
+        proc.terminate()
+        try:
+            os.unlink(cfg_path)
+        except OSError:
+            pass
+        if callable(_orig_sigterm):
+            _orig_sigterm(signum, frame)
+
+    signal.signal(signal.SIGTERM, _cleanup_go2rtc)
+
+    # Store cfg_path on the proc object so callers can unlink on KeyboardInterrupt
+    proc._go2rtc_cfg_path = cfg_path  # type: ignore[attr-defined]
+
+    browser_url = f"http://localhost:{port}/stream.html?src={stream_name}"
+    return proc, browser_url
+
+
+def _open_webrtc_stream(
+    rtsps_url: str,
+    cam_name: str,
+    *,
+    port: int = 1984,
+    go2rtc_bin: str = "go2rtc",
+) -> None:
+    """Start go2rtc and open the WebRTC viewer page in the default browser.
+
+    Blocks until the user presses Ctrl+C, then terminates go2rtc and cleans up.
+    """
+    import webbrowser
+
+    print(t("cmd.live.webrtc.starting", port=port))
+    try:
+        proc, browser_url = _start_go2rtc_with_camera(
+            rtsps_url,
+            port=port,
+            go2rtc_bin=go2rtc_bin,
+        )
+    except Go2rtcError as exc:
+        print(str(exc))
+        return
+
+    print(t("cmd.live.webrtc.ready", url=browser_url))
+    webbrowser.open(browser_url)
+
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+    finally:
+        cfg_path: Optional[str] = getattr(proc, "_go2rtc_cfg_path", None)
+        if cfg_path:
+            try:
+                os.unlink(cfg_path)
+            except OSError:
+                pass
+        print(f"\n  ⏹️   WebRTC stopped.")
+
+
 def cmd_live(cfg: dict, args) -> None:
     """Open live stream — tries PUT /connection → open VLC on success.
 
     --hq:    request highQualityVideo=true in PUT /connection (higher bitrate stream).
     --inst N: select stream instance (default 2; use 1 for alternative stream).
     --sub:   use the sub-stream (inst=2, ~7.5 Mbps) instead of the main stream.
+    --webrtc: start go2rtc + open WebRTC viewer in browser instead of ffplay/VLC.
     """
     token   = get_token(cfg)
     session = make_session(token)
@@ -1528,6 +1722,10 @@ def cmd_live(cfg: dict, args) -> None:
             }
             save_config(cfg)
 
+            use_webrtc: bool = getattr(args, "webrtc", False)
+            webrtc_port: int = getattr(args, "webrtc_port", 1984)
+            go2rtc_binary: str = getattr(args, "go2rtc_binary", "go2rtc")
+
             if urls:
                 u = urls[0]
                 if "/" in u:
@@ -1548,7 +1746,15 @@ def cmd_live(cfg: dict, args) -> None:
                     rtsps_url = sub_url if use_sub else main_url
                     print(f"  🏠  Local stream ({u}) via TLS proxy :{tls_port}")
                 print(f"  📡  RTSPS URL: {rtsps_url}")
-                _open_rtsps_stream(rtsps_url, name, proxy_url, use_vlc=getattr(args, "vlc", False))
+                if use_webrtc:
+                    _open_webrtc_stream(
+                        rtsps_url,
+                        name,
+                        port=webrtc_port,
+                        go2rtc_bin=go2rtc_binary,
+                    )
+                else:
+                    _open_rtsps_stream(rtsps_url, name, proxy_url, use_vlc=getattr(args, "vlc", False))
             else:
                 print("  ⚠️   No URLs in response.")
         else:
@@ -5782,6 +5988,27 @@ def main():
         action="store_true",
         help=t("help.live.sub"),
     )
+    p_live.add_argument(
+        "--webrtc",
+        action="store_true",
+        dest="webrtc",
+        help=t("help.live.webrtc"),
+    )
+    p_live.add_argument(
+        "--go2rtc-binary",
+        metavar="PATH",
+        dest="go2rtc_binary",
+        default="go2rtc",
+        help=t("help.live.go2rtc_binary"),
+    )
+    p_live.add_argument(
+        "--webrtc-port",
+        type=int,
+        metavar="N",
+        dest="webrtc_port",
+        default=1984,
+        help=t("help.live.webrtc_port"),
+    )
 
     # ── test-local ─────────────────────────────────────────────────────────────
     p_testlocal = subparsers.add_parser(
@@ -5822,6 +6049,12 @@ def main():
                           help="Stream instance number in RTSPS URL (default: 2)")
     p_stream.add_argument("--quality", choices=["auto", "high", "low"], metavar="Q",
                           help="Quality preset: auto | high (30Mbps) | low (1.9Mbps)")
+    p_stream.add_argument("--webrtc", action="store_true", dest="webrtc",
+                          help=t("help.live.webrtc"))
+    p_stream.add_argument("--go2rtc-binary", metavar="PATH", dest="go2rtc_binary", default="go2rtc",
+                          help=t("help.live.go2rtc_binary"))
+    p_stream.add_argument("--webrtc-port", type=int, metavar="N", dest="webrtc_port", default=1984,
+                          help=t("help.live.webrtc_port"))
 
     # "download" and "events" subcommands removed (Bosch request)
 
