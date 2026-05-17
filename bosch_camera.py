@@ -60,6 +60,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from typing import Optional
 
+from bosch_i18n import t, set_lang, detect_lang
+
 # Suppress InsecureRequestWarning only for local camera calls (self-signed certs).
 # Cloud API and Keycloak calls use verify=True and do not trigger this warning.
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -68,7 +70,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.2.1"
+VERSION     = "10.3.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -178,8 +180,8 @@ def save_config(cfg: dict) -> None:
 def _create_default_config() -> None:
     """Create a new config file with defaults and print instructions."""
     save_config(DEFAULT_CONFIG)
-    print(f"\n✅  Created config file: {CONFIG_FILE}")
-    print("    Edit it to add your credentials, or continue — the script will prompt you.\n")
+    print(t("cli.config.created", path=CONFIG_FILE))
+    print(t("cli.config.created.hint"))
 
 
 def _merge_defaults(cfg: dict, defaults: dict) -> None:
@@ -250,7 +252,7 @@ def get_token(cfg: dict) -> str:
         try:
             from get_token import _do_refresh
             if token:  # only print if we had a token (i.e. it expired)
-                print("  🔄  Token expired — renewing automatically via refresh_token...")
+                print(t("cli.token.renewing"))
             tokens = _do_refresh(refresh)
             if tokens:
                 new_token   = tokens.get("access_token", "")
@@ -258,12 +260,12 @@ def get_token(cfg: dict) -> str:
                 cfg["account"]["bearer_token"]  = new_token
                 cfg["account"]["refresh_token"] = new_refresh
                 save_config(cfg)
-                print("  ✅  Token renewed silently.")
+                print(t("cli.token.renewed"))
                 return new_token
         except ImportError:
             pass
         except Exception as e:
-            print(f"  ⚠️   Silent renewal failed: {e}")
+            print(t("cli.token.renew_failed", error=e))
 
     if token:
         return token  # Expired but renewal failed — return as-is and let the API reject it
@@ -271,7 +273,7 @@ def get_token(cfg: dict) -> str:
     # Try get_token.py auto-flow (refresh + browser login)
     try:
         from get_token import get_token_auto
-        print("  🔑  No token in config — trying automatic token retrieval...")
+        print(t("cli.token.no_token"))
         new_token = get_token_auto(cfg)
         if new_token:
             return new_token
@@ -279,21 +281,21 @@ def get_token(cfg: dict) -> str:
         # get_token.py not in path — fall through to manual
         pass
     except Exception as e:
-        print(f"  ⚠️   Auto-token failed: {e}")
+        print(t("cli.token.auto_failed", error=e))
 
     # Manual fallback
-    print("\n  ⚠️   Could not obtain token automatically.")
-    print("  Options:")
-    print("    • Run: python3 get_token.py  (browser login, saves token automatically)")
-    print("    • Or paste a Bearer token captured from the Bosch Smart Home Camera app")
-    print("      (See README.md for mitmproxy instructions)\n")
-    token = input("  Paste Bearer token (or press Enter to exit): ").strip()
+    print(t("cli.token.obtain_failed"))
+    print(t("cli.token.options"))
+    print(t("cli.token.option_get_token"))
+    print(t("cli.token.option_paste"))
+    print(t("cli.token.option_paste2"))
+    token = input(t("input.paste_token")).strip()
     if not token:
-        print("  ❌  No token. Exiting.")
+        print(t("cli.token.no_token_exit"))
         sys.exit(1)
     cfg["account"]["bearer_token"] = token
     save_config(cfg)
-    print(f"  💾  Token saved.")
+    print(t("cli.token.saved"))
     return token
 
 
@@ -336,7 +338,7 @@ def check_token_age(cfg: dict) -> str:
 
 def handle_401(cfg: dict) -> str:
     """Called when API returns 401. Clears token, prompts for a new one."""
-    print("\n  ❌  Bearer token expired (HTTP 401).")
+    print(t("cli.token.expired_401"))
     cfg["account"]["bearer_token"] = ""
     return get_token(cfg)
 
@@ -471,20 +473,20 @@ def discover_cameras(cfg: dict, session: requests.Session) -> dict:
         }
         # Ask for local IP if not already set
         if not cameras[name]["local_ip"]:
-            print(f"\n  📷  Camera: {name}")
-            ip = input(f"     Local IP address (e.g. 192.168.1.100) — press Enter to skip: ").strip()
+            print(t("cli.cam.discovered", name=name))
+            ip = input(t("input.local_ip")).strip()
             if ip:
                 cameras[name]["local_ip"] = ip
     cfg["cameras"] = cameras
     save_config(cfg)
-    print(f"  💾  Discovered {len(cameras)} camera(s) → saved to {CONFIG_FILE}")
+    print(t("cli.cam.discovered_count", count=len(cameras), path=CONFIG_FILE))
     return cameras
 
 
 def get_cameras(cfg: dict, session: requests.Session) -> dict:
     """Return cameras from config; auto-discover if none are saved yet."""
     if not cfg.get("cameras"):
-        print("  🔍  No cameras in config — auto-discovering...")
+        print(t("cli.cam.no_cameras_discovering"))
         return discover_cameras(cfg, session)
     return cfg["cameras"]
 
@@ -508,10 +510,10 @@ def resolve_cam(cfg: dict, key: str | None) -> dict:
         return matches
     if len(matches) > 1:
         names = ", ".join(matches.keys())
-        print(f"  ⚠️   Ambiguous camera name '{key}' — matches: {names}")
+        print(t("cli.cam.ambiguous", key=key, names=names))
         sys.exit(1)
-    print(f"  ❌  Camera '{key}' not found in config. Known: {', '.join(cameras.keys())}")
-    print(f"      Run 'python3 bosch_camera.py rescan' to re-discover cameras.")
+    print(t("cli.cam.not_found", key=key, known=", ".join(cameras.keys())))
+    print(t("cli.cam.not_found_hint"))
     sys.exit(1)
 
 
@@ -607,12 +609,12 @@ def open_vlc(url: str, user: str = "", password: str = "", token: str = "") -> N
         ]
     player = next((p for p in players if p and os.path.exists(p)), None)
     if not player:
-        print(f"\n  ❌  No media player found (VLC / mpv / ffplay).")
-        print(f"      Install:  brew install ffmpeg   # or brew install --cask vlc")
+        print(t("cli.player.not_found"))
+        print(t("cli.player.not_found_hint"))
         print(f"      Stream URL:   {url}")
         return
 
-    print(f"\n  ▶️   Opening in {os.path.basename(player)}: {url}")
+    print(t("cli.player.opening", player=os.path.basename(player), url=url))
 
     name = os.path.basename(player).lower()
     if "ffplay" in name:
@@ -637,7 +639,7 @@ def open_vlc(url: str, user: str = "", password: str = "", token: str = "") -> N
             cmd += ["--http-cookie", f"HcsoB={token[:20]}"]
 
     if user:
-        print(f"  🔑  Using credentials: {user}")
+        print(t("cli.player.creds", user=user))
     subprocess.Popen(cmd)
 
 
@@ -649,8 +651,8 @@ def cmd_status(cfg: dict, args) -> None:
     session = make_session(token)
     cameras = get_cameras(cfg, session)
 
-    print(f"\n── Bosch Smart Home Cameras ────────────────────────────────")
-    print(f"   Token age: {check_token_age(cfg)}\n")
+    print(t("cmd.status.header"))
+    print(t("cmd.status.token_age", age=check_token_age(cfg)))
 
     for name, cam_info in cameras.items():
         status = api_ping(session, cam_info["id"])
@@ -661,17 +663,17 @@ def cmd_status(cfg: dict, args) -> None:
             status = "UPDATING (firmware)"
         else:
             icon = "🔴"
-        print(f"  {icon}  {name}")
-        print(f"      ID:      {cam_info['id']}")
-        print(f"      Model:   {cam_info['model']}   FW: {cam_info['firmware']}")
-        print(f"      MAC:     {cam_info['mac']}")
-        print(f"      Status:  {status}")
+        print(t("cmd.status.cam_name", icon=icon, name=name))
+        print(t("cmd.status.cam_id", id=cam_info['id']))
+        print(t("cmd.status.cam_model", model=cam_info['model'], fw=cam_info['firmware']))
+        print(t("cmd.status.cam_mac", mac=cam_info['mac']))
+        print(t("cmd.status.cam_status", status=status))
         print()
 
 
 def cmd_events(cfg: dict, args) -> None:
     """Show latest events — removed (cloud event listing no longer available)."""
-    print("  ⚠️  Events command has been removed.")
+    print(t("cmd.status.events_removed"))
     return
 
 
@@ -703,12 +705,12 @@ def snap_from_proxy(cam_info: dict, token: str, hq: bool = False,
             timeout=15,
         )
         if r.status_code == 401 and cfg is not None:
-            print("  🔄  Token expired (401) — refreshing once...")
+            print(t("cmd.token.refresh_401"))
             try:
                 new_token = get_token(cfg)
             except Exception as e:
-                print(f"  ❌  Token refresh failed: {e}")
-                print("      Run `bosch-camera login` (or `python3 get_token.py`).")
+                print(t("cmd.token.refresh_failed", error=e))
+                print(t("cmd.token.refresh_failed_hint"))
                 return r
             headers_box[0] = {"Authorization": f"Bearer {new_token}",
                               "Content-Type": "application/json"}
@@ -721,13 +723,12 @@ def snap_from_proxy(cam_info: dict, token: str, hq: bool = False,
                 timeout=15,
             )
             if r.status_code == 401:
-                print("  ❌  Still 401 after refresh — token could not be refreshed. "
-                      "Run `bosch-camera login`.")
+                print(t("cmd.token.still_401") + "Run `bosch-camera login`.")
         return r
 
     def _fetch_snap(conn_type: str) -> bytes | None:
         label = "local" if conn_type == "LOCAL" else "cloud proxy"
-        print(f"  🌐  Opening {label} connection...")
+        print(t("cmd.live.opening_conn", label=label))
         r = _put_connection(conn_type)
         if r.status_code != 200:
             return None
@@ -748,10 +749,10 @@ def snap_from_proxy(cam_info: dict, token: str, hq: bool = False,
         else:
             snap_r = requests.get(snap_url, verify=False, timeout=snap_timeout)
         if snap_r.status_code == 200 and snap_r.headers.get("Content-Type", "").startswith("image"):
-            print(f"  ✅  Live snapshot ({label}): {len(snap_r.content):,} bytes")
+            print(t("cmd.live.snap_ok", label=label, bytes=f"{len(snap_r.content):,}"))
             return snap_r.content
         elif snap_r.status_code == 404:
-            print(f"  ⚠️   Proxy session expired (404) — re-requesting connection...")
+            print(t("cmd.live.proxy_expired"))
             # Retry once with a fresh connection (reuses the refreshed token if
             # the first PUT already triggered a token renewal).
             r2 = _put_connection(conn_type)
@@ -770,12 +771,12 @@ def snap_from_proxy(cam_info: dict, token: str, hq: bool = False,
                     else:
                         snap_r2 = requests.get(snap_url2, verify=False, timeout=snap_timeout)
                     if snap_r2.status_code == 200 and snap_r2.headers.get("Content-Type", "").startswith("image"):
-                        print(f"  ✅  Live snapshot ({label}, retry): {len(snap_r2.content):,} bytes")
+                        print(t("cmd.live.snap_retry_ok", label=label, bytes=f"{len(snap_r2.content):,}"))
                         return snap_r2.content
-            print(f"  ⚠️   {label} snap retry also failed")
+            print(t("cmd.live.snap_retry_fail", label=label))
             return None
         else:
-            print(f"  ⚠️   {label} snap returned HTTP {snap_r.status_code}")
+            print(t("cmd.live.snap_http_fail", label=label, status=snap_r.status_code))
             return None
 
     for conn_type in LIVE_TYPE_CANDIDATES:
@@ -785,7 +786,7 @@ def snap_from_proxy(cam_info: dict, token: str, hq: bool = False,
                 return result
         except Exception as e:
             label = "local" if conn_type == "LOCAL" else "cloud proxy"
-            print(f"  ⚠️   {label} error: {e}")
+            print(t("cmd.live.snap_error", label=label, error=e))
     return None
 
 
@@ -812,7 +813,7 @@ def snap_from_local(cam_info: dict) -> bytes | None:
     # full-sensor capture (~6–10 s when idle). With it, the cached path serves
     # in ~1.4 s. Verified empirically; matches HA integration v10.4.5 fix.
     url = f"https://{local_ip}/snap.jpg?JpegSize=1206"
-    print(f"  🏠  Trying local camera snapshot: {url}")
+    print(t("cmd.local_snap.trying", url=url))
     try:
         from requests.auth import HTTPDigestAuth
         r = requests.get(
@@ -822,12 +823,12 @@ def snap_from_local(cam_info: dict) -> bytes | None:
             verify=False,
         )
         if r.status_code == 200 and r.headers.get("Content-Type", "").startswith("image"):
-            print(f"  ✅  Local snapshot: {len(r.content):,} bytes  (1920×1080)")
+            print(t("cmd.local_snap.ok", bytes=f"{len(r.content):,}"))
             return r.content
         else:
-            print(f"  ⚠️   Local camera returned {r.status_code}")
+            print(t("cmd.local_snap.http_fail", status=r.status_code))
     except Exception as e:
-        print(f"  ⚠️   Local camera error: {e}")
+        print(t("cmd.local_snap.error", error=e))
     return None
 
 
@@ -861,7 +862,7 @@ def _save_and_open(data: bytes, name: str, ts: str, method: str) -> str:
     path = os.path.join(BASE_DIR, fn)
     with open(path, "wb") as f:
         f.write(data)
-    print(f"  💾  {path}  ({len(data):,} bytes)")
+    print(t("cmd.snapshot.saved", path=path, bytes=f"{len(data):,}"))
     open_file(path)
     return path
 
@@ -894,7 +895,7 @@ def cmd_snapshot(cfg: dict, args) -> None:
 
     for name, cam_info in cams.items():
         mode_str = "Live Snapshot" if live else "Latest Event Snapshot"
-        print(f"\n── {mode_str}: {name} ──────────────────────────────────────")
+        print(t("cmd.snapshot.header", mode=mode_str, name=name))
 
         if live:
             # ── Method 1: Cloud proxy live snap ───────────────────────────────
@@ -909,24 +910,24 @@ def cmd_snapshot(cfg: dict, args) -> None:
                 _save_and_open(data, name, "", "local_live")
                 continue
 
-            print("  ℹ️   Live methods unavailable:")
+            print(t("cmd.snapshot.live_unavail"))
             if not cam_info.get("last_live", {}).get("proxy_url"):
-                print("       • Cloud proxy: no live connection opened yet")
-                print("         → Press 'Open Live Stream' button in HA, or run: live " + name)
+                print(t("cmd.snapshot.live_no_proxy"))
+                print(t("cmd.snapshot.live_no_proxy_hint", name=name))
             if not cam_info.get("local_ip"):
-                print("       • Local: no local_ip set in config")
-                print(f"         → Edit {CONFIG_FILE} and set local_ip, local_username, local_password")
-            print("  ↩️   Falling back to latest event snapshot...\n")
+                print(t("cmd.snapshot.live_no_local"))
+                print(t("cmd.snapshot.live_no_local_hint", path=CONFIG_FILE))
+            print(t("cmd.snapshot.fallback"))
 
         # ── Method 3 (or default): Latest event snapshot ──────────────────────
         data, ts = snap_from_events(session, cam_info)
         if data:
             _save_and_open(data, name, ts, "event")
             if not live:
-                print(f"  ℹ️   This is a motion-triggered snapshot from {ts[:10]},")
-                print(f"       not a live view. Use '--live' for live snapshot methods.")
+                print(t("cmd.snapshot.event_hint", date=ts[:10]))
+                print(t("cmd.snapshot.event_hint2"))
         else:
-            print("  ⚠️   No snapshot available (token expired or no events).")
+            print(t("cmd.snapshot.none_available"))
 
 
 def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None:
@@ -6365,6 +6366,16 @@ def main():
     p_nt.add_argument("--set", nargs="+", metavar="key=on|off",
                        help="Set notification types (e.g. movement=on person=off)")
 
+    # ── global --lang ──────────────────────────────────────────────────────────
+    from bosch_i18n import AVAILABLE_LANGS as _AVAILABLE_LANGS
+    parser.add_argument(
+        "--lang",
+        choices=list(_AVAILABLE_LANGS),
+        metavar="LANG",
+        default=None,
+        help=t("help.lang"),
+    )
+
     # ── parse ──────────────────────────────────────────────────────────────────
     args = parser.parse_args()
 
@@ -6376,15 +6387,21 @@ def main():
     # Load (or create) config
     cfg = load_config()
 
+    # Initialise i18n — --lang flag overrides config and $LANG
+    if getattr(args, "lang", None):
+        set_lang(args.lang)
+    else:
+        set_lang(detect_lang(cfg))
+
     if not args.command:
         # If no cameras yet, do initial discovery
         if not cfg.get("cameras"):
-            print("\n  🆕  First run — let's set up your cameras.\n")
+            print(t("cli.first_run"))
             token   = get_token(cfg)
             session = make_session(token)
             cameras = discover_cameras(cfg, session)
             if cameras:
-                print(f"\n  Found {len(cameras)} camera(s): {', '.join(cameras.keys())}")
+                print(t("cli.found_cameras", count=len(cameras), names=", ".join(cameras.keys())))
         while True:
             cmd_menu(cfg)
         return
@@ -6436,7 +6453,7 @@ def main():
         "test-local":         cmd_test_local,
     }
     if cmd not in dispatch:
-        print(f"❌  Unknown command '{cmd}'. Run without arguments for the menu.")
+        print(t("err.unknown_command", cmd=cmd))
         sys.exit(1)
     dispatch[cmd](cfg, args)
 
