@@ -99,7 +99,7 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 | **Snapshots** | ✅ Native `Camera.image` | ✅ `snapshot` command | ✅ File-store + base64 DP |
 | **Live RTSP stream (LAN)** | ✅ via HA Stream component | ✅ ffmpeg/RTSPS output | ✅ TLS proxy → local RTSP |
 | **WebRTC (sub-second latency)** | ✅ via integrated go2rtc | ❌ | ❌ |
-| **Dual-stream URL (main + sub)** | ✅ `sensor.bosch_<n>_stream_url` + `_sub` *(v12.4.0, opt-in per cam)* | ❌ | ✅ `stream_url` + `stream_url_sub` *(v0.5.3 experimental)* |
+| **Dual-stream URL (main + sub)** | ✅ `sensor.bosch_<n>_stream_url` + `_sub` *(v12.4.0, opt-in per cam)* | ✅ `info` shows both · `live --sub` *(v10.5.0)* | ✅ `stream_url` + `stream_url_sub` *(v0.5.3 experimental)* |
 | **External recorder (BlueIris, Frigate)** | ✅ via go2rtc | ✅ stdout pipe | ✅ Digest-creds URL + LAN bind option |
 | **Privacy mode** | ✅ switch entity | ✅ command | ✅ DP |
 | **Front spotlight (Gen1/Gen2)** | ✅ light entity | ✅ command | ✅ DP |
@@ -143,6 +143,7 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 | Live stream — high quality | `live --hq` or `live --quality high` |
 | Live stream — low bandwidth | `live --quality low` |
 | Live stream — select instance | `live --inst N` |
+| **Live stream sub-stream (lower bandwidth)** | `live --sub` |
 | **Live stream LOCAL (LAN, TLS proxy)** | `live --local [cam]` |
 | **Live stream LOCAL + best quality** | `live --local --quality high [cam]` |
 | **Privacy mode — get/set via cloud API** | `privacy [cam] [on\|off]` |

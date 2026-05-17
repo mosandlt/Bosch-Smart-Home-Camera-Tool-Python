@@ -70,7 +70,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.4.0"
+VERSION     = "10.5.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -1353,20 +1353,90 @@ def cmd_test_local(cfg: dict, args) -> None:
         print()
 
 
+# ── Dual-stream URL helper ────────────────────────────────────────────────────
+# Bosch RTSP URLs encode stream quality as an `inst=N` query parameter:
+#   inst=1 → main stream   (~30 Mbps LOCAL full-HD, balanced on REMOTE)
+#   inst=2 → sub-stream    (~7.5 Mbps — lower bandwidth, same Bosch session)
+# Both live on the same TLS proxy session; the camera only sends a stream when
+# an external client actually connects (pull-based RTSP), so sub costs nothing
+# extra unless consumed. Gen1 cameras (INDOOR/OUTDOOR) may silently ignore
+# inst=2 and fall back to their default stream — same URL, same data.
+def _build_stream_urls(
+    cam: dict,
+    conn_result: dict,
+    inst: int = 2,
+    *,
+    use_tls_proxy: bool = False,
+    proxy_port: int = 0,
+) -> tuple[str, str]:
+    """Return ``(main_url, sub_url)`` RTSPS URLs for a live connection result.
+
+    Both URLs are derived from the same ``PUT /connection`` response.
+    ``main_url`` uses ``inst`` as-is (or inst=1 for REMOTE main quality).
+    ``sub_url`` substitutes ``inst=2`` regardless of the caller's quality setting.
+
+    Args:
+        cam:          Camera dict from config (used for ``id`` only; reserved for
+                      future per-model logic such as Gen1 sub-stream detection).
+        conn_result:  Parsed JSON body of a successful ``PUT /connection`` 200 response.
+        inst:         Instance number for the *main* URL (default 2; 1 = max-quality).
+        use_tls_proxy: When True the URL prefix is ``rtsp://127.0.0.1:{proxy_port}``
+                       (LOCAL mode with TLS proxy) instead of ``rtsps://``.
+        proxy_port:   Local TCP port of the already-started TLS proxy (LOCAL mode only).
+
+    Returns:
+        Tuple ``(main_url, sub_url)``.  If ``urls`` is empty both strings are ``""``.
+    """
+    urls: list[str] = conn_result.get("urls", [])
+    if not urls:
+        return ("", "")
+
+    u = urls[0]
+    user: str    = conn_result.get("user") or ""
+    password: str = conn_result.get("password") or ""
+
+    def _make_url(chosen_inst: int) -> str:
+        if use_tls_proxy:
+            from urllib.parse import quote as _q
+            auth_prefix = f"{_q(user, safe='')}:{_q(password, safe='')}@" if user and password else ""
+            return (
+                f"rtsp://{auth_prefix}127.0.0.1:{proxy_port}"
+                f"/rtsp_tunnel?inst={chosen_inst}&enableaudio=1&fmtp=1&maxSessionDuration=3600"
+            )
+        else:
+            # REMOTE: "proxy-NN.live.cbs.boschsecurity.com:42090/{hash}"
+            host_port, hash_path = u.split("/", 1)
+            proxy_host = host_port.split(":")[0]
+            return (
+                f"rtsps://{proxy_host}:443/{hash_path}"
+                f"/rtsp_tunnel?inst={chosen_inst}&enableaudio=1&fmtp=1&maxSessionDuration=3600"
+            )
+
+    main_url: str = _make_url(inst)
+    sub_url: str  = _make_url(2)
+    return (main_url, sub_url)
+
+
 def cmd_live(cfg: dict, args) -> None:
     """Open live stream — tries PUT /connection → open VLC on success.
 
-    --hq: request highQualityVideo=true in PUT /connection (higher bitrate stream).
+    --hq:    request highQualityVideo=true in PUT /connection (higher bitrate stream).
     --inst N: select stream instance (default 2; use 1 for alternative stream).
+    --sub:   use the sub-stream (inst=2, ~7.5 Mbps) instead of the main stream.
     """
     token   = get_token(cfg)
     session = make_session(token)
     cameras = get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
 
-    # Quality preset overrides --hq/--inst
+    use_sub: bool = getattr(args, "sub", False)
+
+    # Quality preset overrides --hq/--inst.  --sub maps to the inst=2 sub-stream.
     quality = getattr(args, "quality", None)
-    if quality == "high":
+    if use_sub:
+        hq   = False
+        inst = 2   # sub-stream is always inst=2
+    elif quality == "high":
         hq   = True
         inst = getattr(args, "inst", 2) if getattr(args, "inst", 2) != 2 else 1
     elif quality == "low":
@@ -1378,6 +1448,8 @@ def cmd_live(cfg: dict, args) -> None:
 
     for name, cam_info in cams.items():
         print(f"\n── Live Stream: {name} ──────────────────────────────────────")
+        if use_sub:
+            print(f"  ℹ️   {t('cmd.live.using_sub_stream')}")
         status = api_ping(session, cam_info["id"])
         if status == "ONLINE":
             icon = "🟢"
@@ -1392,8 +1464,8 @@ def cmd_live(cfg: dict, args) -> None:
             continue
 
         print("  🔄  Opening live connection...")
-        url         = f"{CLOUD_API}/v11/video_inputs/{cam_info['id']}/connection"
-        result      = None
+        conn_url    = f"{CLOUD_API}/v11/video_inputs/{cam_info['id']}/connection"
+        result: Optional[dict] = None
         result_type = ""
 
         # --local flag forces LOCAL (direct LAN); default is REMOTE (cloud proxy).
@@ -1403,7 +1475,7 @@ def cmd_live(cfg: dict, args) -> None:
         token_refreshed = False  # refresh the bearer at most once per camera
         for type_val in type_candidates:
             r = session.put(
-                url,
+                conn_url,
                 json={"type": type_val, "highQualityVideo": hq},
                 headers={"Content-Type": "application/json"},
                 timeout=15,
@@ -1422,7 +1494,7 @@ def cmd_live(cfg: dict, args) -> None:
                 session = make_session(token)
                 token_refreshed = True
                 r = session.put(
-                    url,
+                    conn_url,
                     json={"type": type_val, "highQualityVideo": hq},
                     headers={"Content-Type": "application/json"},
                     timeout=15,
@@ -1437,10 +1509,10 @@ def cmd_live(cfg: dict, args) -> None:
                 break
 
         if result:
-            urls       = result.get("urls", [])
-            img_scheme = result.get("imageUrlScheme", "https://{url}/snap.jpg")
-            user       = result.get("user") or ""
-            password   = result.get("password") or ""
+            urls: list[str]  = result.get("urls", [])
+            img_scheme: str  = result.get("imageUrlScheme", "https://{url}/snap.jpg")
+            user: str        = result.get("user") or ""
+            password: str    = result.get("password") or ""
 
             proxy_url = img_scheme.replace("{url}", urls[0]) if urls else ""
             print(f"  🌐  Snap URL:  {proxy_url or '(none)'}")
@@ -1461,25 +1533,20 @@ def cmd_live(cfg: dict, args) -> None:
                 if "/" in u:
                     # REMOTE: "proxy-NN.live.cbs.boschsecurity.com:42090/{hash}"
                     # Port 42090 drops RTSP; use port 443 instead.
-                    host_port, hash_path = u.split("/", 1)
-                    proxy_host = host_port.split(":")[0]
-                    rtsps_url = (
-                        f"rtsps://{proxy_host}:443/{hash_path}"
-                        f"/rtsp_tunnel?inst={inst}&enableaudio=1&fmtp=1&maxSessionDuration=3600"
-                    )
+                    main_url, sub_url = _build_stream_urls(cam_info, result, inst=inst)
+                    rtsps_url = sub_url if use_sub else main_url
                 else:
                     # LOCAL: "192.168.x.x:443" — camera uses TLS with self-signed cert
                     # + Digest auth. FFmpeg can't do RTSPS+Digest with self-signed certs,
                     # so we start a local TCP→TLS proxy and point FFmpeg at plain rtsp://.
-                    from urllib.parse import quote as _q
-                    cam_host, cam_port = u.split(":")
-                    proxy_port = _start_tls_proxy_sync(cam_host, int(cam_port))
-                    auth_prefix = f"{_q(user, safe='')}:{_q(password, safe='')}@" if user and password else ""
-                    rtsps_url = (
-                        f"rtsp://{auth_prefix}127.0.0.1:{proxy_port}"
-                        f"/rtsp_tunnel?inst={inst}&enableaudio=1&fmtp=1&maxSessionDuration=3600"
+                    cam_host, cam_port_str = u.split(":")
+                    tls_port = _start_tls_proxy_sync(cam_host, int(cam_port_str))
+                    main_url, sub_url = _build_stream_urls(
+                        cam_info, result, inst=inst,
+                        use_tls_proxy=True, proxy_port=tls_port,
                     )
-                    print(f"  🏠  Local stream ({u}) via TLS proxy :{proxy_port}")
+                    rtsps_url = sub_url if use_sub else main_url
+                    print(f"  🏠  Local stream ({u}) via TLS proxy :{tls_port}")
                 print(f"  📡  RTSPS URL: {rtsps_url}")
                 _open_rtsps_stream(rtsps_url, name, proxy_url, use_vlc=getattr(args, "vlc", False))
             else:
@@ -1627,27 +1694,26 @@ def cmd_info(cfg: dict, args) -> None:
             pass
 
         # ── Streaming URLs (live connection) ──────────────────────────────
-        cam_id_local = cam_id
+        # Uses inst=1 for main (max quality) and inst=2 for sub-stream.
+        # Both share the same Bosch REMOTE session — sub costs nothing extra.
         print(f"      Fetching stream URLs...")
         try:
             sr = session.put(
-                f"{CLOUD_API}/v11/video_inputs/{cam_id_local}/connection",
+                f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
                 json={"type": "REMOTE", "highQualityVideo": False},
                 headers={"Content-Type": "application/json"},
                 timeout=15,
             )
             if sr.status_code == 200:
-                sd = sr.json()
-                urls = sd.get("urls", [])
-                if urls:
-                    u = urls[0]
-                    proxy_host = u.split(":")[0]
-                    hash_path  = u.split("/", 1)[1]
-                    snap_url   = sd.get("imageUrlScheme", "https://{url}/snap.jpg").replace("{url}", u)
-                    rtsps_url  = (f"rtsps://{proxy_host}:443/{hash_path}"
-                                  f"/rtsp_tunnel?inst=2&enableaudio=1&fmtp=1&maxSessionDuration=3600")
+                sd: dict = sr.json()
+                conn_urls: list[str] = sd.get("urls", [])
+                if conn_urls:
+                    u = conn_urls[0]
+                    snap_url  = sd.get("imageUrlScheme", "https://{url}/snap.jpg").replace("{url}", u)
+                    main_url, sub_url = _build_stream_urls(cam, sd, inst=1)
                     print(f"      Snap URL:      {snap_url}")
-                    print(f"      RTSPS URL:     {rtsps_url}")
+                    print(t("cmd.info.stream_url_main", url=main_url))
+                    print(t("cmd.info.stream_url_sub",  url=sub_url))
                     print(f"      Stream:        H.264 1920×1080 30fps + AAC 16kHz (session ~60s)")
             else:
                 print(f"      Stream URLs:   unavailable (HTTP {sr.status_code})")
@@ -5710,6 +5776,11 @@ def main():
         "--local",
         action="store_true",
         help="Force LOCAL connection type (direct LAN stream with credentials)",
+    )
+    p_live.add_argument(
+        "--sub",
+        action="store_true",
+        help=t("help.live.sub"),
     )
 
     # ── test-local ─────────────────────────────────────────────────────────────
