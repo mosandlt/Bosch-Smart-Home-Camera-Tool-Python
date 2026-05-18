@@ -2,7 +2,7 @@
 
 > **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innenkamera, Gen1+Gen2).
 > Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, real-time event watching, and **Mini-NVR (BETA)** — all from the command line.
-> No official API. No app needed after setup. **v10.7.0**
+> No official API. No app needed after setup. **v10.7.1**
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
@@ -1824,6 +1824,7 @@ python3 bosch_camera.py nvr upload Garten
 
 | Version | Changes |
 |---------|---------|
+| **v10.7.1** | **FCM cleanup — remove iOS path (aligned with HA v12.4.5).** Removed `FCM_IOS_APP_ID`, `_get_fcm_ios_api_key()`, and the iOS `AIzaSy…` key (non-sanctioned, extracted from iOS app). The Sebastian-OSS-sanctioned Android key (`FCM_APP_ID`) handles all platforms. `deviceType` is now hardcoded to `"ANDROID"` (`bosch_camera.py` near `_watch_fcm_push`). The `auto` push-mode dispatch chain collapses from iOS→Android→polling to Android→polling. `--push-mode android` and `--push-mode ios` still accepted for back-compat but emit a deprecation warning to stderr and are treated as `auto`. |
 | **v10.7.0** | **Mini-NVR (BETA).** `watch --auto-record`: motion rising edge → ffmpeg MP4 clip, falling edge → clean stop. `nvr` subcommand: `status`, `list`, `prune`, `upload`. FIFO clip eviction (default 50 per camera). Optional SMB/NAS upload via `smbprotocol` with per-upload fresh connection cache (avoids SMB credit starvation). 13 new i18n keys across all 11 languages. +370 LOC, +46 tests. |
 | **v10.2.1** | **Revert privacy-mode cross-check from v10.2.0.** A/B testing 2026-04-27 (toggle privacy ON↔OFF, read RCP 0x0d00 before and after) proved `0x0d00 byte[1]` stays `1` independent of the user-facing privacy-mode toggle. That byte does not represent the mode flag — `rcp_findings.txt`'s "PRIVACY MASK state" label refers to a separate static configuration. The "Privacy MISMATCH" line therefore produced a permanent false positive. The Bosch cloud `/v11/video_inputs.privacyMode` field is the correct source. **Kept:** the v10.2.0 `?JpegSize=1206` snap.jpg latency fix (still valid). |
 | **v10.2.0** | **Cross-version sync with HA integration v10.4.5 + v10.4.8.** Two changes: **(1) Fix: LOCAL `snap.jpg` is now ~1.4 s instead of ~6–10 s when the camera is idle.** Append `?JpegSize=1206` to the local snap URL — without the parameter, the camera triggers a slow on-demand full-sensor capture; with it, the cached path serves quickly. Same fix that landed in HA integration v10.4.5; the Python CLI was using the unparameterised URL on the local Digest path (`bosch_camera.py:806`). **(2) New: privacy-mode cross-check in `--status` RCP block.** Bosch cloud `/v11/video_inputs.privacyMode` has been observed to misreport `'OFF'` for ONLINE cameras that are physically in privacy (Gen2 Outdoor, FW 9.40.25, 2026-04-27). The CLI now reads RCP `0x0d00` via the cloud-proxy session it already has open and compares byte[1] to the cloud-reported `privacyMode`. On mismatch it prints a `⚠️  Privacy MISMATCH: cloud='OFF', hardware=ON (via RCP)` line — the camera hardware is authoritative. Read-only diagnostic; no behavior change in any other path. The HA integration takes the corresponding fix one step further by overriding its internal cache so the privacy switch flips automatically. The CLI just surfaces the discrepancy at status time. |
@@ -1867,7 +1868,7 @@ python3 bosch_camera.py nvr upload Garten
 | Implementation | Repo | Status |
 |---|---|---|
 | 🏆 Home Assistant Integration | [Bosch-Smart-Home-Camera-Tool-HomeAssistant](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | v12.4.5 · HA Quality Scale **Platinum** · production-ready |
-| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | v10.7.0 · Mini-NVR + SMB upload (BETA) · capture / research / no-HA standalone |
+| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | v10.7.1 · Mini-NVR + SMB upload (BETA) · capture / research / no-HA standalone |
 | 🟢 ioBroker Adapter | [ioBroker.bosch-smart-home-camera](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) | v0.6.0 · beta · npm |
 | 🤖 MCP Server | [Bosch-Smart-Home-Camera-Tool-MCP](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-MCP) | v1.0.0 · Claude Code / Claude Desktop integration |
 

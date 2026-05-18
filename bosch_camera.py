@@ -75,7 +75,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.7.0"
+VERSION     = "10.7.1"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -2604,14 +2604,6 @@ FCM_PROJECT_ID    = "bosch-smart-cameras"
 FCM_APP_ID        = "1:404630424405:android:9e5b6b58e4c70075"
 FCM_SENDER_ID     = "404630424405"
 
-# iOS FCM config (from iOS app v2.11.2 analysis)
-FCM_IOS_APP_ID    = "1:404630424405:ios:715aae2570e39faad9bddc"
-
-def _get_fcm_ios_api_key() -> str:
-    """Return the Firebase API key for the iOS Bosch Smart Camera app."""
-    import base64
-    return base64.b64decode("QUl6YVN5QmxyN1o0ZmpaM0lmcnhsN1VRZFE4eGZRd3g5WFJBYnBJ").decode()
-
 def _get_fcm_api_key() -> str:
     """Return the Google API key for FCM registration.
 
@@ -2792,8 +2784,8 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
         fcm_token = await client.checkin_or_register()
         print(f"  ✅  FCM Token: {fcm_token[:50]}...")
 
-        # Register with Bosch CBS — deviceType must match FCM platform
-        device_type = "IOS" if "ios:" in (fcm_app_id or "") else "ANDROID"
+        # Register with Bosch CBS — always ANDROID (Sebastian-OSS-sanctioned key covers both platforms)
+        device_type = "ANDROID"
         print(f"  🔗  Registering with Bosch CBS (deviceType={device_type})...")
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         r = requests.post(
@@ -3342,27 +3334,22 @@ def cmd_watch(cfg: dict, args) -> None:
         print(f"  📨  Signal alerts → {signal_url} (sender={signal_sender}, recipients={signal_recipients})")
 
     push_mode = getattr(args, "push_mode", "auto")
+    # Back-compat: --push-mode android/ios accepted but treated as auto (iOS path removed in v10.7.1)
+    if push_mode in ("android", "ios"):
+        import sys as _sys
+        print(f"WARNING: --push-mode {push_mode} is deprecated, treating as auto", file=_sys.stderr)
+        push_mode = "auto"
 
     if use_push:
         push_succeeded = False
 
-        modes_to_try = []
-        if push_mode == "ios":
-            modes_to_try = [("iOS", FCM_IOS_APP_ID, _get_fcm_ios_api_key)]
-        elif push_mode == "android":
-            modes_to_try = [("Android", FCM_APP_ID, _get_fcm_api_key)]
-        elif push_mode == "polling":
+        if push_mode == "polling":
             modes_to_try = []  # skip FCM, go straight to polling
-        else:  # auto: ios → android
-            modes_to_try = [
-                ("iOS", FCM_IOS_APP_ID, _get_fcm_ios_api_key),
-                ("Android", FCM_APP_ID, _get_fcm_api_key),
-            ]
+        else:  # auto: single Android attempt (Sebastian-OSS-sanctioned key handles all platforms)
+            modes_to_try = [("Android", FCM_APP_ID, _get_fcm_api_key)]
 
         for label, app_id, key_fn in modes_to_try:
             try:
-                if len(modes_to_try) > 1:
-                    print(f"\n  🔄  Auto mode: trying {label} FCM...")
                 _watch_fcm_push(cfg, token, cams, duration, auto_snap,
                                 signal_url, signal_sender, signal_recipients,
                                 fcm_app_id=app_id, fcm_api_key=key_fn(),
@@ -3376,7 +3363,7 @@ def cmd_watch(cfg: dict, args) -> None:
             return
 
         if push_mode != "polling":
-            print(f"  🔄  All FCM modes failed — falling back to standard API polling...")
+            print(f"  🔄  FCM failed — falling back to standard API polling...")
         # Fall through to polling code below
 
     # Build initial baseline of seen event IDs per camera
@@ -6796,7 +6783,8 @@ def main():
     p_watch.add_argument("--signal-sender", metavar="NUM",
                          help="Signal sender number (your registered signal-cli number)")
     p_watch.add_argument("--push-mode", choices=["auto", "android", "ios", "polling"], default="auto",
-                         help="Push notification mode: auto (try ios->android->polling), android, ios, polling")
+                         help="Push notification mode: auto (FCM with polling fallback), polling. "
+                              "android/ios accepted for back-compat but treated as auto (iOS path removed in v10.7.1)")
     p_watch.add_argument("--track-motion", action="store_true", dest="track_motion",
                          help=t("help.watch.track_motion"))
     p_watch.add_argument("--auto-snapshot", action="store_true", dest="auto_snapshot",
