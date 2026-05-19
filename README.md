@@ -2,7 +2,7 @@
 
 > **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innenkamera, Gen1+Gen2).
 > Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, real-time event watching, and **Mini-NVR (BETA)** — all from the command line.
-> No official API. No app needed after setup. **v10.7.1**
+> No official API. No app needed after setup. **v10.7.2**
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
@@ -93,7 +93,7 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via three sibling 
 
 | Feature | [Home Assistant Integration](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | [Python CLI Tool](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | [ioBroker Adapter](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) |
 |---|---|---|---|
-| **Maturity** | v12+ — HA Quality Scale **Platinum** | v10.7+ stable | v0.6+ beta |
+| **Maturity** | v12+ — HA Quality Scale **Platinum** | v10.7+ stable | v0.7+ beta |
 | **Platform** | Home Assistant (HACS) | Standalone Python 3.10+ CLI | ioBroker (npm) |
 | **Login** | OAuth2 PKCE (browser) | OAuth2 PKCE (browser) | OAuth2 PKCE (browser) |
 | **Snapshots** | ✅ Native `Camera.image` | ✅ `snapshot` command | ✅ File-store + base64 DP |
@@ -1824,6 +1824,7 @@ python3 bosch_camera.py nvr upload Garten
 
 | Version | Changes |
 |---------|---------|
+| **v10.7.2** | **`maintenance` subcommand (cross-port from HA v12.4.5).** `bosch maintenance` fetches Bosch community RSS feeds (Wartungsarbeiten + Statusmeldungen) and shows the current state (active / scheduled / past / recent). Falls back to HTML scraping when RSS is unavailable. `--json` flag for scripting. When a cloud request returns a persistent 5xx, a one-line hint is printed automatically if maintenance is active or scheduled. Parser behavior is byte-identical to the HA integration's `maintenance.py`. |
 | **v10.7.1** | **FCM cleanup — remove iOS path (aligned with HA v12.4.5).** Removed `FCM_IOS_APP_ID`, `_get_fcm_ios_api_key()`, and the iOS `AIzaSy…` key (non-sanctioned, extracted from iOS app). The Sebastian-OSS-sanctioned Android key (`FCM_APP_ID`) handles all platforms. `deviceType` is now hardcoded to `"ANDROID"` (`bosch_camera.py` near `_watch_fcm_push`). The `auto` push-mode dispatch chain collapses from iOS→Android→polling to Android→polling. `--push-mode android` and `--push-mode ios` still accepted for back-compat but emit a deprecation warning to stderr and are treated as `auto`. |
 | **v10.7.0** | **Mini-NVR (BETA).** `watch --auto-record`: motion rising edge → ffmpeg MP4 clip, falling edge → clean stop. `nvr` subcommand: `status`, `list`, `prune`, `upload`. FIFO clip eviction (default 50 per camera). Optional SMB/NAS upload via `smbprotocol` with per-upload fresh connection cache (avoids SMB credit starvation). 13 new i18n keys across all 11 languages. +370 LOC, +46 tests. |
 | **v10.2.1** | **Revert privacy-mode cross-check from v10.2.0.** A/B testing 2026-04-27 (toggle privacy ON↔OFF, read RCP 0x0d00 before and after) proved `0x0d00 byte[1]` stays `1` independent of the user-facing privacy-mode toggle. That byte does not represent the mode flag — `rcp_findings.txt`'s "PRIVACY MASK state" label refers to a separate static configuration. The "Privacy MISMATCH" line therefore produced a permanent false positive. The Bosch cloud `/v11/video_inputs.privacyMode` field is the correct source. **Kept:** the v10.2.0 `?JpegSize=1206` snap.jpg latency fix (still valid). |
@@ -1868,7 +1869,7 @@ python3 bosch_camera.py nvr upload Garten
 | Implementation | Repo | Status |
 |---|---|---|
 | 🏆 Home Assistant Integration | [Bosch-Smart-Home-Camera-Tool-HomeAssistant](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | v12.4.7 · HA Quality Scale **Platinum** · production-ready |
-| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | v10.7.1 · Mini-NVR + SMB upload (BETA) · capture / research / no-HA standalone |
+| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | v10.7.2 · Mini-NVR + SMB upload (BETA) · maintenance status · capture / research / no-HA standalone |
 | 🟢 ioBroker Adapter | [ioBroker.bosch-smart-home-camera](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) | v0.6.2 · beta · npm |
 | 🤖 MCP Server | [Bosch-Smart-Home-Camera-Tool-MCP](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-MCP) | v1.0.0 · Claude Code / Claude Desktop integration |
 

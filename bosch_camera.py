@@ -66,6 +66,7 @@ from requests.adapters import HTTPAdapter
 from typing import Optional
 
 from bosch_i18n import t, set_lang, detect_lang
+from bosch_maintenance import MaintenanceWindow, fetch_maintenance
 
 # Suppress InsecureRequestWarning only for local camera calls (self-signed certs).
 # Cloud API and Keycloak calls use verify=True and do not trigger this warning.
@@ -75,7 +76,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.7.1"
+VERSION     = "10.7.2"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -406,6 +407,27 @@ _CONFIG_LOCK = threading.Lock()
 # cleanly instead of relying solely on KeyboardInterrupt propagation.
 _STOP_REQUESTED = threading.Event()
 
+# Maintenance hint: shown at most once per process run to avoid log spam.
+_maintenance_hint_shown = False
+
+
+def _maybe_print_maintenance_hint() -> None:
+    """Print a one-line maintenance hint when a 5xx response was received.
+
+    Fetches the community RSS feeds lazily and prints a hint only when state is
+    'active' or 'scheduled'.  Shown at most once per process run.
+    """
+    global _maintenance_hint_shown
+    if _maintenance_hint_shown:
+        return
+    _maintenance_hint_shown = True
+    try:
+        mw: MaintenanceWindow | None = fetch_maintenance(timeout_s=5.0)
+        if mw is not None and mw.state() in {"active", "scheduled"}:
+            print(t("cmd.maintenance.hint_5xx"))
+    except Exception:
+        pass  # never let hint logic crash the caller
+
 
 def _install_stop_handlers() -> None:
     """Install SIGINT/SIGTERM handlers that flip _STOP_REQUESTED.
@@ -449,6 +471,9 @@ def _request_with_retry(session: requests.Session, method: str, url: str,
         if 500 <= r.status_code < 600 and attempt < max_attempts - 1:
             time.sleep(2 ** attempt)
             continue
+        # All retries exhausted with a persistent 5xx — show maintenance hint.
+        if 500 <= r.status_code < 600:
+            _maybe_print_maintenance_hint()
         return r
     # Unreachable — loop either returns a response or re-raises. Keep for safety.
     if last_exc is not None:
@@ -3706,6 +3731,60 @@ def cmd_intercom(cfg: dict, args) -> None:
         print(f"  ❌  Intercom error: {e}")
 
 
+def cmd_maintenance(cfg: dict, args: argparse.Namespace) -> None:
+    """Show the current Bosch cloud maintenance / outage status.
+
+    Fetches the community RSS feeds and prints the best-match announcement.
+    Use --json to emit a machine-readable JSON blob for scripting.
+
+    Usage:
+      python3 bosch_camera.py maintenance
+      python3 bosch_camera.py maintenance --json
+    """
+    import json as _json
+
+    emit_json: bool = getattr(args, "json", False)
+
+    print(t("cmd.maintenance.header"))
+    mw: MaintenanceWindow | None = fetch_maintenance(timeout_s=8.0)
+
+    if mw is None:
+        if emit_json:
+            print(_json.dumps(None))
+        else:
+            print(t("cmd.maintenance.fetch_failed"))
+        return
+
+    if emit_json:
+        print(_json.dumps(mw.as_dict(), ensure_ascii=False, indent=2))
+        return
+
+    state = mw.state()
+    fmt = "%Y-%m-%d %H:%M UTC"
+    start_str = mw.scheduled_start.strftime(fmt) if mw.scheduled_start else ""
+    end_str = mw.scheduled_end.strftime(fmt) if mw.scheduled_end else ""
+
+    if state == "active":
+        print(t("cmd.maintenance.active", start=start_str, end=end_str))
+    elif state == "scheduled":
+        print(t("cmd.maintenance.scheduled", start=start_str, end=end_str))
+    elif state == "past":
+        print(t("cmd.maintenance.past", end=end_str))
+    elif state == "recent":
+        print(t("cmd.maintenance.recent", title=mw.title))
+    else:
+        print(t("cmd.maintenance.unknown", title=mw.title))
+
+    print(t("cmd.maintenance.title", title=mw.title))
+    if mw.summary:
+        print(t("cmd.maintenance.summary", summary=mw.summary))
+    if mw.camera_relevant:
+        print(t("cmd.maintenance.camera_relevant"))
+    if mw.link:
+        print(t("cmd.maintenance.link", link=mw.link))
+    print()
+
+
 def cmd_motion(cfg: dict, args) -> None:
     """
     Get or set motion detection settings.
@@ -6870,6 +6949,34 @@ def main():
     p_intercom.add_argument("--duration", type=int, default=60, help="Session duration in seconds (default 60)")
     p_intercom.add_argument("--speaker-level", type=int, default=50, help="Speaker volume 0-100 (default 50)")
 
+    # ── maintenance ────────────────────────────────────────────────────────────
+    p_maint = subparsers.add_parser(
+        "maintenance",
+        help="Show Bosch cloud maintenance / outage status",
+        description=(
+            "🔧  maintenance — Check Bosch community RSS for announced maintenance\n"
+            "\n"
+            "  Fetches the Bosch Smart Home community boards 'Wartungsarbeiten'\n"
+            "  and 'Statusmeldungen'. Returns the best-match announcement with its\n"
+            "  state (active / scheduled / past / recent / unknown).\n"
+            "\n"
+            "  Falls back to HTML scraping when the RSS feeds are unavailable.\n"
+            "  Returns None (or null in JSON) only when all sources fail."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py maintenance\n"
+            "    python3 bosch_camera.py maintenance --json"
+        ),
+    )
+    p_maint.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit raw JSON (MaintenanceWindow dict) for scripting",
+    )
+
     # ── motion ─────────────────────────────────────────────────────────────────
     p_motion = subparsers.add_parser(
         "motion",
@@ -7379,6 +7486,7 @@ def main():
         "profile":       cmd_profile,
         "account":       cmd_account,
         "intercom":      cmd_intercom,
+        "maintenance":   cmd_maintenance,
         "rcp":                cmd_rcp,
         "token":              cmd_token,
         "config":             cmd_config,
