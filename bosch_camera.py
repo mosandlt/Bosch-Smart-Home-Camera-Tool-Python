@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bosch Smart Home Camera — All-in-one Standalone Tool
-Version: 7.0.0
+Version: 10.7.3
 =====================================================
 No hardcoded camera IDs or credentials.
 All configuration is stored in bosch_config.json (created on first run).
@@ -34,6 +34,10 @@ Usage (CLI):
   python3 bosch_camera.py live     [<cam-name>]            # open RTSP stream in VLC
   python3 bosch_camera.py download [<cam-name>] [--limit N] [--snaps-only] [--clips-only]
   python3 bosch_camera.py events   [<cam-name>] [--limit N] [--clip EVENT_ID]
+  python3 bosch_camera.py ping      [<cam-name>] [--json]
+  python3 bosch_camera.py lan-ips   [set <cam-name> <ip>|unset <cam-name>|sync]
+  python3 bosch_camera.py privacy   [<cam-name>] [on|off] [--local]
+  python3 bosch_camera.py light     [<cam-name>] [on|off|intensity N] [--local]
   python3 bosch_camera.py privacy-sound [<cam-name>] [on|off]
   python3 bosch_camera.py rules    [<cam-name>] [add|edit|delete]
   python3 bosch_camera.py friends  [invite|share|unshare|resend|remove]
@@ -76,7 +80,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.7.2"
+VERSION     = "10.7.3"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -139,6 +143,13 @@ DEFAULT_CONFIG = {
             "enables direct local snap.jpg (HTTP Digest auth). "
             "local_ip and credentials are optional — cloud API works without them."
         ),
+    },
+    "lan_ips": {
+        # cam_id (UUID) → LAN IP.  Used by --local flag for RCP writes.
+        # Populated automatically by "bosch lan-ips set <cam> <ip>".
+        # Also auto-populated from cameras[*].local_ip on load.
+        # Example:
+        #   "EF791764-A48D-4F00-9B32-EF04BEB0DDA0": "192.168.1.100"
     },
     "nvr": {
         "max_clips":      50,
@@ -2171,6 +2182,219 @@ def cmd_info(cfg: dict, args) -> None:
         print()
 
 
+# ══════════════════════ LAN-FALLBACK HELPERS ═════════════════════════════════
+#
+# Direct RCP writes over HTTP to the camera's LAN IP (port 80, no auth).
+# Gen2 cameras accept unauthenticated RCP on http://<cam_ip>/rcp.xml.
+# Gen1 cameras return 401 — these functions return False gracefully.
+# Uses synchronous `requests` (same as the rest of the CLI).
+
+def _lan_rcp_write(cam_ip: str, command: str, payload_hex: str,
+                   type_: str = "P_OCTET", num: int = 0) -> bool:
+    """Write an RCP value directly via the camera's LAN HTTP endpoint.
+
+    Returns True on success.  payload_hex may or may not start with "0x".
+    `num=1` is required for T_WORD-typed writes (e.g. 0x0c22 LED dimmer).
+    """
+    import re as _re
+    base = f"http://{cam_ip}/rcp.xml"
+    if not payload_hex.lower().startswith("0x"):
+        payload_hex = "0x" + payload_hex
+    params: dict[str, str] = {
+        "command":   command,
+        "direction": "WRITE",
+        "type":      type_,
+        "payload":   payload_hex,
+    }
+    if num:
+        params["num"] = str(num)
+    try:
+        r = requests.get(base, params=params, verify=False, timeout=5)
+        if r.status_code != 200:
+            return False
+        if b"<err>" in r.content.lower():
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _lan_rcp_write_privacy(cam_ip: str, enabled: bool) -> bool:
+    """Write privacy-mode via direct LOCAL RCP (Gen2, no auth).
+
+    Uses command 0x0d00.  payload byte[1] = 1 (ON) or 0 (OFF).
+    """
+    payload = "00010000" if enabled else "00000000"
+    return _lan_rcp_write(cam_ip, "0x0d00", payload, "P_OCTET")
+
+
+def _lan_rcp_write_front_light(cam_ip: str, brightness: int) -> bool:
+    """Write front-light brightness (0–100) via direct LOCAL RCP (Gen2, no auth).
+
+    Maps to RCP 0x0c22 (T_WORD, num=1).  0 = off; 1-100 = dimmer level.
+    Wallwasher is cloud-only (write payload too complex for unauthenticated RCP).
+    """
+    val = max(0, min(100, int(brightness)))
+    payload = f"{val:04x}"
+    return _lan_rcp_write(cam_ip, "0x0c22", payload, "T_WORD", num=1)
+
+
+def _lan_tcp_ping(host: str, port: int = 443, timeout: float = 3.0) -> tuple[bool, float]:
+    """TCP-connect probe to (host, port).  Returns (reachable, rtt_ms)."""
+    import socket as _socket
+    t0 = time.monotonic()
+    try:
+        with _socket.create_connection((host, port), timeout=timeout):
+            rtt = (time.monotonic() - t0) * 1000
+            return True, rtt
+    except OSError:
+        return False, 0.0
+
+
+def _resolve_lan_ip(cfg: dict, cam_id: str, cam_info: dict) -> str | None:
+    """Return the LAN IP for a camera.
+
+    Priority:
+      1. cfg["lan_ips"][cam_id]  — explicit lan_ips map
+      2. cam_info["local_ip"]    — per-camera legacy field
+    Returns None if no IP is configured.
+    """
+    lan_ips: dict[str, str] = cfg.get("lan_ips", {})
+    if cam_id in lan_ips and lan_ips[cam_id].strip():
+        return lan_ips[cam_id].strip()
+    legacy = cam_info.get("local_ip", "").strip()
+    return legacy or None
+
+
+def _hint_local_on_5xx(status_code: int, command_hint: str = "") -> None:
+    """Print a one-line hint when a cloud call returns 5xx.
+
+    `command_hint` should be the suggested --local invocation, e.g.
+    "bosch privacy Garten on --local".
+    """
+    if 500 <= status_code <= 599:
+        msg = f"  ⚠️   Cloud returned HTTP {status_code}."
+        if command_hint:
+            msg += f"  Try the LAN fallback:  {command_hint}"
+        else:
+            msg += "  If the camera is reachable on LAN, retry with --local."
+        print(msg)
+
+
+# ══════════════════════ LAN-FALLBACK COMMANDS ════════════════════════════════
+
+
+def cmd_ping(cfg: dict, args) -> None:
+    """TCP-connect probe to every configured camera's LAN IP on port 443.
+
+    Usage:
+      python3 bosch_camera.py ping                  # all cameras
+      python3 bosch_camera.py ping <cam-name>       # one camera
+      python3 bosch_camera.py ping --json           # machine-readable output
+    """
+    import json as _json_mod
+    cam_arg  = getattr(args, "cam", None)
+    as_json  = getattr(args, "json", False)
+    cams     = resolve_cam(cfg, cam_arg)
+    results: list[dict] = []
+
+    for name, cam_info in cams.items():
+        cam_id = cam_info.get("id", "")
+        ip     = _resolve_lan_ip(cfg, cam_id, cam_info)
+        if not ip:
+            entry = {"cam": name, "cam_id": cam_id, "ip": None,
+                     "reachable": False, "rtt_ms": None,
+                     "error": "no LAN IP configured — set local_ip in config or run 'bosch lan-ips set'"}
+            results.append(entry)
+            if not as_json:
+                print(f"  {name}: no LAN IP configured")
+            continue
+
+        ok, rtt = _lan_tcp_ping(ip, port=443)
+        entry = {"cam": name, "cam_id": cam_id, "ip": ip,
+                 "reachable": ok, "rtt_ms": round(rtt, 1) if ok else None}
+        results.append(entry)
+        if not as_json:
+            icon = "✅" if ok else "❌"
+            rtt_str = f"  {rtt:.1f} ms" if ok else ""
+            print(f"  {icon}  {name}  ({ip}){rtt_str}")
+
+    if as_json:
+        print(_json_mod.dumps(results, indent=2))
+
+
+def cmd_lan_ips(cfg: dict, args) -> None:
+    """List or edit the LAN IP map used by --local flag commands.
+
+    Usage:
+      python3 bosch_camera.py lan-ips                              # list
+      python3 bosch_camera.py lan-ips set <cam-name> <ip>         # set IP
+      python3 bosch_camera.py lan-ips unset <cam-name>            # remove IP
+      python3 bosch_camera.py lan-ips sync                        # copy local_ip fields → lan_ips
+    """
+    sub    = getattr(args, "lan_sub", None) or ""
+    cam_arg = getattr(args, "lan_cam", None)
+    ip_arg  = getattr(args, "lan_ip", None)
+
+    lan_ips: dict[str, str] = cfg.setdefault("lan_ips", {})
+    cameras: dict[str, dict] = cfg.get("cameras", {})
+
+    if sub == "set":
+        if not cam_arg or not ip_arg:
+            print("  Usage: bosch lan-ips set <cam-name> <ip>")
+            return
+        cams = resolve_cam(cfg, cam_arg)
+        for name, cam_info in cams.items():
+            cam_id = cam_info.get("id", "")
+            lan_ips[cam_id] = ip_arg
+            print(f"  Set {name} ({cam_id[:8]}…) → {ip_arg}")
+        save_config(cfg)
+        return
+
+    if sub == "unset":
+        if not cam_arg:
+            print("  Usage: bosch lan-ips unset <cam-name>")
+            return
+        cams = resolve_cam(cfg, cam_arg)
+        for name, cam_info in cams.items():
+            cam_id = cam_info.get("id", "")
+            if cam_id in lan_ips:
+                del lan_ips[cam_id]
+                print(f"  Removed {name}")
+            else:
+                print(f"  {name}: no entry to remove")
+        save_config(cfg)
+        return
+
+    if sub == "sync":
+        count = 0
+        for name, cam_info in cameras.items():
+            ip = cam_info.get("local_ip", "").strip()
+            cam_id = cam_info.get("id", "")
+            if ip and cam_id:
+                lan_ips[cam_id] = ip
+                count += 1
+        save_config(cfg)
+        print(f"  Synced {count} camera(s) from local_ip fields.")
+        return
+
+    # List
+    print("\n  LAN IP map (used by --local flag)\n")
+    if not cameras:
+        print("  (no cameras configured)")
+        return
+    for name, cam_info in cameras.items():
+        cam_id = cam_info.get("id", "")
+        ip = _resolve_lan_ip(cfg, cam_id, cam_info)
+        ok_str = ""
+        if ip:
+            ok, rtt = _lan_tcp_ping(ip, port=443, timeout=2.0)
+            ok_str = f"  {'OK' if ok else 'UNREACHABLE'}  ({rtt:.0f} ms)" if ok else "  UNREACHABLE"
+        ip_display = ip or "(not set)"
+        print(f"  {name:<20} {ip_display:<18}{ok_str}")
+    print()
+
+
 def cmd_privacy(cfg: dict, args) -> None:
     """Get or set privacy mode for a camera via the Bosch cloud API.
 
@@ -2184,11 +2408,9 @@ def cmd_privacy(cfg: dict, args) -> None:
          Response: HTTP 204 on success.
     No SHC local API needed — uses cloud API directly.
     """
-    token   = get_token(cfg)
-    session = make_session(token)
-    cameras = get_cameras(cfg, session)
-    cam_arg = getattr(args, "cam", None)
-    action  = getattr(args, "action", None)  # "on" / "off" / None
+    cam_arg    = getattr(args, "cam", None)
+    action     = getattr(args, "action", None)  # "on" / "off" / None
+    use_local  = getattr(args, "local", False)
 
     # If action was parsed as cam and cam_arg looks like an action, swap them
     # (e.g. "privacy on" → cam=None, action="on")
@@ -2198,11 +2420,45 @@ def cmd_privacy(cfg: dict, args) -> None:
 
     cams = resolve_cam(cfg, cam_arg)
 
+    # ── --local path: RCP write directly to camera, skip cloud ────────────────
+    if use_local:
+        if action is None:
+            print("  ℹ️   --local requires an action: on or off")
+            return
+        new_state = action.upper()
+        enabled   = new_state == "ON"
+        for name, cam_info in cams.items():
+            cam_id = cam_info.get("id", "")
+            ip     = _resolve_lan_ip(cfg, cam_id, cam_info)
+            print(f"\n── Privacy Mode (LOCAL RCP): {name} ──────────────────────")
+            if not ip:
+                print(f"  ❌  No LAN IP for {name}. Run: bosch lan-ips set {name.lower()} <ip>")
+                continue
+            print(f"  🔄  Writing privacy → {new_state} via RCP to {ip}...")
+            ok = _lan_rcp_write_privacy(ip, enabled)
+            if ok:
+                icon_new = "🔒" if enabled else "👁️"
+                print(f"  {icon_new}  Privacy mode set to {new_state} (LAN RCP).")
+            else:
+                print(f"  ❌  LOCAL RCP write failed for {name} ({ip}).")
+                print(f"     Is it a Gen2 camera reachable on LAN?")
+        return
+
+    # ── cloud path (default) ───────────────────────────────────────────────────
+    token   = get_token(cfg)
+    session = make_session(token)
+    _      = get_cameras(cfg, session)  # ensure discovery if needed
+
     # Fetch current state from /v11/video_inputs
     r = session.get(f"{CLOUD_API}/v11/video_inputs", timeout=15)
     if r.status_code == 401:
         print("  ❌  Token expired.")
         return
+    if 500 <= r.status_code <= 599:
+        _hint_local_on_5xx(r.status_code,
+                           f"bosch privacy{' ' + cam_arg if cam_arg else ''}"
+                           f"{' ' + action if action else ''} --local")
+        r.raise_for_status()
     r.raise_for_status()
     cam_list = {cam.get("id"): cam for cam in r.json()}
 
@@ -2261,6 +2517,8 @@ def cmd_privacy(cfg: dict, args) -> None:
             else:
                 print("     Camera is now active — live images available.")
         else:
+            _hint_local_on_5xx(pr.status_code,
+                               f"bosch privacy {name.lower()} {action} --local")
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
@@ -2290,11 +2548,9 @@ def cmd_light(cfg: dict, args) -> None:
       lightOnMotionFollowUpTimeSeconds  — how long after motion
       generalLightOnTime / generalLightOffTime  — schedule window
     """
-    token   = get_token(cfg)
-    session = make_session(token)
-    cameras = get_cameras(cfg, session)
-    cam_arg = getattr(args, "cam", None)
-    action  = getattr(args, "action", None)
+    cam_arg    = getattr(args, "cam", None)
+    action     = getattr(args, "action", None)
+    use_local  = getattr(args, "local", False)
 
     # Allow "light on" / "light off" without camera name
     if cam_arg and cam_arg.lower() in ("on", "off") and action is None:
@@ -2311,10 +2567,64 @@ def cmd_light(cfg: dict, args) -> None:
 
     cams = resolve_cam(cfg, cam_arg)
 
+    # ── --local path: front-light RCP write directly to camera ────────────────
+    if use_local:
+        if action is None:
+            print("  ℹ️   --local requires an action: on / off / intensity <0-100>")
+            return
+        # Parse brightness from action
+        parts = action.split()
+        if parts[0] == "off":
+            brightness = 0
+            desc = "OFF (brightness=0)"
+        elif parts[0] == "intensity" and len(parts) >= 2:
+            brightness = max(0, min(100, int(parts[1])))
+            desc = f"intensity {brightness}%"
+        elif parts[0] in ("on", "front") and len(parts) >= 2 and parts[1].lower() == "on":
+            brightness = 100
+            desc = "ON (brightness=100%)"
+        elif parts[0] in ("on", "front") and len(parts) >= 2 and parts[1].lower() == "off":
+            brightness = 0
+            desc = "OFF (brightness=0)"
+        elif parts[0] in ("on",):
+            brightness = 100
+            desc = "ON (brightness=100%)"
+        else:
+            # wall / wallwasher — local RCP not supported
+            print("  ℹ️   --local only supports front light and intensity. Wallwasher is cloud-only.")
+            return
+        for name, cam_info in cams.items():
+            cam_id = cam_info.get("id", "")
+            ip     = _resolve_lan_ip(cfg, cam_id, cam_info)
+            print(f"\n── Camera Light (LOCAL RCP): {name} ─────────────────────")
+            if not ip:
+                print(f"  ❌  No LAN IP for {name}. Run: bosch lan-ips set {name.lower()} <ip>")
+                continue
+            print(f"  🔄  Writing front light → {desc} via RCP to {ip}...")
+            ok = _lan_rcp_write_front_light(ip, brightness)
+            if ok:
+                icon = "💡" if brightness > 0 else "🌑"
+                print(f"  {icon}  Front light set to {desc} (LAN RCP).")
+                print(f"     Note: wallwasher control is cloud-only and was not changed.")
+            else:
+                print(f"  ❌  LOCAL RCP write failed for {name} ({ip}).")
+                print(f"     Is it a Gen2 camera reachable on LAN?")
+        return
+
+    # ── cloud path (default) ───────────────────────────────────────────────────
+    token   = get_token(cfg)
+    session = make_session(token)
+    _      = get_cameras(cfg, session)  # ensure discovery if needed
+
     r = session.get(f"{CLOUD_API}/v11/video_inputs", timeout=15)
     if r.status_code == 401:
         print("  ❌  Token expired.")
         return
+    if 500 <= r.status_code <= 599:
+        _hint_local_on_5xx(r.status_code,
+                           f"bosch light{' ' + cam_arg if cam_arg else ''}"
+                           f"{' ' + action if action else ''} --local")
+        r.raise_for_status()
     r.raise_for_status()
     cam_list = {cam.get("id"): cam for cam in r.json()}
 
@@ -2430,6 +2740,8 @@ def cmd_light(cfg: dict, args) -> None:
                   f"Wall={'ON' if cur_wall else 'OFF'}  "
                   f"Intensity={int(cur_int * 100)}%")
         else:
+            _hint_local_on_5xx(pr.status_code,
+                               f"bosch light {name.lower()} {action} --local")
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
@@ -6539,21 +6851,103 @@ def main():
 
     # "download" and "events" subcommands removed (Bosch request)
 
+    # ── ping ───────────────────────────────────────────────────────────────────
+    p_ping = subparsers.add_parser(
+        "ping",
+        help="TCP-connect probe to camera LAN IP port 443",
+        description=(
+            "📡  ping — TCP-connect probe to camera LAN IP\n"
+            "\n"
+            "  Checks whether each camera is reachable on the LAN (port 443).\n"
+            "  Uses configured local_ip / lan_ips from bosch_config.json.\n"
+            "  Does not require a cloud token.\n"
+            "\n"
+            "  Output: per-camera OK/FAIL + round-trip time in ms."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py ping\n"
+            "    python3 bosch_camera.py ping Garten\n"
+            "    python3 bosch_camera.py ping --json"
+        ),
+    )
+    p_ping.add_argument(
+        "cam",
+        nargs="?",
+        metavar="<camera>",
+        help="Camera name or partial match (omit = all cameras)",
+    )
+    p_ping.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON array",
+    )
+
+    # ── lan-ips ────────────────────────────────────────────────────────────────
+    p_lan = subparsers.add_parser(
+        "lan-ips",
+        help="List or edit the LAN IP map (used by --local flag)",
+        description=(
+            "🌐  lan-ips — LAN IP map management\n"
+            "\n"
+            "  Manages the cam_id → LAN IP mapping used by --local flag commands\n"
+            "  (privacy --local, light --local) and by 'bosch ping'.\n"
+            "\n"
+            "  Subcommands:\n"
+            "    (none)              list IPs + ping each\n"
+            "    set <cam> <ip>      set or overwrite IP for a camera\n"
+            "    unset <cam>         remove IP for a camera\n"
+            "    sync                copy local_ip fields → lan_ips map\n"
+            "\n"
+            "  IPs are stored in bosch_config.json under 'lan_ips'.\n"
+            "  You can also set 'local_ip' per camera — lan-ips reads both."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py lan-ips\n"
+            "    python3 bosch_camera.py lan-ips set Garten 192.168.1.100\n"
+            "    python3 bosch_camera.py lan-ips unset Garten\n"
+            "    python3 bosch_camera.py lan-ips sync"
+        ),
+    )
+    p_lan.add_argument(
+        "lan_sub",
+        nargs="?",
+        metavar="set|unset|sync",
+        choices=["set", "unset", "sync"],
+        help="Subcommand",
+    )
+    p_lan.add_argument(
+        "lan_cam",
+        nargs="?",
+        metavar="<camera>",
+        help="Camera name (for set/unset)",
+    )
+    p_lan.add_argument(
+        "lan_ip",
+        nargs="?",
+        metavar="<ip>",
+        help="LAN IP address (for set)",
+    )
+
     # ── privacy ────────────────────────────────────────────────────────────────
     p_priv = subparsers.add_parser(
         "privacy",
-        help="Show or toggle privacy mode (cloud API, no SHC needed)",
+        help="Show or toggle privacy mode (cloud API or LAN RCP with --local)",
         description=(
             "🔒  privacy — Show or toggle privacy mode\n"
             "\n"
-            "  Uses the Bosch cloud API directly — no SHC local API needed.\n"
+            "  Default: uses the Bosch cloud API.\n"
+            "  With --local: writes directly via LAN RCP (Gen2 only, no token needed).\n"
             "  API: PUT /v11/video_inputs/{id}/privacy\n"
             "\n"
             "  States:\n"
             "    ON  — camera is blocked, no live images available\n"
             "    OFF — camera is active, live images available\n"
             "\n"
-            "  With --minutes: sets a timed privacy period (auto-expires)."
+            "  With --minutes: sets a timed privacy period (auto-expires, cloud only)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -6563,7 +6957,8 @@ def main():
             "    python3 bosch_camera.py privacy on                 # ON (all cameras)\n"
             "    python3 bosch_camera.py privacy Garten on\n"
             "    python3 bosch_camera.py privacy Garten off\n"
-            "    python3 bosch_camera.py privacy Garten on --minutes 30"
+            "    python3 bosch_camera.py privacy Garten on --minutes 30\n"
+            "    python3 bosch_camera.py privacy Garten on --local  # LAN RCP (Gen2)"
         ),
     )
     p_priv.add_argument(
@@ -6586,17 +6981,23 @@ def main():
         metavar="N",
         help="(with 'on') Enable privacy for N minutes, then auto-disable",
     )
+    p_priv.add_argument(
+        "--local",
+        action="store_true",
+        help="Force LAN RCP write (Gen2 only) — skip cloud, no token needed",
+    )
 
     # ── light ──────────────────────────────────────────────────────────────────
     p_light = subparsers.add_parser(
         "light",
-        help="Show or toggle camera light manual override (outdoor camera only)",
+        help="Show or toggle camera light (cloud API or LAN RCP with --local)",
         description=(
             "💡  light — Show or toggle camera light manual override\n"
             "\n"
-            "  Controls the built-in LED/wallwasher light of outdoor cameras.\n"
+            "  Default: uses the Bosch cloud API.\n"
+            "  With --local: writes front-light brightness via LAN RCP (Gen2 only).\n"
+            "  Wallwasher is cloud-only (--local ignores wallwasher).\n"
             "  Only available for cameras with featureSupport.light = true.\n"
-            "  Uses the Bosch cloud API — no SHC local API needed.\n"
             "  API: PUT /v11/video_inputs/{id}/lighting_override\n"
             "\n"
             "  Shows current schedule mode, intensity, and motion-triggered\n"
@@ -6605,11 +7006,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "  Examples:\n"
-            "    python3 bosch_camera.py light                  # show all\n"
-            "    python3 bosch_camera.py light Garten           # show one\n"
-            "    python3 bosch_camera.py light on               # ON (all cameras)\n"
+            "    python3 bosch_camera.py light                      # show all\n"
+            "    python3 bosch_camera.py light Garten               # show one\n"
+            "    python3 bosch_camera.py light on                   # ON (all cameras)\n"
             "    python3 bosch_camera.py light Garten on\n"
-            "    python3 bosch_camera.py light Garten off"
+            "    python3 bosch_camera.py light Garten off\n"
+            "    python3 bosch_camera.py light Garten on --local    # LAN RCP (Gen2)\n"
+            "    python3 bosch_camera.py light Garten intensity 50 --local"
         ),
     )
     p_light.add_argument(
@@ -6621,9 +7024,13 @@ def main():
     p_light.add_argument(
         "action",
         nargs="?",
-        metavar="on|off",
-        choices=["on", "off"],
-        help="Turn light override on or off",
+        metavar="on|off|front|wall|intensity",
+        help="Turn light override on or off, or set component",
+    )
+    p_light.add_argument(
+        "--local",
+        action="store_true",
+        help="Force LAN RCP write for front light (Gen2 only) — skip cloud",
     )
 
     # ── notifications ──────────────────────────────────────────────────────────
@@ -7462,6 +7869,8 @@ def main():
         "snapshot":      cmd_snapshot,
         "live":          cmd_live,
         # "download" and "events" removed (Bosch request)
+        "ping":          cmd_ping,
+        "lan-ips":       cmd_lan_ips,
         "privacy":       cmd_privacy,
         "light":         cmd_light,
         "pan":           cmd_pan,
