@@ -196,6 +196,37 @@ flowchart LR
     CLI -->|file write| Files[snapshots/<br/>downloads/<br/>bosch_config.json]
 ```
 
+### LAN-fallback: `--local` flag
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CLI as bosch_camera.py
+    participant Cloud as Bosch CBS API
+    participant RCP as Camera LAN RCP
+    participant Cam as Camera 192.168.x.y:443
+
+    User->>CLI: privacy Outdoor on --local
+    CLI->>CLI: load lan_ips map from bosch_config.json
+    CLI->>RCP: RCP write 0x0d00 via HTTPS Digest (no token)
+    RCP->>Cam: direct LAN connection :443
+    Cam-->>CLI: 200 OK
+    Note over CLI,Cam: cloud never contacted — Gen2 only
+    Note over CLI: 5xx cloud error on other cmds → hint: try --local
+```
+
+### `bosch ping` flow
+
+```mermaid
+flowchart LR
+    User["bosch ping [cam]"] --> CLI[CLI load lan_ips]
+    CLI --> Loop{for each camera}
+    Loop --> TCP["TCP-connect :443\n1.5 s timeout"]
+    TCP -->|success| OK["OK  RTT ms"]
+    TCP -->|timeout| FAIL["FAIL"]
+    OK & FAIL --> Out[stdout / --json]
+```
+
 ---
 
 ## Prerequisites — Setting Up a New Camera
