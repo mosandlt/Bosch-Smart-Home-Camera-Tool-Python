@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bosch Smart Home Camera — All-in-one Standalone Tool
-Version: 10.7.3
+Version: 10.7.4
 =====================================================
 No hardcoded camera IDs or credentials.
 All configuration is stored in bosch_config.json (created on first run).
@@ -39,6 +39,9 @@ Usage (CLI):
   python3 bosch_camera.py privacy   [<cam-name>] [on|off] [--local]
   python3 bosch_camera.py light     [<cam-name>] [on|off|intensity N] [--local]
   python3 bosch_camera.py privacy-sound [<cam-name>] [on|off]
+  python3 bosch_camera.py audio     [<cam-name>] [--mic N] [--speaker N] [--json]
+  python3 bosch_camera.py intrusion [<cam-name>] [--mode indoor|outdoor] [--sensitivity 0-7] [--distance 1-10] [--json]
+  python3 bosch_camera.py wifi      [<cam-name>] [--json]
   python3 bosch_camera.py rules    [<cam-name>] [add|edit|delete]
   python3 bosch_camera.py friends  [invite|share|unshare|resend|remove]
   python3 bosch_camera.py rename   <cam-name> "New Name"
@@ -80,7 +83,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.7.3"
+VERSION     = "10.7.4"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -4305,6 +4308,287 @@ def cmd_recording(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
+def cmd_audio(cfg: dict, args: argparse.Namespace) -> None:
+    """Get or set microphone and speaker levels for a camera.
+
+    Usage:
+      python3 bosch_camera.py audio [<cam>]                  # show current levels
+      python3 bosch_camera.py audio [<cam>] --mic N          # set mic level 0-100
+      python3 bosch_camera.py audio [<cam>] --speaker N      # set speaker level 0-100
+      python3 bosch_camera.py audio [<cam>] --json           # machine-readable output
+
+    API: GET/PUT /v11/video_inputs/{id}/audio
+         Body: {"audioEnabled": bool, "microphoneLevel": 0-100, "speakerLevel": 0-100}
+    Source: captures/api-findings.md §6.2 (verified 2026-04)
+    """
+    import json as _json_mod
+    token    = get_token(cfg)
+    session  = make_session(token)
+    _cameras = get_cameras(cfg, session)
+    cam_arg  = getattr(args, "cam", None)
+    mic      = getattr(args, "mic", None)
+    speaker  = getattr(args, "speaker", None)
+    as_json  = getattr(args, "json", False)
+
+    cams = resolve_cam(cfg, cam_arg)
+    results: list[dict] = []
+
+    for name, cam_info in cams.items():
+        cam_id = cam_info["id"]
+
+        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/audio", timeout=10)
+        if r.status_code == 401:
+            print("  ❌  Token expired.")
+            return
+        if r.status_code == 442:
+            if not as_json:
+                print(f"\n── Audio: {name} ────────────────────────────────────────────")
+                print("  ⚠️   Audio settings not supported on this camera model (HTTP 442)")
+            results.append({"cam": name, "error": "not_supported"})
+            continue
+        if r.status_code != 200:
+            if not as_json:
+                print(f"\n── Audio: {name} ────────────────────────────────────────────")
+                print(f"  ❌  Could not fetch audio settings: HTTP {r.status_code}")
+            results.append({"cam": name, "error": f"http_{r.status_code}"})
+            continue
+
+        data    = r.json()
+        enabled = data.get("audioEnabled", data.get("enabled", False))
+        mic_lvl = data.get("microphoneLevel", data.get("MicrophoneLevel", 50))
+        spk_lvl = data.get("speakerLevel", data.get("SpeakerLevel", 50))
+
+        entry: dict = {"cam": name, "audioEnabled": enabled,
+                       "microphoneLevel": mic_lvl, "speakerLevel": spk_lvl}
+
+        if not as_json:
+            print(f"\n── Audio: {name} ────────────────────────────────────────────")
+            icon = "🔊" if enabled else "🔇"
+            print(f"  {icon}  Enabled: {'YES' if enabled else 'NO'}")
+            print(f"       Microphone level:  {mic_lvl}")
+            print(f"       Speaker level:     {spk_lvl}")
+
+        if mic is None and speaker is None:
+            if not as_json:
+                print(f"\n  Run with --mic N / --speaker N (0-100) to change. E.g.:")
+                print(f"    python3 bosch_camera.py audio {name.lower()} --mic 60 --speaker 80")
+            results.append(entry)
+            continue
+
+        # Validate ranges
+        if mic is not None and not (0 <= mic <= 100):
+            print(f"  ❌  --mic must be 0-100, got {mic}")
+            return
+        if speaker is not None and not (0 <= speaker <= 100):
+            print(f"  ❌  --speaker must be 0-100, got {speaker}")
+            return
+
+        new_mic = mic if mic is not None else mic_lvl
+        new_spk = speaker if speaker is not None else spk_lvl
+        body = {"audioEnabled": enabled, "microphoneLevel": new_mic, "speakerLevel": new_spk}
+
+        if not as_json:
+            print(f"  🔄  Setting audio → mic={new_mic}  speaker={new_spk}...")
+
+        pr = session.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/audio",
+            json=body,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        if pr.status_code in (200, 201, 204):
+            if not as_json:
+                print(f"  ✅  Microphone level: {new_mic}  Speaker level: {new_spk}")
+            entry.update({"microphoneLevel": new_mic, "speakerLevel": new_spk})
+        else:
+            if not as_json:
+                print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
+            entry["error"] = f"put_http_{pr.status_code}"
+
+        results.append(entry)
+
+    if as_json:
+        print(_json_mod.dumps(results, indent=2))
+
+
+def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
+    """Get or set intrusion detection configuration.
+
+    Usage:
+      python3 bosch_camera.py intrusion [<cam>]                     # show current config
+      python3 bosch_camera.py intrusion [<cam>] --mode indoor|outdoor
+      python3 bosch_camera.py intrusion [<cam>] --sensitivity 0-7
+      python3 bosch_camera.py intrusion [<cam>] --distance 1-10
+      python3 bosch_camera.py intrusion [<cam>] --json              # machine-readable output
+
+    API: GET/PUT /v11/video_inputs/{id}/intrusionDetectionConfig
+         Body: {"enabled": bool, "detectionMode": str, "sensitivity": 0-7, "distance": 1-10}
+    Source: captures/api-findings.md §6.2 (verified 2026-04); sensitivity range extended 0-7 in 2026.
+    """
+    import json as _json_mod
+    token    = get_token(cfg)
+    session  = make_session(token)
+    _cameras = get_cameras(cfg, session)
+    cam_arg  = getattr(args, "cam", None)
+    mode     = getattr(args, "mode", None)
+    sens     = getattr(args, "sensitivity", None)
+    dist     = getattr(args, "distance", None)
+    as_json  = getattr(args, "json", False)
+
+    cams = resolve_cam(cfg, cam_arg)
+    results: list[dict] = []
+
+    for name, cam_info in cams.items():
+        cam_id = cam_info["id"]
+
+        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/intrusionDetectionConfig",
+                        timeout=10)
+        if r.status_code == 401:
+            print("  ❌  Token expired.")
+            return
+        if r.status_code == 442:
+            if not as_json:
+                print(f"\n── Intrusion Detection: {name} ─────────────────────────────────")
+                print("  ⚠️   Intrusion detection not supported on this camera model (HTTP 442)")
+            results.append({"cam": name, "error": "not_supported"})
+            continue
+        if r.status_code != 200:
+            if not as_json:
+                print(f"\n── Intrusion Detection: {name} ─────────────────────────────────")
+                print(f"  ❌  Could not fetch intrusion config: HTTP {r.status_code}")
+            results.append({"cam": name, "error": f"http_{r.status_code}"})
+            continue
+
+        data      = r.json()
+        enabled   = data.get("enabled", False)
+        det_mode  = data.get("detectionMode", "UNKNOWN")
+        cur_sens  = data.get("sensitivity", 3)
+        cur_dist  = data.get("distance", 5)
+
+        entry: dict = {"cam": name, "enabled": enabled,
+                       "detectionMode": det_mode,
+                       "sensitivity": cur_sens,
+                       "distance": cur_dist}
+
+        if not as_json:
+            print(f"\n── Intrusion Detection: {name} ─────────────────────────────────")
+            icon = "✅" if enabled else "❌"
+            print(f"  {icon}  Enabled: {'YES' if enabled else 'NO'}")
+            print(f"       Detection mode:   {det_mode}")
+            print(f"       Sensitivity:      {cur_sens}  (0-7)")
+            print(f"       Distance:         {cur_dist}  (1-10)")
+
+        if mode is None and sens is None and dist is None:
+            if not as_json:
+                print(f"\n  Run with --mode / --sensitivity / --distance to change. E.g.:")
+                print(f"    python3 bosch_camera.py intrusion {name.lower()} --mode indoor --sensitivity 4")
+            results.append(entry)
+            continue
+
+        # Validate
+        valid_modes = ("indoor", "outdoor", "ALL_MOTIONS", "ZONES")
+        if mode is not None and mode.lower() not in ("indoor", "outdoor"):
+            # also accept raw API values
+            if mode not in ("ALL_MOTIONS", "ZONES"):
+                print(f"  ❌  --mode must be indoor or outdoor, got '{mode}'")
+                return
+        if sens is not None and not (0 <= sens <= 7):
+            print(f"  ❌  --sensitivity must be 0-7, got {sens}")
+            return
+        if dist is not None and not (1 <= dist <= 10):
+            print(f"  ❌  --distance must be 1-10, got {dist}")
+            return
+
+        MODE_MAP = {"indoor": "ALL_MOTIONS", "outdoor": "ZONES"}
+        new_mode = MODE_MAP.get((mode or "").lower(), mode) if mode else det_mode
+        new_sens = sens if sens is not None else cur_sens
+        new_dist = dist if dist is not None else cur_dist
+        body = {"enabled": enabled, "detectionMode": new_mode,
+                "sensitivity": new_sens, "distance": new_dist}
+
+        if not as_json:
+            print(f"  🔄  Setting intrusion → mode={new_mode}  sensitivity={new_sens}  distance={new_dist}...")
+
+        pr = session.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/intrusionDetectionConfig",
+            json=body,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        if pr.status_code in (200, 201, 204):
+            if not as_json:
+                print(f"  ✅  Mode: {new_mode}  Sensitivity: {new_sens}  Distance: {new_dist}")
+            entry.update({"detectionMode": new_mode, "sensitivity": new_sens, "distance": new_dist})
+        else:
+            if not as_json:
+                print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
+            entry["error"] = f"put_http_{pr.status_code}"
+
+        results.append(entry)
+
+    if as_json:
+        print(_json_mod.dumps(results, indent=2))
+
+
+def cmd_wifi(cfg: dict, args: argparse.Namespace) -> None:
+    """Show WiFi info (RSSI, SSID, signal strength) for cameras.
+
+    Usage:
+      python3 bosch_camera.py wifi [<cam>]        # show for all or one camera
+      python3 bosch_camera.py wifi [<cam>] --json # machine-readable output
+
+    API: GET /v11/video_inputs/{id}/wifiinfo
+    Source: captures/api-findings.md §5 (wifiinfo in top-frequency endpoint list)
+    """
+    import json as _json_mod
+    token    = get_token(cfg)
+    session  = make_session(token)
+    _cameras = get_cameras(cfg, session)
+    cam_arg  = getattr(args, "cam", None)
+    as_json  = getattr(args, "json", False)
+
+    cams = resolve_cam(cfg, cam_arg)
+    results: list[dict] = []
+
+    for name, cam_info in cams.items():
+        cam_id = cam_info["id"]
+
+        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/wifiinfo", timeout=10)
+        if r.status_code == 401:
+            print("  ❌  Token expired.")
+            return
+        if r.status_code == 442:
+            if not as_json:
+                print(f"  {name:<20}  WiFi not available (HTTP 442 — camera may be wired)")
+            results.append({"cam": name, "error": "not_supported"})
+            continue
+        if r.status_code != 200:
+            if not as_json:
+                print(f"  {name:<20}  ❌  HTTP {r.status_code}")
+            results.append({"cam": name, "error": f"http_{r.status_code}"})
+            continue
+
+        data   = r.json()
+        ssid   = data.get("ssid", data.get("SSID", "?"))
+        rssi   = data.get("rssi", data.get("RSSI", data.get("signalLevel", None)))
+        signal = data.get("signalStrength", data.get("signal", None))
+        ip_w   = data.get("ipAddress", data.get("ip", "?"))
+        mac_w  = data.get("macAddress", data.get("mac", "?"))
+
+        entry: dict = {"cam": name, "ssid": ssid, "rssi_dbm": rssi,
+                       "signal_pct": signal, "ip": ip_w, "mac": mac_w}
+        results.append(entry)
+
+        if not as_json:
+            rssi_str   = f"{rssi} dBm" if rssi is not None else "?"
+            signal_str = f"{signal}%" if isinstance(signal, int) else (str(signal) if signal else "?")
+            icon = "📶" if signal is not None and isinstance(signal, int) and signal >= 50 else "📉"
+            print(f"  {icon}  {name:<20}  SSID: {ssid:<24}  RSSI: {rssi_str:<12}  Signal: {signal_str}")
+
+    if as_json:
+        print(_json_mod.dumps(results, indent=2))
+
+
 # ══════════════════════════ RCP PROTOCOL ══════════════════════════════════════
 #
 # RCP (Remote Configuration Protocol) is Bosch's proprietary binary protocol
@@ -7467,6 +7751,93 @@ def main():
     p_rec.add_argument("--sound-off", action="store_true", dest="sound_off",
                        help="Disable sound recording")
 
+    # ── audio (mic/speaker levels) ─────────────────────────────────────────────
+    p_audio_levels = subparsers.add_parser(
+        "audio",
+        help="Get/set microphone and speaker levels (0-100)",
+        description=(
+            "🎙️  audio — Get or set microphone and speaker volume levels\n"
+            "\n"
+            "  Reads or writes microphoneLevel and speakerLevel (each 0-100).\n"
+            "  API: GET/PUT /v11/video_inputs/{id}/audio\n"
+            "\n"
+            "  Body: {\"audioEnabled\": bool, \"microphoneLevel\": 0-100, \"speakerLevel\": 0-100}"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py audio Garten\n"
+            "    python3 bosch_camera.py audio Garten --mic 60\n"
+            "    python3 bosch_camera.py audio Garten --speaker 80\n"
+            "    python3 bosch_camera.py audio Garten --mic 60 --speaker 80\n"
+            "    python3 bosch_camera.py audio --json"
+        ),
+    )
+    p_audio_levels.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
+    p_audio_levels.add_argument("--mic", type=int, metavar="N",
+                                help="Microphone level 0-100")
+    p_audio_levels.add_argument("--speaker", type=int, metavar="N",
+                                help="Speaker level 0-100")
+    p_audio_levels.add_argument("--json", action="store_true", default=False,
+                                help="Machine-readable JSON output")
+
+    # ── intrusion detection config ─────────────────────────────────────────────
+    p_intrusion = subparsers.add_parser(
+        "intrusion",
+        help="Get/set intrusion detection config (mode/sensitivity/distance)",
+        description=(
+            "🚨  intrusion — Get or set intrusion detection configuration\n"
+            "\n"
+            "  Reads or writes detectionMode, sensitivity (0-7), and distance (1-10).\n"
+            "  API: GET/PUT /v11/video_inputs/{id}/intrusionDetectionConfig\n"
+            "\n"
+            "  Mode: indoor (ALL_MOTIONS) | outdoor (ZONES)"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py intrusion Garten\n"
+            "    python3 bosch_camera.py intrusion Garten --mode outdoor\n"
+            "    python3 bosch_camera.py intrusion Garten --sensitivity 4\n"
+            "    python3 bosch_camera.py intrusion Garten --distance 8\n"
+            "    python3 bosch_camera.py intrusion Garten --mode indoor --sensitivity 4 --distance 6\n"
+            "    python3 bosch_camera.py intrusion --json"
+        ),
+    )
+    p_intrusion.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
+    p_intrusion.add_argument("--mode", metavar="MODE",
+                             help="Detection mode: indoor (ALL_MOTIONS) or outdoor (ZONES)")
+    p_intrusion.add_argument("--sensitivity", type=int, metavar="N",
+                             help="Sensitivity 0-7 (higher = more sensitive)")
+    p_intrusion.add_argument("--distance", type=int, metavar="N",
+                             help="Detection distance 1-10")
+    p_intrusion.add_argument("--json", action="store_true", default=False,
+                             help="Machine-readable JSON output")
+
+    # ── wifi info ─────────────────────────────────────────────────────────────
+    p_wifi = subparsers.add_parser(
+        "wifi",
+        help="Show WiFi info (RSSI, SSID, signal strength)",
+        description=(
+            "📶  wifi — Show WiFi connection info for cameras\n"
+            "\n"
+            "  Fetches RSSI (dBm), SSID, and signal strength percentage.\n"
+            "  API: GET /v11/video_inputs/{id}/wifiinfo\n"
+            "\n"
+            "  Read-only: no set operation."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py wifi\n"
+            "    python3 bosch_camera.py wifi Garten\n"
+            "    python3 bosch_camera.py wifi --json"
+        ),
+    )
+    p_wifi.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
+    p_wifi.add_argument("--json", action="store_true", default=False,
+                        help="Machine-readable JSON output")
+
     # ── autofollow ─────────────────────────────────────────────────────────────
     p_af = subparsers.add_parser(
         "autofollow",
@@ -7880,6 +8251,9 @@ def main():
         "motion":        cmd_motion,
         "audio-alarm":   cmd_audio_alarm,
         "recording":     cmd_recording,
+        "audio":         cmd_audio,
+        "intrusion":     cmd_intrusion,
+        "wifi":          cmd_wifi,
         "autofollow":    cmd_autofollow,
         "siren":         cmd_siren,
         "unread":        cmd_unread,

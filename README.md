@@ -2,7 +2,7 @@
 
 > **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innenkamera, Gen1+Gen2).
 > Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, real-time event watching, and **Mini-NVR (BETA)** — all from the command line.
-> No official API. No app needed after setup. **v10.7.3**
+> No official API. No app needed after setup. **v10.7.4**
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
@@ -157,6 +157,9 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via four sibling p
 | **Signal alerts with snapshot** | `watch --signal http://signal:8080 --signal-sender +49... --signal-recipients +49...` |
 | **Motion detection — get/set** | `motion [cam] [--enable\|--disable] [--sensitivity S]` |
 | **Audio alarm — get/set** | `audio-alarm [cam] [--enable\|--disable] [--threshold N]` |
+| **Audio levels — mic/speaker 0-100** | `audio [cam] [--mic N] [--speaker N] [--json]` |
+| **Intrusion detection config** | `intrusion [cam] [--mode indoor\|outdoor] [--sensitivity 0-7] [--distance 1-10] [--json]` |
+| **WiFi info — RSSI/SSID/signal** | `wifi [cam] [--json]` |
 | **Recording options — sound on/off** | `recording [cam] [--sound-on\|--sound-off]` |
 | **Auto-follow — 360 camera motion tracking** | `autofollow [cam] [on\|off]` |
 | **Intercom — listen to camera audio** | `intercom [cam] [--duration N] [--speaker-level N]` |
@@ -473,6 +476,44 @@ python3 bosch_camera.py recording Outdoor         # show current settings
 python3 bosch_camera.py recording Outdoor --sound-on   # record with audio
 python3 bosch_camera.py recording Outdoor --sound-off  # record without audio
 ```
+
+### Audio Levels (Mic / Speaker)
+
+```bash
+python3 bosch_camera.py audio                            # show levels (all cameras)
+python3 bosch_camera.py audio Outdoor                    # show mic + speaker levels
+python3 bosch_camera.py audio Outdoor --mic 60           # set microphone level to 60
+python3 bosch_camera.py audio Outdoor --speaker 80       # set speaker level to 80
+python3 bosch_camera.py audio Outdoor --mic 60 --speaker 80  # set both
+python3 bosch_camera.py audio --json                     # machine-readable JSON output
+```
+
+Levels are 0–100. API: `GET/PUT /v11/video_inputs/{id}/audio`.
+
+### Intrusion Detection Config
+
+```bash
+python3 bosch_camera.py intrusion                          # show config (all cameras)
+python3 bosch_camera.py intrusion Outdoor                  # show mode/sensitivity/distance
+python3 bosch_camera.py intrusion Outdoor --mode indoor    # detection mode: ALL_MOTIONS
+python3 bosch_camera.py intrusion Outdoor --mode outdoor   # detection mode: ZONES
+python3 bosch_camera.py intrusion Outdoor --sensitivity 4  # sensitivity 0-7
+python3 bosch_camera.py intrusion Outdoor --distance 8     # detection distance 1-10
+python3 bosch_camera.py intrusion Outdoor --mode indoor --sensitivity 4 --distance 6
+python3 bosch_camera.py intrusion --json
+```
+
+API: `GET/PUT /v11/video_inputs/{id}/intrusionDetectionConfig`.
+
+### WiFi Info
+
+```bash
+python3 bosch_camera.py wifi                   # show WiFi info (all cameras)
+python3 bosch_camera.py wifi Outdoor           # RSSI (dBm) + SSID + signal strength
+python3 bosch_camera.py wifi --json            # machine-readable JSON output
+```
+
+Read-only. API: `GET /v11/video_inputs/{id}/wifiinfo`.
 
 ### Auto-Follow (CAMERA_360 Only)
 
@@ -1855,6 +1896,7 @@ python3 bosch_camera.py nvr upload Garten
 
 | Version | Changes |
 |---------|---------|
+| **v10.7.4** | **Audio/Intrusion/WiFi commands (cross-port from HA v12.6.0).** `bosch audio [<cam>] [--mic N] [--speaker N] [--json]`: get/set microphone and speaker levels 0–100 (GET/PUT `/audio`). `bosch intrusion [<cam>] [--mode indoor\|outdoor] [--sensitivity 0-7] [--distance 1-10] [--json]`: get/set intrusion detection config — mode maps `indoor→ALL_MOTIONS`, `outdoor→ZONES`; sensitivity extended to 0–7 (was 0–5). `bosch wifi [<cam>] [--json]`: read-only WiFi info (RSSI dBm, SSID, signal %) from `/wifiinfo`. All three commands support `--json` for scripting. |
 | **v10.7.3** | **LAN-fallback feature set (cross-port from HA v12.4.10).** `bosch ping [<cam>] [--json]`: TCP-connect probe to each camera's LAN IP port 443 — shows OK/FAIL + RTT in ms, JSON via `--json`. `bosch privacy <cam> on\|off --local`: writes directly via LAN RCP (Gen2 only, no token needed), skips cloud entirely. `bosch light <cam> on\|off\|intensity N --local`: same for front-light brightness (wallwasher is cloud-only). `bosch lan-ips [set\|unset\|sync]`: list and edit the `cam_id → LAN IP` map stored in `bosch_config.json` under `lan_ips`; `sync` copies existing `local_ip` fields. 5xx cloud errors now print a one-line hint pointing at the `--local` flag. |
 | **v10.7.2** | **`maintenance` subcommand (cross-port from HA v12.4.5).** `bosch maintenance` fetches Bosch community RSS feeds (Wartungsarbeiten + Statusmeldungen) and shows the current state (active / scheduled / past / recent). Falls back to HTML scraping when RSS is unavailable. `--json` flag for scripting. When a cloud request returns a persistent 5xx, a one-line hint is printed automatically if maintenance is active or scheduled. Parser behavior is byte-identical to the HA integration's `maintenance.py`. |
 | **v10.7.1** | **FCM cleanup — remove iOS path (aligned with HA v12.4.5).** Removed `FCM_IOS_APP_ID`, `_get_fcm_ios_api_key()`, and the iOS `AIzaSy…` key (non-sanctioned, extracted from iOS app). The Sebastian-OSS-sanctioned Android key (`FCM_APP_ID`) handles all platforms. `deviceType` is now hardcoded to `"ANDROID"` (`bosch_camera.py` near `_watch_fcm_push`). The `auto` push-mode dispatch chain collapses from iOS→Android→polling to Android→polling. `--push-mode android` and `--push-mode ios` still accepted for back-compat but emit a deprecation warning to stderr and are treated as `auto`. |
