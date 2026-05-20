@@ -2,7 +2,7 @@
 
 > **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innenkamera, Gen1+Gen2).
 > Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, real-time event watching, and **Mini-NVR (BETA)** — all from the command line.
-> No official API. No app needed after setup. **v10.7.4**
+> No official API. No app needed after setup. **v10.7.5**
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
@@ -115,10 +115,15 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via four sibling p
 | **SMB / NAS clip upload** | ✅ | ✅ *(v10.7.0 BETA)* | ❌ | ❌ |
 | **Audio-alarm sensitivity (Gen2)** | ✅ select | ✅ command | ❌ | ❌ |
 | **Camera sharing (friends)** | ❌ | ✅ command | ❌ | ❌ *(intentionally not exposed — needs user-driven flow)* |
-| **Pan / tilt (360° Gen1)** | ✅ services | ✅ command | ❌ | ✅ `bosch_camera_pan` |
+| **Pan / tilt (360° Gen1)** | ✅ services | ✅ command | ✅ `pan_position` DP | ✅ `bosch_camera_pan` |
+| **Named pan presets (home / left / right / back-left / back-right)** | ✅ opt-in select entity | ✅ `pan --preset` flag | ✅ `pan_preset` DP | ✅ `bosch_camera_pan preset=` |
 | **Two-way audio / intercom** | ❌ | ✅ command | ❌ | ❌ *(intentionally not exposed — timing-sensitive)* |
+| **Webhook delivery on events** | ✅ service + opt-in options | ✅ `watch --webhook URL` | ✅ via MQTT bridge | ❌ *(request-response model)* |
+| **MQTT event bridge (motion / audio / person)** | n/a *(HA event bus native)* | n/a *(single-run)* | ✅ admin-config | n/a |
+| **Apple HomeKit (via HA Core bridge)** | ✅ documented | n/a | n/a | n/a |
+| **Snapshot scheduler / time-lapse** | ✅ examples/ YAML | ✅ cron + ffmpeg examples | ✅ Blockly example | n/a |
 | **Custom Lovelace card** | ✅ 2 cards (single + grid) | n/a | n/a | n/a |
-| **ioBroker VIS dashboard** | n/a | n/a | ✅ via `snapshot_path` + `stream_url` | n/a |
+| **ioBroker VIS dashboard** | n/a | n/a | ✅ via `snapshot_path` + `stream_url` + VIS-2 widget (alpha) | n/a |
 | **Cloud-relay REMOTE fallback** | ✅ auto-switch when LAN unreachable | ✅ remote mode | ❌ *(LOCAL-only by design)* | ❌ *(media LAN-only; status/events via cloud)* |
 | **Browser-based admin / config UI** | ✅ HA Config Flow | n/a (CLI) | ✅ JSON-config tabs | n/a (LLM-mediated; config via CLI / MCP client) |
 | **UI languages** | EN · DE · FR · ES · IT · NL · PL · PT · RU · UK · ZH-Hans *(v12.4.0)* | EN · DE · FR · ES · IT · NL · PL · PT · RU · UK · ZH-Hans *(v10.3.0)* | EN · DE · FR · ES · IT · NL · PL · PT · RU · UK · ZH-CN | n/a *(no UI — LLM is the front-end)* |
@@ -150,7 +155,7 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via four sibling p
 | **Privacy mode — get/set via cloud API** | `privacy [cam] [on\|off]` |
 | **Camera light — on/off via cloud API** | `light [cam] [on\|off]` |
 | **Push notifications — on/off** | `notifications [cam] [on\|off]` |
-| **Pan 360 camera** | `pan [cam] [left\|center\|right\|<-120..120>]` |
+| **Pan 360 camera** | `pan [cam] [--preset home\|left\|right\|back-left\|back-right] [<-120..120>]` |
 | **RCP reads via cloud proxy** | `rcp [cam] <info\|clock\|snapshot\|alarms\|...>` |
 | **Real-time event watching** | `watch [cam] [--interval N] [--duration N] [--snapshot]` |
 | **Real-time via FCM push (~2s)** | `watch [cam] --push [--snapshot]` |
@@ -444,10 +449,12 @@ python3 bosch_camera.py notifications Outdoor off    # disable notifications (AL
 ### Pan (CAMERA_360 Only)
 
 ```bash
-python3 bosch_camera.py pan Indoor left          # pan to left limit
-python3 bosch_camera.py pan Indoor center        # pan to center (0°)
-python3 bosch_camera.py pan Indoor right         # pan to right limit
-python3 bosch_camera.py pan Indoor 45            # pan to absolute position (degrees)
+python3 bosch_camera.py pan Indoor --preset home       # pan to 0° (center)
+python3 bosch_camera.py pan Indoor --preset left       # pan to -60°
+python3 bosch_camera.py pan Indoor --preset right      # pan to +60°
+python3 bosch_camera.py pan Indoor --preset back-left  # pan to -120° (full left)
+python3 bosch_camera.py pan Indoor --preset back-right # pan to +120° (full right)
+python3 bosch_camera.py pan Indoor 45                  # pan to absolute position (degrees)
 ```
 
 ### Motion Detection
@@ -644,6 +651,10 @@ python3 bosch_camera.py watch --track-motion              # print rising/falling
 python3 bosch_camera.py watch Outdoor --track-motion --quiet-secs 60  # custom hysteresis (60s)
 python3 bosch_camera.py watch --auto-snapshot             # capture JPEG on every rising edge
 python3 bosch_camera.py watch Outdoor --auto-snapshot --quiet-secs 45  # snapshot + 45s hysteresis
+
+# Webhook delivery — POST JSON event payload to URL on every event
+python3 bosch_camera.py watch --webhook https://my-server/bosch-event
+python3 bosch_camera.py watch Outdoor --webhook https://my-server/bosch-event --push
 ```
 
 ### Token Management
@@ -1788,6 +1799,25 @@ automation:
           entity_id: switch.bosch_outdoor_camera_light
 ```
 
+### Cron-based snapshot scheduler / time-lapse (CLI)
+
+Two ready-to-use shell scripts live in [`examples/`](examples/):
+
+| Script | Purpose |
+|---|---|
+| [`examples/snapshot_cron.sh`](examples/snapshot_cron.sh) | Cron wrapper — calls `liveshot` with a dated filename. Works for a single camera or all cameras. Includes crontab snippets for every-10-min, hourly, and daily schedules. |
+| [`examples/timelapse_assemble.sh`](examples/timelapse_assemble.sh) | ffmpeg one-liner wrapper — assembles a folder of dated JPEGs into an mp4 time-lapse. Configurable framerate with a built-in framerate-to-duration guide. |
+
+Quick start:
+
+```bash
+# Snapshot every 10 minutes via cron — add to crontab -e:
+# */10 * * * * /path/to/examples/snapshot_cron.sh Outdoor >> /var/log/bosch_snap.log 2>&1
+
+# Assemble yesterday's shots into a time-lapse (after 24 hours of hourly shots):
+bash examples/timelapse_assemble.sh /var/lib/bosch-timelapse/outdoor 24 outdoor_today.mp4
+```
+
 ---
 
 ## Known Limitations
@@ -1896,7 +1926,8 @@ python3 bosch_camera.py nvr upload Garten
 
 | Version | Changes |
 |---------|---------|
-| **v10.7.4** | **Audio/Intrusion/WiFi commands (cross-port from HA v12.6.0).** `bosch audio [<cam>] [--mic N] [--speaker N] [--json]`: get/set microphone and speaker levels 0–100 (GET/PUT `/audio`). `bosch intrusion [<cam>] [--mode indoor\|outdoor] [--sensitivity 0-7] [--distance 1-10] [--json]`: get/set intrusion detection config — mode maps `indoor→ALL_MOTIONS`, `outdoor→ZONES`; sensitivity extended to 0–7 (was 0–5). `bosch wifi [<cam>] [--json]`: read-only WiFi info (RSSI dBm, SSID, signal %) from `/wifiinfo`. All three commands support `--json` for scripting. |
+| **v10.7.5** | **PTZ pan presets + webhook event delivery (cross-port from HA v12.7.0).** New `pan <cam> --preset home\|left\|right\|back-left\|back-right` flag — named pan positions (0° / -60° / +60° / -120° / +120°). New `watch --webhook URL` flag — POSTs JSON `{camera, event_type, timestamp, extra}` to user-configured HTTP endpoint on every motion / audio_alarm / person / intrusion event. POST failures logged, never propagated. 21 new regression tests in `tests/test_pan_presets.py` (14) + `tests/test_webhook.py` (7). |
+| **v10.7.4** | **Audio/Intrusion/WiFi commands (cross-port from HA v12.7.0).** `bosch audio [<cam>] [--mic N] [--speaker N] [--json]`: get/set microphone and speaker levels 0–100 (GET/PUT `/audio`). `bosch intrusion [<cam>] [--mode indoor\|outdoor] [--sensitivity 0-7] [--distance 1-10] [--json]`: get/set intrusion detection config — mode maps `indoor→ALL_MOTIONS`, `outdoor→ZONES`; sensitivity extended to 0–7 (was 0–5). `bosch wifi [<cam>] [--json]`: read-only WiFi info (RSSI dBm, SSID, signal %) from `/wifiinfo`. All three commands support `--json` for scripting. |
 | **v10.7.3** | **LAN-fallback feature set (cross-port from HA v12.4.10).** `bosch ping [<cam>] [--json]`: TCP-connect probe to each camera's LAN IP port 443 — shows OK/FAIL + RTT in ms, JSON via `--json`. `bosch privacy <cam> on\|off --local`: writes directly via LAN RCP (Gen2 only, no token needed), skips cloud entirely. `bosch light <cam> on\|off\|intensity N --local`: same for front-light brightness (wallwasher is cloud-only). `bosch lan-ips [set\|unset\|sync]`: list and edit the `cam_id → LAN IP` map stored in `bosch_config.json` under `lan_ips`; `sync` copies existing `local_ip` fields. 5xx cloud errors now print a one-line hint pointing at the `--local` flag. |
 | **v10.7.2** | **`maintenance` subcommand (cross-port from HA v12.4.5).** `bosch maintenance` fetches Bosch community RSS feeds (Wartungsarbeiten + Statusmeldungen) and shows the current state (active / scheduled / past / recent). Falls back to HTML scraping when RSS is unavailable. `--json` flag for scripting. When a cloud request returns a persistent 5xx, a one-line hint is printed automatically if maintenance is active or scheduled. Parser behavior is byte-identical to the HA integration's `maintenance.py`. |
 | **v10.7.1** | **FCM cleanup — remove iOS path (aligned with HA v12.4.5).** Removed `FCM_IOS_APP_ID`, `_get_fcm_ios_api_key()`, and the iOS `AIzaSy…` key (non-sanctioned, extracted from iOS app). The Sebastian-OSS-sanctioned Android key (`FCM_APP_ID`) handles all platforms. `deviceType` is now hardcoded to `"ANDROID"` (`bosch_camera.py` near `_watch_fcm_push`). The `auto` push-mode dispatch chain collapses from iOS→Android→polling to Android→polling. `--push-mode android` and `--push-mode ios` still accepted for back-compat but emit a deprecation warning to stderr and are treated as `auto`. |
@@ -1942,10 +1973,11 @@ python3 bosch_camera.py nvr upload Garten
 
 | Implementation | Repo | Status |
 |---|---|---|
-| 🏆 Home Assistant Integration | [Bosch-Smart-Home-Camera-Tool-HomeAssistant](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | **v12.5.1** · HA Quality Scale **Platinum** · production-ready |
-| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | v10.7.3 · Mini-NVR + SMB upload (BETA) · LAN-fallback (ping / --local) · maintenance status · capture / research / no-HA standalone |
-| 🟢 ioBroker Adapter | [ioBroker.bosch-smart-home-camera](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) | v0.7.6 · beta · npm |
-| 🤖 MCP Server | [Bosch-Smart-Home-Camera-Tool-MCP](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-MCP) | v1.3.2 · LAN-ping + prefer_local · Claude Code / Claude Desktop integration |
+| 🏆 Home Assistant Integration | [Bosch-Smart-Home-Camera-Tool-HomeAssistant](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | **v12.7.0** · HA Quality Scale **Platinum** · production-ready |
+| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | **v10.7.5** · Mini-NVR + SMB upload (BETA) · LAN-fallback (ping / --local) · PTZ presets · webhook delivery · maintenance status · capture / research / no-HA standalone |
+| 🟢 ioBroker Adapter | [ioBroker.bosch-smart-home-camera](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) | **v0.7.9** · beta · npm · PTZ · MQTT bridge · VIS-2 widget alpha |
+| 🤖 MCP Server | [Bosch-Smart-Home-Camera-Tool-MCP](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-MCP) | **v1.3.4** · cred-rotation · PTZ presets · LAN-ping + prefer_local · Claude Code / Claude Desktop integration |
+| 🔴 Node-RED nodes (alpha) | [Bosch-Smart-Home-Camera-Tool-NodeRED](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-NodeRED) | v0.1.0-alpha · skeleton — 4 nodes (event/snapshot/privacy/config) |
 
 Also: [Bosch Smart Home Camera — Python Frontend (NiceGUI)](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python-frontend) — v0.1.0-alpha Phase-1 skeleton (dashboard + camera detail + settings) — community interest welcome
 

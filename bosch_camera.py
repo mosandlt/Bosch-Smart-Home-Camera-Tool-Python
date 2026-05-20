@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bosch Smart Home Camera — All-in-one Standalone Tool
-Version: 10.7.4
+Version: 10.7.5
 =====================================================
 No hardcoded camera IDs or credentials.
 All configuration is stored in bosch_config.json (created on first run).
@@ -2748,15 +2748,30 @@ def cmd_light(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
+# Pan preset angles — canonical mapping used by CLI, MCP, and ioBroker.
+# home=0° / left=-60° / right=+60° / back-left=-120° / back-right=+120°
+# (legacy presets: "left"→full-left=-limit, "center"→0, "right"→full-right=+limit)
+PAN_PRESET_MAP: dict[str, int] = {
+    "home": 0,
+    "left": -60,
+    "right": 60,
+    "back-left": -120,
+    "back-right": 120,
+}
+
+
 def cmd_pan(cfg: dict, args) -> None:
     """Get or set the pan position of the 360 camera via the Bosch cloud API.
 
     Usage:
-      python3 bosch_camera.py pan [cam-name]           → show current position
-      python3 bosch_camera.py pan [cam-name] left      → pan to -120° (full left)
-      python3 bosch_camera.py pan [cam-name] center    → pan to 0° (center)
-      python3 bosch_camera.py pan [cam-name] right     → pan to +120° (full right)
-      python3 bosch_camera.py pan [cam-name] <-120..120>  → pan to absolute position
+      python3 bosch_camera.py pan [cam-name]                       → show current position
+      python3 bosch_camera.py pan [cam-name] --preset home         → pan to 0°
+      python3 bosch_camera.py pan [cam-name] --preset left         → pan to -60°
+      python3 bosch_camera.py pan [cam-name] --preset right        → pan to +60°
+      python3 bosch_camera.py pan [cam-name] --preset back-left    → pan to -120°
+      python3 bosch_camera.py pan [cam-name] --preset back-right   → pan to +120°
+      python3 bosch_camera.py pan [cam-name] center                → pan to 0° (legacy alias)
+      python3 bosch_camera.py pan [cam-name] <-120..120>           → pan to absolute position
 
     API: GET /v11/video_inputs/{id}/pan
            → {"currentAbsolutePosition": 15, "panLimit": 120}
@@ -2771,6 +2786,11 @@ def cmd_pan(cfg: dict, args) -> None:
     session = make_session(token)
     cam_arg = getattr(args, "cam", None)
     action  = getattr(args, "action", None)
+
+    # --preset flag takes priority and sets action
+    preset_flag = getattr(args, "preset", None)
+    if preset_flag:
+        action = preset_flag
 
     # Allow "pan left" / "pan center" / "pan right" / "pan 45" without camera name
     PRESETS = ("left", "center", "right")
@@ -2820,20 +2840,28 @@ def cmd_pan(cfg: dict, args) -> None:
         print(f"      Range:    -{limit}° ◀ [{bar}] ▶ +{limit}°")
 
         if action is None:
-            print(f"\n  Run with 'left', 'center', 'right', or a number (-{limit}..+{limit}). E.g.:")
-            print(f"    python3 bosch_camera.py pan {name.lower()} center")
+            print(f"\n  Run with --preset or a number (-{limit}..+{limit}). E.g.:")
+            print(f"    python3 bosch_camera.py pan {name.lower()} --preset home")
+            print(f"    python3 bosch_camera.py pan {name.lower()} --preset left")
             print(f"    python3 bosch_camera.py pan {name.lower()} 45")
             continue
 
-        # Resolve target position
-        PRESET_MAP = {"left": -limit, "center": 0, "right": limit}
-        if action.lower() in PRESET_MAP:
-            target = PRESET_MAP[action.lower()]
+        # Resolve target position — check PAN_PRESET_MAP first, then legacy aliases,
+        # then numeric value
+        LEGACY_MAP: dict[str, int] = {"center": 0, "left": -limit, "right": limit}
+        action_lower = action.lower()
+        if action_lower in PAN_PRESET_MAP:
+            target = PAN_PRESET_MAP[action_lower]
+        elif action_lower in LEGACY_MAP:
+            target = LEGACY_MAP[action_lower]
         else:
             try:
                 target = int(action)
             except ValueError:
-                print(f"  ❌  Unknown action '{action}'. Use left/center/right or a number.")
+                print(
+                    f"  ❌  Unknown action '{action}'. "
+                    f"Use --preset home/left/right/back-left/back-right or a number."
+                )
                 continue
             if not (-limit <= target <= limit):
                 print(f"  ❌  Position {target} out of range (-{limit} to +{limit}).")
@@ -2996,6 +3024,53 @@ def _send_signal_alert(
             print(f"             ⚠️  Signal send failed: HTTP {r.status_code} {r.text[:100]}")
     except Exception as e:
         print(f"             ⚠️  Signal send error: {e}")
+
+
+def _post_event_webhook(
+    url: str,
+    cam_name: str,
+    cam_id: str,
+    event_type: str,
+    timestamp: str,
+    event: dict,
+) -> None:
+    """POST a single camera event as JSON to the configured webhook URL.
+
+    Silently swallows all errors (non-critical delivery path) — failure is
+    printed to stderr but never interrupts the watch loop.
+
+    Payload shape::
+
+        {
+            "camera": "<cam_name>",
+            "camera_id": "<cam_id>",
+            "event_type": "<MOVEMENT|AUDIO_ALARM|PERSON|INTRUSION>",
+            "timestamp": "<ISO-8601>",
+            "event_id": "<uuid>",
+            "image_url": "<url or ''>",
+            "clip_url": "<url or ''>",
+        }
+    """
+    payload: dict = {
+        "camera":     cam_name,
+        "camera_id":  cam_id,
+        "event_type": event_type,
+        "timestamp":  timestamp,
+        "event_id":   event.get("id", ""),
+        "image_url":  event.get("imageUrl", ""),
+        "clip_url":   event.get("videoClipUrl", ""),
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code >= 400:
+            print(
+                f"             ⚠️  Webhook POST returned HTTP {resp.status_code}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"             🔗 Webhook → HTTP {resp.status_code}")
+    except Exception as err:
+        print(f"             ⚠️  Webhook POST error: {err}", file=sys.stderr)
 
 
 def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap: bool,
@@ -3650,6 +3725,7 @@ def cmd_watch(cfg: dict, args) -> None:
     signal_sender = getattr(args, "signal_sender", "") or ""
     signal_recipients_str = getattr(args, "signal_recipients", "") or ""
     signal_recipients = [r.strip() for r in signal_recipients_str.split(",") if r.strip()] if signal_recipients_str else []
+    webhook_url: str = (getattr(args, "webhook", "") or "").strip()
 
     # Motion edge tracking flags
     quiet_secs: int = getattr(args, "quiet_secs", 30) or 30
@@ -3807,6 +3883,9 @@ def cmd_watch(cfg: dict, args) -> None:
                             signal_url, signal_sender, signal_recipients,
                             name, etype, ts, img_url, token,
                         )
+                    # Webhook delivery
+                    if webhook_url:
+                        _post_event_webhook(webhook_url, name, cam_id, etype, ts, ev)
                     # Auto-download and open the event snapshot if requested
                     if auto_snap and img_url:
                         try:
@@ -7366,21 +7445,23 @@ def main():
             "  API: PUT /v11/video_inputs/{id}/pan\n"
             "       Body: {\"absolutePosition\": <degrees>}\n"
             "\n"
-            "  Presets:\n"
-            "    left   →  -120° (full left)\n"
-            "    center →    0°  (center)\n"
-            "    right  → +120°  (full right)\n"
+            "  Named presets (--preset):\n"
+            "    home       →    0°\n"
+            "    left       →  -60°\n"
+            "    right      →  +60°\n"
+            "    back-left  → -120° (full left)\n"
+            "    back-right → +120° (full right)\n"
             "\n"
             "  Or pass any integer in range -panLimit to +panLimit."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "  Examples:\n"
-            "    python3 bosch_camera.py pan                    # show position\n"
-            "    python3 bosch_camera.py pan Kamera             # show position\n"
-            "    python3 bosch_camera.py pan left               # full left\n"
-            "    python3 bosch_camera.py pan Kamera center\n"
-            "    python3 bosch_camera.py pan Kamera right\n"
+            "    python3 bosch_camera.py pan                          # show position\n"
+            "    python3 bosch_camera.py pan Kamera                   # show position\n"
+            "    python3 bosch_camera.py pan Kamera --preset home\n"
+            "    python3 bosch_camera.py pan Kamera --preset left\n"
+            "    python3 bosch_camera.py pan Kamera --preset back-right\n"
             "    python3 bosch_camera.py pan Kamera 45\n"
             "    python3 bosch_camera.py pan Kamera -90"
         ),
@@ -7394,8 +7475,14 @@ def main():
     p_pan.add_argument(
         "action",
         nargs="?",
-        metavar="left|center|right|<degrees>",
-        help="Target position: preset (left/center/right) or angle in degrees",
+        metavar="center|<degrees>",
+        help="Legacy: angle in degrees or 'center' (prefer --preset)",
+    )
+    p_pan.add_argument(
+        "--preset",
+        metavar="PRESET",
+        choices=list(PAN_PRESET_MAP),
+        help="Named preset: home (0°) / left (-60°) / right (+60°) / back-left (-120°) / back-right (+120°)",
     )
 
     # ── token ──────────────────────────────────────────────────────────────────
@@ -7563,6 +7650,9 @@ def main():
                          help=t("help.watch.quiet_secs"))
     p_watch.add_argument("--auto-record", action="store_true", dest="auto_record",
                          help=t("help.watch.auto_record"))
+    p_watch.add_argument("--webhook", metavar="URL", default="",
+                         help="POST each new event as JSON to this URL (default: off). "
+                              "Payload: {camera, camera_id, event_type, timestamp, event_id, image_url, clip_url}.")
 
     # ── nvr (BETA) ──────────────────────────────────────────────────────────────
     p_nvr = subparsers.add_parser(
