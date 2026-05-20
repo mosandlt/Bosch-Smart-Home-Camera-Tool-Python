@@ -33,12 +33,12 @@ import base64
 import secrets
 import webbrowser
 import argparse
-import urllib3
 from urllib.parse import urlparse, parse_qs, urlencode
 
 import requests
 
-urllib3.disable_warnings()
+# Note: Keycloak (smarthome.authz.bosch.com) has a CA-signed certificate.
+# All requests in this module use verify=True (no self-signed certs here).
 
 # ─────────────────────────────────────────────────────────────────────────────
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
@@ -214,7 +214,7 @@ def _exchange_code(auth_code: str, code_verifier: str) -> dict | None:
             "redirect_uri":  REDIRECT_URI,
             "code_verifier": code_verifier,
         },
-        verify=False, timeout=15,
+        verify=True, timeout=15,
     )
     if r.status_code == 200:
         return r.json()
@@ -232,7 +232,7 @@ def _do_refresh(refresh: str) -> dict | None:
             "grant_type":    "refresh_token",
             "refresh_token": refresh,
         },
-        verify=False, timeout=15,
+        verify=True, timeout=15,
     )
     if r.status_code == 200:
         return r.json()

@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from typing import Any, Iterable
-from xml.etree import ElementTree as ET
+import defusedxml.ElementTree as ET  # noqa: N813 — replaces xml.etree.ElementTree (XXE-safe)
 from zoneinfo import ZoneInfo
 
 import requests
