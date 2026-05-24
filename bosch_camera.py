@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bosch Smart Home Camera — All-in-one Standalone Tool
-Version: 10.7.6
+Version: 10.7.7
 =====================================================
 No hardcoded camera IDs or credentials.
 All configuration is stored in bosch_config.json (created on first run).
@@ -84,7 +84,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.7.6"
+VERSION     = "10.7.7"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -406,9 +406,12 @@ def make_session(token: str) -> requests.Session:
         s.mount("http://", adapter)
         s.verify = False
         _HTTP_SESSION = s
+    # Accept must stay binary-safe (*/*): Bosch nginx returns
+    # HTTP 500 sh:internal.error on /v11/events/{id}/snap.jpg and /clip.mp4
+    # when Accept is application/json. JSON endpoints accept */* fine.
     _HTTP_SESSION.headers.update({
         "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
+        "Accept": "*/*",
     })
     return _HTTP_SESSION
 
@@ -950,7 +953,6 @@ def cmd_snapshot(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    session.headers["Accept"] = "*/*"
     cameras = get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
     live    = getattr(args, "live", False)
@@ -1831,7 +1833,6 @@ def cmd_live(cfg: dict, args) -> None:
 
             # Fallback: latest snapshot
             print("\n  📸  Showing latest event snapshot instead...")
-            session.headers["Accept"] = "*/*"
             events = api_get_events(session, cam_info["id"], limit=5)
             for ev in events:
                 img_url = ev.get("imageUrl")
@@ -5420,7 +5421,14 @@ def cmd_menu(cfg: dict) -> None:
     # Pan — only cameras with pan_limit > 0
     pan_cams = [n for n in cam_names if cameras.get(n, {}).get("pan_limit", 0) > 0]
     pan_start = offset
-    pan_actions = [("left", "◀◀ Full left"), ("center", "■  Center (0°)"), ("right", "▶▶ Full right")]
+    pan_actions = [
+        ("left",       "◀◀ Full left"),
+        ("center",     "■  Center (0°)"),
+        ("right",      "▶▶ Full right"),
+        ("home",       "🏠 Home (0°)"),
+        ("back-left",  "◀◀◀ Back-left (-120°)"),
+        ("back-right", "▶▶▶ Back-right (+120°)"),
+    ]
     if pan_cams:
         print()
         print("  ── Pan ──────────────────────────────────────────────────────")
@@ -5430,6 +5438,17 @@ def cmd_menu(cfg: dict) -> None:
                 lim_str = f"-{lim}°" if action_key == "left" else (f"+{lim}°" if action_key == "right" else "0°")
                 print(f"  {offset})  Pan {label} ({lim_str}) — {name}")
                 offset += 1
+
+    # Auto-follow — only pan_cams
+    autofollow_start = offset
+    if pan_cams:
+        print()
+        print("  ── Auto-follow ──────────────────────────────────────────────")
+        for name in pan_cams:
+            print(f"  {offset})  Auto-follow ON  — {name}")
+            offset += 1
+            print(f"  {offset})  Auto-follow OFF — {name}")
+            offset += 1
 
     print()
     print("  ── Intercom ─────────────────────────────────────────────────")
@@ -5445,10 +5464,44 @@ def cmd_menu(cfg: dict) -> None:
         print(f"  {offset})  Siren (acoustic alarm) — {name}")
         offset += 1
 
+    # WiFi info — all cameras
+    print()
+    print("  ── WiFi Info ────────────────────────────────────────────────")
+    wifi_start = offset
+    for name in cam_names:
+        print(f"  {offset})  WiFi info — {name}")
+        offset += 1
+
+    # Audio levels — Gen2 cams only
+    gen2_cams = [n for n in cam_names if cameras.get(n, {}).get("model", "").startswith("HOME_")]
+    audio_start = offset
+    if gen2_cams:
+        print()
+        print("  ── Audio ────────────────────────────────────────────────────")
+        for name in gen2_cams:
+            print(f"  {offset})  Audio levels — {name}")
+            offset += 1
+
+    # Intrusion detection — Gen2 cams only
+    intrusion_start = offset
+    if gen2_cams:
+        print()
+        print("  ── Intrusion Detection ──────────────────────────────────────")
+        for name in gen2_cams:
+            print(f"  {offset})  Intrusion config — {name}")
+            offset += 1
+
     print()
     print("  ── Unread Events ────────────────────────────────────────────")
     unread_item = offset
     print(f"  {offset})  Show unread event counts")
+    offset += 1
+
+    # Maintenance status — global
+    print()
+    print("  ── Maintenance ──────────────────────────────────────────────")
+    maint_item = offset
+    print(f"  {offset})  Bosch cloud maintenance status")
     offset += 1
 
     print()
@@ -5541,6 +5594,12 @@ def cmd_menu(cfg: dict) -> None:
         a.cam    = pan_cams[idx // len(pan_actions)]
         a.action = pan_actions[idx % len(pan_actions)][0]
         cmd_pan(cfg, a)
+    # Auto-follow (only pan_cams)
+    elif pan_cams and autofollow_start <= c < autofollow_start + len(pan_cams) * 2:
+        idx = c - autofollow_start
+        a.cam    = pan_cams[idx // 2]
+        a.action = "on" if idx % 2 == 0 else "off"
+        cmd_autofollow(cfg, a)
     # Intercom
     elif intercom_start <= c < intercom_start + len(cam_names):
         a.cam = cam_names[c - intercom_start]
@@ -5551,9 +5610,24 @@ def cmd_menu(cfg: dict) -> None:
     elif siren_start <= c < siren_start + len(cam_names):
         a.cam = cam_names[c - siren_start]
         cmd_siren(cfg, a)
+    # WiFi info
+    elif wifi_start <= c < wifi_start + len(cam_names):
+        a.cam = cam_names[c - wifi_start]
+        cmd_wifi(cfg, a)
+    # Audio levels (Gen2 only)
+    elif gen2_cams and audio_start <= c < audio_start + len(gen2_cams):
+        a.cam = gen2_cams[c - audio_start]
+        cmd_audio(cfg, a)
+    # Intrusion detection (Gen2 only)
+    elif gen2_cams and intrusion_start <= c < intrusion_start + len(gen2_cams):
+        a.cam = gen2_cams[c - intrusion_start]
+        cmd_intrusion(cfg, a)
     # Unread
     elif c == unread_item:
         cmd_unread(cfg, a)
+    # Maintenance status
+    elif c == maint_item:
+        cmd_maintenance(cfg, a)
     elif c == token_item:
         a.action = "fix"
         cmd_token(cfg, a)
