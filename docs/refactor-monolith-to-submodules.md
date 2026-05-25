@@ -33,7 +33,7 @@ Target coverage after refactor: ~70–85%
 | `watch.py` | 2970–3386 | FCM constants, `_get_fcm_api_key`, `_send_signal_alert`, `_post_event_webhook`, `_watch_fcm_push`, `MotionEdgeTracker`, motion snapshot helpers, `cmd_watch` | `cmd_watch`, `MotionEdgeTracker` | `api`, `cameras`, `snapshot`, `recorder` |
 | `recorder.py` | 3387–3704 | NVR clip management, `_nvr_*` helpers, SMB upload shim, `cmd_nvr` | `cmd_nvr`, `_nvr_is_recording`, `_start_motion_recording` | `api`, `cameras`, `smb_upload`, `watch` |
 | `smb_upload.py` | 3522–3593 | `_nvr_smb_upload` (extracted from recorder) | `_nvr_smb_upload` | `config` |
-| `audio.py` | 4256–4492 | `cmd_audio_alarm`, `cmd_recording`, `cmd_audio` | all cmd_* | `api`, `cameras` |
+| `audio.py` | 4256–4492 | `cmd_recording`, `cmd_audio` | all cmd_* | `api`, `cameras` |
 | `intrusion.py` | 4493–4611 | `cmd_intrusion` | `cmd_intrusion` | `api`, `cameras` |
 | `wifi.py` | 4612–4698 | `cmd_wifi` | `cmd_wifi` | `api`, `cameras` |
 | `rcp.py` | 4699–5249 | `rcp_open_connection`, `rcp_session`, `rcp_session_cached`, `rcp_read`, `rcp_parse_*`, `_rcp_setup`, `cmd_rcp` | `rcp_read`, `rcp_session`, `cmd_rcp` | `api`, `cameras`, `lan_fallback` |

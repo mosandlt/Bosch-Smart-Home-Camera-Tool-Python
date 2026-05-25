@@ -113,7 +113,6 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via four sibling p
 | **Cloud clip download (history ~30 d)** | ✅ via Media Browser | ❌ | ❌ *(parked — no community request yet)* | ❌ *(intentionally not exposed — large payloads)* |
 | **Mini-NVR (motion-triggered local recording)** | ✅ *(v11.2.0 BETA)* | ✅ *(v10.7.0 BETA)* | ❌ | ❌ |
 | **SMB / NAS clip upload** | ✅ | ✅ *(v10.7.0 BETA)* | ❌ | ❌ |
-| **Audio-alarm sensitivity (Gen2)** | ✅ select | ✅ command | ❌ | ❌ |
 | **Camera sharing (friends)** | ❌ | ✅ command | ❌ | ❌ *(intentionally not exposed — needs user-driven flow)* |
 | **Pan / tilt (360° Gen1)** | ✅ services | ✅ command | ✅ `pan_position` DP | ✅ `bosch_camera_pan` |
 | **Named pan presets (home / left / right / back-left / back-right)** | ✅ opt-in select entity | ✅ `pan --preset` flag | ✅ `pan_preset` DP | ✅ `bosch_camera_pan preset=` |
@@ -161,7 +160,6 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via four sibling p
 | **Real-time via FCM push (~2s)** | `watch [cam] --push [--auto-snapshot]` |
 | **Signal alerts with snapshot** | `watch --signal http://signal:8080 --signal-sender +49... --signal-recipients +49...` |
 | **Motion detection — get/set** | `motion [cam] [--enable\|--disable] [--sensitivity S]` |
-| **Audio alarm — get/set** | `audio-alarm [cam] [--enable\|--disable] [--threshold N]` |
 | **Audio levels — mic/speaker 0-100** | `audio [cam] [--mic N] [--speaker N] [--json]` |
 | **Intrusion detection config** | `intrusion [cam] [--mode indoor\|outdoor] [--sensitivity 0-7] [--distance 1-10] [--json]` |
 | **WiFi info — RSSI/SSID/signal** | `wifi [cam] [--json]` |
@@ -452,15 +450,6 @@ python3 bosch_camera.py motion Outdoor --enable   # enable motion detection
 python3 bosch_camera.py motion Outdoor --disable  # disable motion detection
 python3 bosch_camera.py motion Outdoor --enable --sensitivity SUPER_HIGH
 python3 bosch_camera.py motion Outdoor --sensitivity MEDIUM
-```
-
-### Audio Alarm
-
-```bash
-python3 bosch_camera.py audio-alarm Outdoor       # show current settings
-python3 bosch_camera.py audio-alarm Outdoor --enable  # enable audio alarm
-python3 bosch_camera.py audio-alarm Outdoor --disable # disable audio alarm
-python3 bosch_camera.py audio-alarm Outdoor --enable --threshold 60
 ```
 
 ### Recording Options
@@ -758,7 +747,6 @@ Proper handling of HTTP 444 responses (connection closed without response). Prev
 
 - **`watch` command**: real-time event polling with `--interval` and `--duration`
 - **`motion` command**: get/set motion detection + sensitivity
-- **`audio-alarm` command**: get/set audio alarm + threshold
 - **`recording` command**: get/set cloud recording sound on/off
 
 ### What's New in v1.5.0
@@ -1028,7 +1016,6 @@ HTTP 442 means "feature not supported on this camera model."
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET/PUT` | `/v11/video_inputs/{id}/motion` | Motion detection config — `enabled` (bool), `motionAlarmConfiguration`: `OFF` / `LOW` / `MEDIUM_LOW` / `MEDIUM_HIGH` / `HIGH` / `SUPER_HIGH` |
-| `GET/PUT` | `/v11/video_inputs/{id}/audioAlarm` | Audio alarm — `enabled` (bool), `threshold` (dB 0–100), config: `OFF` or `CUSTOM` |
 | `GET/PUT` | `/v11/video_inputs/{id}/audio` | Audio settings — `audioEnabled` (bool), `SpeakerLevel` (0–100) |
 | `GET/PUT` | `/v11/video_inputs/{id}/audio_detection_config` | Advanced audio detection config (Gen2 cameras) |
 | `GET/PUT` | `/v11/video_inputs/{id}/audio_event_config` | Audio event config — glass break / smoke detection (Gen2 / Audio+ subscription) |
@@ -1704,13 +1691,6 @@ python3 bosch_camera.py motion Outdoor --enable --sensitivity SUPER_HIGH
 python3 bosch_camera.py motion Outdoor --sensitivity MEDIUM
 ```
 
-### Audio alarm control
-
-```bash
-# Enable audio alarm with threshold 60
-python3 bosch_camera.py audio-alarm Outdoor --enable --threshold 60
-```
-
 ### Home Assistant Automation Examples
 
 #### Motion alert with camera snapshot
@@ -1947,7 +1927,7 @@ python3 bosch_camera.py nvr upload Garten
 | v1.9.0 | Push notification architecture documented |
 | v1.8.0 | RCP session caching, `watch --snapshot`, resolution fix |
 | v1.7.0 | `--quality` flag (auto/high/low) |
-| v1.6.0 | `watch`, `motion`, `audio-alarm`, `recording` commands |
+| v1.6.0 | `watch`, `motion`, `recording` commands |
 | v1.5.0 | `maxSessionDuration` fix, `--hq`, `--inst N`, `rcp bitrate` |
 | v1.4.0 | `rcp frame`, `rcp script`, `rcp iva` |
 | v1.3.0 | `rcp` command with RCP protocol reads |

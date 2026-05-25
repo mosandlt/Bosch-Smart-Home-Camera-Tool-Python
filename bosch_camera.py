@@ -54,6 +54,12 @@ Usage (CLI):
   python3 bosch_camera.py nvr prune  [<cam-name>] [--keep N]
   python3 bosch_camera.py nvr upload [<cam-name>] [--clip PATH]
   python3 bosch_camera.py watch      [<cam-name>] --auto-record  # motion → MP4 (BETA)
+
+Diagnostic & Performance Commands (new in v10.9.0):
+  python3 bosch_camera.py snapshot-mjpeg [<cam-name>] [-o out.jpg]  # FFmpeg snap (Gen2, ~150-300ms)
+  python3 bosch_camera.py onvif-scopes   [<cam-name>] [--json]      # ONVIF scope strings via LAN RCP
+  python3 bosch_camera.py rcp-version    [<cam-name>]               # RCP protocol version (0xff00/0xff04)
+  python3 bosch_camera.py feature-flags  [--json]                   # cloud feature flags for account
 """
 
 import os
@@ -84,7 +90,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.7.7"
+VERSION     = "10.9.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -2039,17 +2045,6 @@ def cmd_info(cfg: dict, args) -> None:
                     enabled  = md.get("enabled", md.get("motionEnabled", "?"))
                     sens     = md.get("sensitivity", "?")
                     print(f"      Motion:        enabled={enabled}  sensitivity={sens}")
-            except Exception:
-                pass
-
-            # /audioAlarm
-            try:
-                ar = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/audioAlarm", timeout=10)
-                if ar.status_code == 200:
-                    ad = ar.json()
-                    enabled   = ad.get("enabled", ad.get("audioAlarmEnabled", "?"))
-                    threshold = ad.get("threshold", ad.get("sensitivity", "?"))
-                    print(f"      Audio alarm:   enabled={enabled}  threshold={threshold}")
             except Exception:
                 pass
 
@@ -4257,76 +4252,6 @@ def cmd_motion(cfg: dict, args) -> None:
             state_str = "ENABLED" if new_enabled else "DISABLED"
             icon_new  = "✅" if new_enabled else "❌"
             print(f"  {icon_new}  Motion {state_str}  Sensitivity: {new_sens}")
-        else:
-            print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
-
-
-def cmd_audio_alarm(cfg: dict, args) -> None:
-    """
-    Get or set audio alarm detection settings.
-
-    Usage:
-      python3 bosch_camera.py audio-alarm [<cam>]               # show current
-      python3 bosch_camera.py audio-alarm [<cam>] --enable      # enable
-      python3 bosch_camera.py audio-alarm [<cam>] --disable     # disable
-      python3 bosch_camera.py audio-alarm [<cam>] --threshold N # set threshold 0-100
-
-    API: GET/PUT /v11/video_inputs/{id}/audioAlarm
-    """
-    token   = get_token(cfg)
-    session = make_session(token)
-    cameras = get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
-    enable    = getattr(args, "enable", False)
-    disable   = getattr(args, "disable", False)
-    threshold = getattr(args, "threshold", None)
-
-    for name, cam_info in cams.items():
-        cam_id = cam_info["id"]
-        print(f"\n── Audio Alarm: {name} ──────────────────────────────────────")
-
-        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/audioAlarm", timeout=10)
-        if r.status_code == 401:
-            print("  ❌  Token expired.")
-            return
-        if r.status_code != 200:
-            print(f"  ❌  Could not fetch audio alarm settings: HTTP {r.status_code}")
-            continue
-        data              = r.json()
-        current_enabled   = data.get("enabled", False)
-        current_threshold = data.get("threshold", 80)
-
-        enabled_str = "ENABLED" if current_enabled else "DISABLED"
-        icon        = "🔊" if current_enabled else "🔕"
-        print(f"  {icon}  Audio Alarm: {enabled_str}  Threshold: {current_threshold}")
-
-        if not enable and not disable and threshold is None:
-            print(f"\n  Run with --enable / --disable / --threshold to change.")
-            print(f"  E.g.: python3 bosch_camera.py audio-alarm {name.lower()} --enable --threshold 60")
-            continue
-
-        new_enabled   = current_enabled
-        new_threshold = current_threshold
-        if enable:
-            new_enabled = True
-        if disable:
-            new_enabled = False
-        if threshold is not None:
-            new_threshold = threshold
-
-        body = {"enabled": new_enabled, "threshold": new_threshold}
-        print(f"  🔄  Setting audio alarm → enabled={new_enabled}  threshold={new_threshold}...")
-
-        pr = session.put(
-            f"{CLOUD_API}/v11/video_inputs/{cam_id}/audioAlarm",
-            json=body,
-            headers={"Content-Type": "application/json"},
-            timeout=10,
-        )
-        if pr.status_code in (200, 201, 204):
-            state_str = "ENABLED" if new_enabled else "DISABLED"
-            icon_new  = "🔊" if new_enabled else "🔕"
-            print(f"  {icon_new}  Audio Alarm {state_str}  Threshold: {new_threshold}")
         else:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
@@ -6892,6 +6817,396 @@ def cmd_account(cfg: dict, args) -> None:
     print()
 
 
+# ══════════════════════ DIAGNOSTIC & PERFORMANCE HELPERS ═══════════════════════
+
+def fetch_rcp_lan(
+    cam_ip: str,
+    user: str,
+    password: str,
+    opcode_hex: str,
+    type_: str = "P_OCTET",
+    num: int = 0,
+) -> bytes | None:
+    """Read a single RCP opcode from the camera directly over LAN (HTTPS, Digest auth).
+
+    Uses the cbs-user / local camera credentials that come from PUT /connection LOCAL.
+    Returns raw payload bytes on success, or None on any error (network, auth, parse).
+
+    Args:
+        cam_ip:     LAN IP of the camera (e.g. "192.0.2.149")
+        user:       Digest-auth username (from PUT /connection LOCAL response)
+        password:   Digest-auth password (from PUT /connection LOCAL response)
+        opcode_hex: RCP command code, e.g. "0x0a98"
+        type_:      RCP type string, default "P_OCTET"
+        num:        Instance number (default 0)
+    """
+    import re as _re
+    from requests.auth import HTTPDigestAuth
+
+    url = f"https://{cam_ip}/rcp.xml"
+    params: dict[str, object] = {
+        "command":   opcode_hex,
+        "direction": "READ",
+        "type":      type_,
+        "num":       num,
+    }
+    try:
+        r = requests.get(
+            url,
+            params=params,
+            auth=HTTPDigestAuth(user, password),
+            verify=False,
+            timeout=8,
+        )
+    except Exception:
+        return None
+
+    if r.status_code != 200:
+        return None
+
+    # Parse XML — result payload is in <str>HEX</str>
+    m = _re.search(r"<str>([0-9a-fA-F]*)</str>", r.text)
+    if not m:
+        return None
+    hex_str = m.group(1)
+    if not hex_str:
+        return None
+    try:
+        return bytes.fromhex(hex_str)
+    except ValueError:
+        return None
+
+
+def _get_local_connection_creds(
+    session: requests.Session,
+    cam_id: str,
+) -> tuple[str, str, str] | None:
+    """Open PUT /connection LOCAL and return (host_ip, user, password).
+
+    Returns None on failure (HTTP error, no URLs, no creds).
+    The returned host_ip has no port (strip ":443" if present).
+    """
+    try:
+        r = session.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
+            json={"type": "LOCAL", "highQualityVideo": False},
+            headers={"Content-Type": "application/json"},
+            timeout=15,
+        )
+    except Exception:
+        return None
+
+    if r.status_code != 200:
+        return None
+
+    data  = r.json()
+    urls  = data.get("urls", [])
+    user  = data.get("user") or ""
+    pw    = data.get("password") or ""
+
+    if not urls or not user or not pw:
+        return None
+
+    raw_url = urls[0]  # e.g. "192.0.2.149:443"
+    host = raw_url.split(":")[0]
+    return host, user, pw
+
+
+# ══════════════════════ NEW CLI COMMANDS (F1/F4/F6/F13) ══════════════════════
+
+def cmd_snapshot_mjpeg(cfg: dict, args: argparse.Namespace) -> None:
+    """F1 — MJPEG/FFmpeg snapshot for Gen2 cameras (faster than snap.jpg).
+
+    Captures a single JPEG frame via FFmpeg from the local RTSP stream.
+    Requires the camera to be reachable on LAN and Gen2 (HOME_Eyes_*).
+
+    FFmpeg command:
+      ffmpeg -rtsp_transport tcp -i rtsp://user:pw@ip:443/rtsp_tunnel?inst=3
+             -vframes 1 -f image2pipe -
+
+    On Gen1 or FFmpeg error: prints "skipped" and exits with code 0.
+
+    Usage:
+      python3 bosch_camera.py snapshot-mjpeg [<cam>] [-o out.jpg]
+    """
+    token   = get_token(cfg)
+    session = make_session(token)
+    _cams   = get_cameras(cfg, session)
+    cam_arg = getattr(args, "cam", None)
+    out_path: str | None = getattr(args, "output", None)
+
+    cams = resolve_cam(cfg, cam_arg)
+
+    for name, cam_info in cams.items():
+        print(f"\n── MJPEG Snapshot: {name} ──────────────────────────────────────")
+
+        model = cam_info.get("model", cam_info.get("hardwareVersion", ""))
+        is_gen2 = model.startswith("HOME_")
+        if not is_gen2:
+            print(f"  ⚠️   Skipped — snapshot-mjpeg requires Gen2 (HOME_Eyes_*), got '{model}'.")
+            continue
+
+        # Get LAN credentials via PUT /connection LOCAL
+        print("  🔄  Opening LOCAL connection for LAN credentials...")
+        creds = _get_local_connection_creds(session, cam_info["id"])
+        if not creds:
+            print("  ⚠️   Skipped — could not obtain LOCAL connection creds (camera offline or LAN not reachable).")
+            continue
+
+        cam_host, cam_user, cam_pass = creds
+        rtsp_url = f"rtsp://{cam_user}:{cam_pass}@{cam_host}:443/rtsp_tunnel?inst=3"
+        print(f"  📡  RTSP: rtsp://{cam_user}:***@{cam_host}:443/rtsp_tunnel?inst=3")
+
+        # Determine output path
+        if out_path:
+            dest = out_path
+        else:
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = name.replace(" ", "_")
+            dest = os.path.join(BASE_DIR, f"mjpeg_snapshot_{safe_name}_{ts}.jpg")
+
+        # FFmpeg subprocess — capture stdout as JPEG bytes
+        print(f"  🎞️   Running FFmpeg...")
+        t0 = time.monotonic()
+        try:
+            proc = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-rtsp_transport", "tcp",
+                    "-i", rtsp_url,
+                    "-vframes", "1",
+                    "-f", "image2pipe",
+                    "-",
+                ],
+                capture_output=True,
+                timeout=15,
+            )
+        except FileNotFoundError:
+            print("  ⚠️   Skipped — ffmpeg not found. Install with: brew install ffmpeg")
+            continue
+        except subprocess.TimeoutExpired:
+            print("  ⚠️   Skipped — FFmpeg timed out.")
+            continue
+        except Exception as e:
+            print(f"  ⚠️   Skipped — FFmpeg error: {e}")
+            continue
+
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+        if proc.returncode != 0 or not proc.stdout:
+            # FFmpeg writes diagnostics to stderr — show tail for debugging
+            stderr_tail = (proc.stderr or b"").decode("utf-8", errors="replace").strip().splitlines()
+            hint = stderr_tail[-1] if stderr_tail else "(no output)"
+            print(f"  ⚠️   Skipped — FFmpeg exited {proc.returncode}: {hint}")
+            continue
+
+        jpeg_bytes = proc.stdout
+        if not jpeg_bytes[:2] == b"\xff\xd8":
+            print(f"  ⚠️   Skipped — FFmpeg output is not a JPEG (got {jpeg_bytes[:4].hex()}).")
+            continue
+
+        with open(dest, "wb") as fh:
+            fh.write(jpeg_bytes)
+        print(f"  ✅  {dest}  ({len(jpeg_bytes):,} bytes, {elapsed_ms} ms)")
+        open_file(dest)
+
+
+def cmd_onvif_scopes(cfg: dict, args: argparse.Namespace) -> None:
+    """F4 — ONVIF Scopes Reader via RCP 0x0a98 (LAN, Digest auth).
+
+    Reads the ONVIF scope string from the camera directly over LAN (HTTPS + Digest).
+    Decodes the null-terminated ASCII TLV payload returned by opcode 0x0a98.
+
+    Usage:
+      python3 bosch_camera.py onvif-scopes [<cam>] [--json]
+    """
+    import json as _json_mod
+
+    token   = get_token(cfg)
+    session = make_session(token)
+    _cams   = get_cameras(cfg, session)
+    cam_arg = getattr(args, "cam", None)
+    as_json = getattr(args, "json", False)
+
+    cams = resolve_cam(cfg, cam_arg)
+    results: list[dict] = []
+
+    for name, cam_info in cams.items():
+        if not as_json:
+            print(f"\n── ONVIF Scopes: {name} ──────────────────────────────────────────")
+
+        # Get LAN credentials
+        creds = _get_local_connection_creds(session, cam_info["id"])
+        if not creds:
+            if not as_json:
+                print("  ⚠️   Could not open LOCAL connection — camera offline or LAN not reachable.")
+            results.append({"cam": name, "error": "local_connection_failed"})
+            continue
+
+        cam_host, cam_user, cam_pass = creds
+
+        if not as_json:
+            print(f"  📡  Reading RCP 0x0a98 from {cam_host}...")
+
+        raw = fetch_rcp_lan(cam_host, cam_user, cam_pass, "0x0a98")
+        if raw is None:
+            if not as_json:
+                print("  ⚠️   RCP 0x0a98 returned no data (opcode not supported or LAN error).")
+            results.append({"cam": name, "error": "rcp_no_data"})
+            continue
+
+        # Parse null-terminated ASCII strings from payload
+        scopes: list[str] = []
+        for chunk in raw.split(b"\x00"):
+            s = chunk.decode("ascii", errors="replace").strip()
+            if s:
+                scopes.append(s)
+
+        entry: dict = {"cam": name, "scopes": scopes, "raw_hex": raw.hex()}
+        results.append(entry)
+
+        if not as_json:
+            if scopes:
+                print(f"  ✅  {len(scopes)} scope(s):")
+                for sc in scopes:
+                    print(f"       {sc}")
+            else:
+                print(f"  ℹ️   No scope strings in payload ({len(raw)} bytes raw).")
+                print(f"       Raw: {raw.hex()}")
+
+    if as_json:
+        print(_json_mod.dumps(results, indent=2))
+
+
+def cmd_rcp_version(cfg: dict, args: argparse.Namespace) -> None:
+    """F6 — Print RCP protocol version from camera via cloud proxy.
+
+    Reads opcodes 0xff00 (primary version) and 0xff04 (secondary version).
+    Each returns a 4-byte big-endian version word. Formatted as "major.minor.patch.build".
+
+    Usage:
+      python3 bosch_camera.py rcp-version [<cam>]
+    """
+    import struct as _struct
+
+    token   = get_token(cfg)
+    session = make_session(token)
+    _cams   = get_cameras(cfg, session)
+    cam_arg = getattr(args, "cam", None)
+
+    cams = resolve_cam(cfg, cam_arg)
+
+    for name, cam_info in cams.items():
+        print(f"\n── RCP Version: {name} ────────────────────────────────────────────")
+
+        try:
+            rcp_url, sessionid = _rcp_setup(cam_info, token)
+        except RuntimeError as e:
+            print(f"  ❌  RCP setup failed: {e}")
+            continue
+
+        def _read_version(opcode: str) -> str:
+            d = rcp_read(rcp_url, opcode, sessionid, type_="T_DWORD")
+            if d and len(d) >= 4:
+                major, minor, patch, build = d[0], d[1], d[2], d[3]
+                return f"{major}.{minor}.{patch}.{build}"
+            # Fallback: try P_OCTET
+            d2 = rcp_read(rcp_url, opcode, sessionid, type_="P_OCTET")
+            if d2 and len(d2) >= 4:
+                major, minor, patch, build = d2[0], d2[1], d2[2], d2[3]
+                return f"{major}.{minor}.{patch}.{build}"
+            return "(not available)"
+
+        fw = cam_info.get("firmware", cam_info.get("firmwareVersion", "?"))
+        model = cam_info.get("model", cam_info.get("hardwareVersion", "?"))
+        print(f"  Camera:       {model}  FW {fw}")
+
+        ver_primary   = _read_version("0xff00")
+        ver_secondary = _read_version("0xff04")
+
+        print(f"  RCP Primary:   {ver_primary}")
+        print(f"  RCP Secondary: {ver_secondary}")
+
+        if ver_primary != "(not available)":
+            print(f"\n  ✅  {model} FW {fw}: RCP v{ver_primary}")
+        else:
+            print(f"\n  ⚠️   RCP version opcodes not available on this camera.")
+
+
+def cmd_feature_flags(cfg: dict, args: argparse.Namespace) -> None:
+    """F13 — Print Bosch Cloud feature flags for this account.
+
+    GET /v11/feature_flags — account-level capabilities bitmask.
+    Human-readable list by default; --json for structured output.
+
+    Usage:
+      python3 bosch_camera.py feature-flags [--json]
+    """
+    import json as _json_mod
+
+    token   = get_token(cfg)
+    session = make_session(token)
+    as_json = getattr(args, "json", False)
+
+    if not as_json:
+        print("\n── Feature Flags ───────────────────────────────────────────────────")
+
+    r = session.get(f"{CLOUD_API}/v11/feature_flags", timeout=10)
+
+    if r.status_code == 401:
+        if not as_json:
+            print("  ❌  Token expired. Run `python3 get_token.py` to renew.")
+        return
+
+    if r.status_code != 200:
+        if not as_json:
+            print(f"  ⚠️   HTTP {r.status_code}: could not fetch feature flags.")
+        else:
+            print(_json_mod.dumps({"error": f"http_{r.status_code}"}))
+        return
+
+    flags = r.json()
+
+    # Normalise to dict[str, bool|str]
+    flags_dict: dict[str, object]
+    if isinstance(flags, dict):
+        flags_dict = flags
+    elif isinstance(flags, list):
+        flags_dict = {}
+        for item in flags:
+            if isinstance(item, dict):
+                key = item.get("name", item.get("key", "?"))
+                val = item.get("value", item.get("enabled", "?"))
+                flags_dict[key] = val
+            else:
+                flags_dict[str(item)] = True
+    else:
+        flags_dict = {"raw": flags}
+
+    if as_json:
+        print(_json_mod.dumps(flags_dict, indent=2))
+    else:
+        enabled  = [k for k, v in flags_dict.items() if v is True or v == "true"]
+        disabled = [k for k, v in flags_dict.items() if v is False or v == "false"]
+        other    = [(k, v) for k, v in flags_dict.items()
+                    if k not in enabled and k not in disabled]
+        if enabled:
+            print(f"\n  Enabled ({len(enabled)}):")
+            for k in sorted(enabled):
+                print(f"    ✅  {k}")
+        if disabled:
+            print(f"\n  Disabled ({len(disabled)}):")
+            for k in sorted(disabled):
+                print(f"    ❌  {k}")
+        if other:
+            print(f"\n  Other:")
+            for k, v in sorted(other):
+                print(f"    ℹ️   {k}: {v}")
+        if not flags_dict:
+            print("  (empty response)")
+        print()
+
+
 def cmd_timestamp(cfg: dict, args) -> None:
     """Get or set time/date overlay on camera video.
 
@@ -7869,33 +8184,6 @@ def main():
                           metavar="S",
                           help="Sensitivity: OFF | LOW | MEDIUM | HIGH | SUPER_HIGH")
 
-    # ── audio-alarm ────────────────────────────────────────────────────────────
-    p_audio = subparsers.add_parser(
-        "audio-alarm",
-        help="Get/set audio alarm detection settings",
-        description=(
-            "🔊  audio-alarm — Get or set audio alarm detection settings\n"
-            "\n"
-            "  Reads or writes the audio alarm configuration.\n"
-            "  API: GET/PUT /v11/video_inputs/{id}/audioAlarm\n"
-            "\n"
-            "  Threshold is 0-100 (higher = less sensitive)."
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "  Examples:\n"
-            "    python3 bosch_camera.py audio-alarm Garten\n"
-            "    python3 bosch_camera.py audio-alarm Garten --enable\n"
-            "    python3 bosch_camera.py audio-alarm Garten --disable\n"
-            "    python3 bosch_camera.py audio-alarm Garten --enable --threshold 60"
-        ),
-    )
-    p_audio.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
-    p_audio.add_argument("--enable",    action="store_true", help="Enable audio alarm")
-    p_audio.add_argument("--disable",   action="store_true", help="Disable audio alarm")
-    p_audio.add_argument("--threshold", type=int, metavar="N",
-                         help="Detection threshold 0-100 (higher = less sensitive)")
-
     # ── recording ──────────────────────────────────────────────────────────────
     p_rec = subparsers.add_parser(
         "recording",
@@ -8356,6 +8644,104 @@ def main():
     p_nt.add_argument("--set", nargs="+", metavar="key=on|off",
                        help="Set notification types (e.g. movement=on person=off)")
 
+    # ── snapshot-mjpeg (F1) ────────────────────────────────────────────────
+    p_smj = subparsers.add_parser(
+        "snapshot-mjpeg",
+        help="Fast JPEG snapshot via FFmpeg/RTSP (Gen2 only)",
+        description=(
+            "🎞️   snapshot-mjpeg — Fast JPEG snapshot via FFmpeg (Gen2 only)\n"
+            "\n"
+            "  Captures a single frame directly from the camera's RTSP stream\n"
+            "  using FFmpeg. ~150-300 ms faster than the cloud snap.jpg method.\n"
+            "\n"
+            "  Requires: Gen2 camera (HOME_Eyes_*), LAN reachability, ffmpeg installed.\n"
+            "  Credentials are fetched automatically via PUT /connection LOCAL.\n"
+            "\n"
+            "  On Gen1 or FFmpeg error: prints 'skipped' and exits cleanly."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py snapshot-mjpeg\n"
+            "    python3 bosch_camera.py snapshot-mjpeg Terrasse\n"
+            "    python3 bosch_camera.py snapshot-mjpeg Terrasse -o /tmp/snap.jpg"
+        ),
+    )
+    p_smj.add_argument("cam", nargs="?", metavar="<camera>",
+                        help="Camera name (optional, default: all Gen2)")
+    p_smj.add_argument("-o", "--output", dest="output", metavar="PATH",
+                        help="Output file path (default: mjpeg_snapshot_<cam>_<ts>.jpg in script dir)")
+
+    # ── onvif-scopes (F4) ─────────────────────────────────────────────────
+    p_ov = subparsers.add_parser(
+        "onvif-scopes",
+        help="Read ONVIF scopes from camera via LAN RCP (0x0a98)",
+        description=(
+            "📡  onvif-scopes — Read ONVIF scope strings from camera (LAN)\n"
+            "\n"
+            "  Reads RCP opcode 0x0a98 directly from the camera over HTTPS+Digest.\n"
+            "  Decodes null-terminated ASCII TLV payload → scope strings.\n"
+            "\n"
+            "  Credentials are fetched automatically via PUT /connection LOCAL."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py onvif-scopes\n"
+            "    python3 bosch_camera.py onvif-scopes Terrasse\n"
+            "    python3 bosch_camera.py onvif-scopes Terrasse --json"
+        ),
+    )
+    p_ov.add_argument("cam", nargs="?", metavar="<camera>",
+                       help="Camera name (optional, default: all)")
+    p_ov.add_argument("--json", dest="json", action="store_true",
+                       help="Output as JSON")
+
+    # ── rcp-version (F6) ──────────────────────────────────────────────────
+    p_rv = subparsers.add_parser(
+        "rcp-version",
+        help="Show RCP protocol version (opcodes 0xff00 + 0xff04)",
+        description=(
+            "🔢  rcp-version — Print RCP protocol version\n"
+            "\n"
+            "  Reads RCP opcodes 0xff00 (primary) and 0xff04 (secondary)\n"
+            "  via the cloud proxy. Returns a 4-part version string.\n"
+            "\n"
+            "  Example output:\n"
+            "    HOME_Eyes_Outdoor FW 9.40.102: RCP v1.2.38.150"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py rcp-version\n"
+            "    python3 bosch_camera.py rcp-version Terrasse"
+        ),
+    )
+    p_rv.add_argument("cam", nargs="?", metavar="<camera>",
+                       help="Camera name (optional, default: all)")
+
+    # ── feature-flags (F13) ───────────────────────────────────────────────
+    p_ff = subparsers.add_parser(
+        "feature-flags",
+        help="Show Bosch cloud feature flags for this account",
+        description=(
+            "🏁  feature-flags — Show account-level feature flags\n"
+            "\n"
+            "  GET /v11/feature_flags — shows which cloud features are enabled\n"
+            "  for your account (e.g. APP_RATING, IOT_THINGS_INTEGRATION, ...).\n"
+            "\n"
+            "  Use --json for machine-readable output."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py feature-flags\n"
+            "    python3 bosch_camera.py feature-flags --json"
+        ),
+    )
+    p_ff.add_argument("--json", dest="json", action="store_true",
+                       help="Output as JSON")
+
     # ── global --lang ──────────────────────────────────────────────────────────
     from bosch_i18n import AVAILABLE_LANGS as _AVAILABLE_LANGS
     parser.add_argument(
@@ -8420,7 +8806,6 @@ def main():
         "watch":         cmd_watch,
         "nvr":           cmd_nvr,
         "motion":        cmd_motion,
-        "audio-alarm":   cmd_audio_alarm,
         "recording":     cmd_recording,
         "audio":         cmd_audio,
         "intrusion":     cmd_intrusion,
@@ -8448,6 +8833,11 @@ def main():
         "timestamp":          cmd_timestamp,
         "notification-types": cmd_notification_types,
         "test-local":         cmd_test_local,
+        # ── Diagnostic & Performance Commands (F1/F4/F6/F13) ───────────────
+        "snapshot-mjpeg":     cmd_snapshot_mjpeg,
+        "onvif-scopes":       cmd_onvif_scopes,
+        "rcp-version":        cmd_rcp_version,
+        "feature-flags":      cmd_feature_flags,
     }
     if cmd not in dispatch:
         print(t("err.unknown_command", cmd=cmd))
