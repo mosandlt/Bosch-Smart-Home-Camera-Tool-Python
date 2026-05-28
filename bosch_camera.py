@@ -90,7 +90,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.9.0"
+VERSION     = "10.10.0"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -543,10 +543,16 @@ def discover_cameras(cfg: dict, session: requests.Session) -> dict:
             "has_light":       feat.get("light", False),
             "pan_limit":       feat.get("panLimit", 0),
         }
-        # Ask for local IP if not already set
+        # Ask for local IP if not already set (skip prompt in non-interactive mode)
         if not cameras[name]["local_ip"]:
             print(t("cli.cam.discovered", name=name))
-            ip = input(t("input.local_ip")).strip()
+            try:
+                ip = input(t("input.local_ip")).strip()
+            except EOFError:
+                # Non-interactive (CI, cron, piped) — leave blank, user can edit
+                # bosch_config.json later. Without this guard `rescan` crashes.
+                print("    (non-interactive — skipping local_ip prompt; edit bosch_config.json later)")
+                ip = ""
             if ip:
                 cameras[name]["local_ip"] = ip
     cfg["cameras"] = cameras
@@ -722,6 +728,17 @@ def cmd_status(cfg: dict, args) -> None:
     token   = get_token(cfg)
     session = make_session(token)
     cameras = get_cameras(cfg, session)
+
+    # Check live list for cameras added in the Bosch app since last rescan.
+    try:
+        live_r = session.get(f"{CLOUD_API}/v11/video_inputs", timeout=15)
+        if live_r.status_code == 200:
+            live_titles = {c.get("title", c.get("id", "")) for c in live_r.json()}
+            new_cams = sorted(live_titles - set(cameras.keys()))
+            if new_cams:
+                print(f"  ℹ️  {len(new_cams)} new camera(s) detected — run `rescan` to add them to config: {', '.join(new_cams)}")
+    except Exception:
+        pass
 
     print(t("cmd.status.header"))
     print(t("cmd.status.token_age", age=check_token_age(cfg)))
@@ -1856,14 +1873,27 @@ def cmd_live(cfg: dict, args) -> None:
 
 
 def cmd_config(cfg: dict, args) -> None:
-    """Show current config (mask the token for security)."""
+    """Show current config (mask all credentials for security)."""
     display = json.loads(json.dumps(cfg))  # deep copy
-    token = display["account"].get("bearer_token", "")
-    if token:
-        display["account"]["bearer_token"] = f"{token[:20]}...({len(token)} chars)"
-    refresh = display["account"].get("refresh_token", "")
-    if refresh:
-        display["account"]["refresh_token"] = f"{refresh[:20]}...({len(refresh)} chars)"
+    # Mask every secret-shaped field, not just bearer/refresh — access_token,
+    # firebase keys, FCM tokens, local camera passwords are all credentials.
+    SECRET_KEYS = (
+        "bearer_token", "refresh_token", "access_token",
+        "local_password", "password",
+        "private", "secret", "token", "security_token",
+    )
+    def _mask(obj):
+        if isinstance(obj, dict):
+            return {
+                k: (f"{str(v)[:20]}...({len(str(v))} chars)"
+                    if isinstance(v, str) and v and any(s in k.lower() for s in SECRET_KEYS)
+                    else _mask(v))
+                for k, v in obj.items()
+            }
+        if isinstance(obj, list):
+            return [_mask(x) for x in obj]
+        return obj
+    display = _mask(display)
     print(f"\n── Config: {CONFIG_FILE} ──────────────────────────────────")
     print(json.dumps(display, indent=2))
     print(f"\n  Token age: {check_token_age(cfg)}")
@@ -2827,7 +2857,14 @@ def cmd_pan(cfg: dict, args) -> None:
         # Fetch current position
         pr = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/pan", timeout=10)
         if pr.status_code != 200:
+            hint = (
+                "  💡  Camera is in privacy mode — disable privacy first (`bosch_camera.py privacy <cam> --off`)."
+                if pr.status_code == 443
+                else ""
+            )
             print(f"  ❌  Could not fetch pan state: HTTP {pr.status_code}")
+            if hint:
+                print(hint)
             continue
         pan_data = pr.json()
         current  = pan_data.get("currentAbsolutePosition", 0)
@@ -4642,6 +4679,7 @@ def rcp_open_connection(cam_id: str, token: str) -> tuple[str, str]:
         headers=headers,
         json={"type": "REMOTE", "highQualityVideo": False},
         timeout=15,
+        verify=False,  # Bosch cloud uses a private CA — same convention as make_session()
     )
     if r.status_code != 200:
         raise RuntimeError(f"PUT /connection returned HTTP {r.status_code}")
@@ -4675,7 +4713,7 @@ def rcp_session(proxy_base: str) -> str:
         "payload": _RCP_HELLO_PAYLOAD,
     }
     r1 = requests.get(rcp_url, params=params_hello,
-                      auth=("", ""), timeout=10)
+                      auth=("", ""), timeout=10, verify=False)
     if r1.status_code != 200:
         raise RuntimeError(f"RCP HELLO returned HTTP {r1.status_code}")
 
@@ -4704,7 +4742,7 @@ def rcp_session(proxy_base: str) -> str:
         "payload": _RCP_HELLO_PAYLOAD,
     }
     r2 = requests.get(rcp_url, params=params_init,
-                      auth=("", ""), timeout=10)
+                      auth=("", ""), timeout=10, verify=False)
     if r2.status_code != 200:
         raise RuntimeError(f"RCP SESSION_INIT returned HTTP {r2.status_code}")
 
@@ -4753,7 +4791,7 @@ def rcp_read(rcp_url: str, command: str, sessionid: str,
     }
     try:
         r = requests.get(rcp_url, params=params,
-                         auth=("", ""), timeout=10)
+                         auth=("", ""), timeout=10, verify=False)
     except Exception as e:
         return None
 
@@ -5633,13 +5671,23 @@ def cmd_autofollow(cfg: dict, args) -> None:
 
 
 def cmd_siren(cfg: dict, args) -> None:
-    """Trigger the acoustic alarm (siren) on a camera.
+    """Trigger or stop the siren on a camera.
 
     Usage:
-      python3 bosch_camera.py siren <cam-name>
+      python3 bosch_camera.py siren <cam-name>                        # trigger
+      python3 bosch_camera.py siren <cam-name> --stop                 # stop active alarm
+      python3 bosch_camera.py siren <cam-name> --set-duration <secs>  # configure duration then trigger
 
-    API: PUT /v11/video_inputs/{id}/acoustic_alarm
-    Note: Only supported on CAMERA_360 (indoor). Outdoor cameras return HTTP 442.
+    Endpoint depends on camera model:
+      - Gen2 Indoor II (HOME_Eyes_Indoor): PUT /v11/video_inputs/{id}/panic_alarm
+        Body: {"status": "ON"|"OFF"} — 75 dB integrated hardware siren.
+      - Gen1 INDOOR/OUTDOOR: the documented /acoustic_alarm endpoint returns
+        HTTP 404 in production (verified 2026-05-28). No working Gen1 siren
+        endpoint is currently known.
+
+    Duration is camera-side configured via PUT /v11/video_inputs/{id}/alarm_settings
+    (field: alarmDelayInSeconds, range 10–300 s). Use --set-duration to update this
+    before triggering the alarm.
     """
     token   = get_token(cfg)
     session = make_session(token)
@@ -5652,17 +5700,57 @@ def cmd_siren(cfg: dict, args) -> None:
 
     cam_name, cam_info = next(iter(cams.items()))
     cam_id = cam_info["id"]
+    model = cam_info.get("model", "")
+    stop = bool(getattr(args, "stop", False))
+    set_duration = getattr(args, "set_duration", None)
 
     print(f"\n── Siren: {cam_name} ──────────────────────────────────────")
-    print(f"  🔔  Triggering acoustic alarm...")
+
+    if model != "HOME_Eyes_Indoor":
+        print(f"  ⚠️  Siren not supported on model '{model or 'unknown'}'.")
+        print(f"      Only HOME_Eyes_Indoor (Gen2 Indoor II) is currently supported.")
+        print(f"      Gen1 /acoustic_alarm endpoint returns HTTP 404 — needs investigation.")
+        return
+
+    # Optional: update alarm duration via alarm_settings before triggering
+    if set_duration is not None:
+        duration_secs = int(set_duration)
+        if not 10 <= duration_secs <= 300:
+            print(f"  ❌  Duration must be between 10 and 300 seconds.")
+            return
+        # Fetch current alarm_settings to preserve other fields
+        rs = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/alarm_settings", timeout=10)
+        if rs.status_code == 200:
+            alarm_cfg = rs.json()
+        else:
+            alarm_cfg = {}
+        alarm_cfg["alarmDelayInSeconds"] = duration_secs
+        rp = session.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/alarm_settings",
+            json=alarm_cfg,
+            timeout=10,
+        )
+        if rp.status_code in (200, 201, 204):
+            print(f"  ✅  Siren duration set to {duration_secs}s")
+        elif rp.status_code == 443:
+            print(f"  ❌  Camera is in privacy mode — disable privacy first")
+            return
+        else:
+            print(f"  ⚠️  Could not set duration: HTTP {rp.status_code}  {rp.text[:200]}")
+            print(f"      Continuing to trigger alarm with existing duration...")
+
+    action = "Stopping" if stop else "Triggering"
+    print(f"  🔔  {action} panic alarm (Gen2 Indoor II)...")
 
     r = session.put(
-        f"{CLOUD_API}/v11/video_inputs/{cam_id}/acoustic_alarm",
-        json={"enabled": True},
+        f"{CLOUD_API}/v11/video_inputs/{cam_id}/panic_alarm",
+        json={"status": "OFF" if stop else "ON"},
         timeout=10,
     )
     if r.status_code in (200, 201, 204):
-        print(f"  ✅  Siren activated!")
+        print(f"  ✅  Siren {'stopped' if stop else 'activated'}!")
+    elif r.status_code == 443:
+        print(f"  ❌  Camera is in privacy mode — disable privacy first")
     elif r.status_code == 442:
         print(f"  ⚠️  Siren not supported on this camera model (HTTP 442)")
     else:
@@ -5675,7 +5763,10 @@ def cmd_unread(cfg: dict, args) -> None:
     Usage:
       python3 bosch_camera.py unread
 
-    API: GET /v11/video_inputs/{id}/unread_events_count
+    API: GET /v11/video_inputs/{id}  →  field: numberOfUnreadEvents
+    Note: /v11/video_inputs/{id}/unread_events_count returns HTTP 404 in
+    production (verified 2026-05-28). The field is available in the per-camera
+    detail endpoint instead.
     """
     token   = get_token(cfg)
     session = make_session(token)
@@ -5686,15 +5777,16 @@ def cmd_unread(cfg: dict, args) -> None:
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
         r = session.get(
-            f"{CLOUD_API}/v11/video_inputs/{cam_id}/unread_events_count",
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}",
             timeout=10,
         )
         if r.status_code == 200:
-            data = r.json()
-            count = data.get("count", data) if isinstance(data, dict) else data
-            print(f"  📬  {name}: {count} unread events")
-        elif r.status_code == 442:
-            print(f"  ⚠️  {name}: endpoint not supported (HTTP 442)")
+            data  = r.json()
+            count = data.get("numberOfUnreadEvents", 0)
+            print(f"  📬  {name}: {count} unread event(s)")
+        elif r.status_code == 401:
+            print(f"  ❌  Token expired.")
+            return
         else:
             print(f"  ❌  {name}: HTTP {r.status_code}")
 
@@ -6224,9 +6316,18 @@ def cmd_shared_with_friends(cfg: dict, args) -> None:
 
     for cam_name, cam_info in cams.items():
         cam_id = cam_info["id"]
-        model  = cam_info.get("hardwareVersion", "?")
+        # Config-based entries use "model"; live API responses use "hardwareVersion"
+        model  = cam_info.get("model") or cam_info.get("hardwareVersion", "?")
         model_name = HW_DISPLAY_NAMES.get(model, model)
         print(f"\n  📷  {cam_name} ({model_name})")
+
+        # Gen1 cameras (INDOOR, OUTDOOR, CAMERA_360, CAMERA_EYES) do not expose
+        # the /shared_with_friends endpoint — returns HTTP 404 in production.
+        # Gen2 cameras use hardwareVersion "HOME_Eyes_*" or "CAMERA_*_GEN2".
+        is_gen2 = model.startswith("HOME_Eyes_") or model.endswith("_GEN2")
+        if not is_gen2:
+            print(f"      ⚠️  Sharing not supported on Gen1 cameras ({model})")
+            continue
 
         r = session.get(
             f"{CLOUD_API}/v11/video_inputs/{cam_id}/shared_with_friends",
@@ -8313,15 +8414,27 @@ def main():
     # ── siren ─────────────────────────────────────────────────────────────────
     p_siren = subparsers.add_parser(
         "siren",
-        help="Trigger acoustic alarm (siren) on a camera",
+        help="Trigger or stop the panic alarm (siren) on a Gen2 Indoor II camera",
         description=(
-            "🔔  siren — Trigger the acoustic alarm on a camera\n"
+            "🔔  siren — Trigger or stop the panic alarm on a camera\n"
             "\n"
-            "  Only supported on CAMERA_360 (indoor). Outdoor cameras return HTTP 442."
+            "  Endpoint depends on camera model:\n"
+            "    HOME_Eyes_Indoor (Gen2 Indoor II): PUT /panic_alarm — 75 dB siren ✓\n"
+            "    INDOOR / OUTDOOR (Gen1):           /acoustic_alarm → HTTP 404 (broken)\n"
+            "\n"
+            "  Use --stop to cancel an active panic alarm before its configured\n"
+            "  duration expires.\n"
+            "  Use --set-duration N to update the siren duration (10–300 s) via\n"
+            "  PUT /alarm_settings (alarmDelayInSeconds) and then trigger the alarm.\n"
+            "  Duration is stored camera-side; subsequent triggers use the saved value."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_siren.add_argument("cam", nargs="?", help="Camera name")
+    p_siren.add_argument("--stop", action="store_true", default=False,
+                         help="Stop an active panic alarm instead of triggering one")
+    p_siren.add_argument("--set-duration", type=int, metavar="SECS", dest="set_duration",
+                         help="Set siren duration in seconds (10–300) via alarm_settings, then trigger alarm")
 
     # ── unread ────────────────────────────────────────────────────────────────
     p_unread = subparsers.add_parser(

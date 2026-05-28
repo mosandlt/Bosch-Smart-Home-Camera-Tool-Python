@@ -11,3 +11,4 @@ test_remote_*.jpg
 *.egg-info/
 htmlcov/
 .coverage
+backups/
