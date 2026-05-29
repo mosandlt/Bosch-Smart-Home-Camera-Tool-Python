@@ -5,7 +5,11 @@ PIN_EVERY_MODE: each numeric boundary, both GET-only and GET+PUT paths, HTTP err
 variants (401/442/non-200), and --json output are explicitly tested.
 
 Source: captures/api-findings.md §6.2 (audio mic/speaker 0-100, intrusion
-sensitivity 0-7, distance 1-10, wifiinfo RSSI/SSID/signal).
+sensitivity 0-7, distance 1-8 (Bosch rejects >8), wifiinfo RSSI/SSID/signal).
+
+Regression tests added v10.8.1:
+- BUG1: intrusion distance 9/10 must be rejected (Bosch HTTP 400 above 8)
+- BUG2: intercom speaker-set must issue GET→full-body PUT with microphoneLevel preserved
 """
 
 from __future__ import annotations
@@ -558,8 +562,8 @@ class TestCmdIntrusionSet:
             cmd_intrusion(cfg, _args(cam=CAM_NAME, distance=1))
         assert sess.put.call_args[1]["json"]["distance"] == 1
 
-    def test_distance_boundary_ten(self) -> None:
-        """--distance 10 is valid → PUT issued."""
+    def test_distance_boundary_eight(self) -> None:
+        """--distance 8 is valid (max accepted by Bosch) → PUT issued."""
         cfg = _make_cfg()
         sess = MagicMock()
         sess.get.return_value = MagicMock(
@@ -573,8 +577,46 @@ class TestCmdIntrusionSet:
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
         ):
+            cmd_intrusion(cfg, _args(cam=CAM_NAME, distance=8))
+        assert sess.put.call_args[1]["json"]["distance"] == 8
+
+    def test_distance_nine_rejected(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """REGRESSION BUG1: --distance 9 → Bosch returns HTTP 400; CLI must reject it."""
+        cfg = _make_cfg()
+        sess = MagicMock()
+        sess.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
+                          "sensitivity": 3, "distance": 5},
+        )
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
+        ):
+            cmd_intrusion(cfg, _args(cam=CAM_NAME, distance=9))
+        assert not sess.put.called
+        out = capsys.readouterr().out
+        assert "9" in out or "1-8" in out
+
+    def test_distance_ten_rejected(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """REGRESSION BUG1: --distance 10 → Bosch returns HTTP 400; CLI must reject it."""
+        cfg = _make_cfg()
+        sess = MagicMock()
+        sess.get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
+                          "sensitivity": 3, "distance": 5},
+        )
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
+        ):
             cmd_intrusion(cfg, _args(cam=CAM_NAME, distance=10))
-        assert sess.put.call_args[1]["json"]["distance"] == 10
+        assert not sess.put.called
+        out = capsys.readouterr().out
+        assert "10" in out or "1-8" in out
 
     def test_distance_above_max_rejected(self, capsys: pytest.CaptureFixture[str]) -> None:
         """--distance 11 exceeds max → no PUT, error printed."""
@@ -818,3 +860,121 @@ class TestCmdWifi:
             cmd_wifi(cfg, _args(cam=CAM_NAME, json=True))
         data = json.loads(capsys.readouterr().out)
         assert data[0]["rssi_dbm"] is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# cmd_intercom — speaker level set (BUG2 regression)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestCmdIntercomeIntercomSpeakerSet:
+    """REGRESSION BUG2: intercom speaker-set must GET first, then PUT a full body.
+
+    Bosch /audio is a full-body endpoint. A partial PUT (omitting microphoneLevel)
+    can silently reset the mic level.  Fix: GET current state → merge → full PUT.
+    """
+
+    def _make_intercom_sess(
+        self,
+        mic: int = 60,
+        enabled: bool = True,
+        put_status: int = 200,
+        conn_status: int = 200,
+    ) -> MagicMock:
+        """Build a mock session for intercom tests."""
+        sess = MagicMock()
+
+        audio_resp = MagicMock(
+            status_code=200,
+            json=lambda: {"audioEnabled": enabled, "microphoneLevel": mic, "speakerLevel": 50},
+        )
+        put_resp = MagicMock(status_code=put_status)
+        conn_resp = MagicMock(
+            status_code=conn_status,
+            json=lambda: {"urls": ["proxy.example.com/abc123"]},
+        )
+
+        def _get_side(url: str, **_kw: object) -> MagicMock:
+            return audio_resp
+
+        def _put_side(url: str, **_kw: object) -> MagicMock:
+            if "/audio" in url:
+                return put_resp
+            return conn_resp
+
+        sess.get.side_effect = _get_side
+        sess.put.side_effect = _put_side
+        return sess
+
+    def _args_intercom(self, speaker_level: int = 80) -> argparse.Namespace:
+        return argparse.Namespace(cam=CAM_NAME, duration=1, speaker_level=speaker_level)
+
+    def test_intercom_speaker_set_issues_get_first(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """REGRESSION BUG2: intercom must GET /audio before PUT (not partial-PUT)."""
+        cfg = _make_cfg()
+        sess = self._make_intercom_sess(mic=60)
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bosch_camera, "resolve_cam", return_value=cfg["cameras"]),
+        ):
+            try:
+                bosch_camera.cmd_intercom(cfg, self._args_intercom(speaker_level=80))
+            except Exception:
+                pass  # live TCP/audio may fail in test — we only check the audio PUT
+        # GET for /audio must have been called
+        get_urls = [call[0][0] for call in sess.get.call_args_list]
+        assert any("/audio" in u for u in get_urls), "GET /audio was not called before PUT"
+
+    def test_intercom_speaker_set_full_body_put(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """REGRESSION BUG2: PUT body must contain microphoneLevel from GET response."""
+        cfg = _make_cfg()
+        sess = self._make_intercom_sess(mic=77, enabled=False)
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bosch_camera, "resolve_cam", return_value=cfg["cameras"]),
+        ):
+            try:
+                bosch_camera.cmd_intercom(cfg, self._args_intercom(speaker_level=90))
+            except Exception:
+                pass
+        # Find the /audio PUT call
+        audio_put_bodies = [
+            call[1]["json"]
+            for call in sess.put.call_args_list
+            if "/audio" in call[0][0]
+        ]
+        assert audio_put_bodies, "No PUT to /audio was issued"
+        body = audio_put_bodies[0]
+        assert "microphoneLevel" in body, "PUT body is missing microphoneLevel"
+        assert body["microphoneLevel"] == 77, "microphoneLevel not preserved from GET"
+        assert body["speakerLevel"] == 90, "speakerLevel not set to requested value"
+        assert "audioEnabled" in body, "PUT body is missing audioEnabled"
+
+    def test_intercom_speaker_set_no_partial_put(self) -> None:
+        """REGRESSION BUG2: PUT must NOT use old SpeakerLevel (capital S) partial body."""
+        cfg = _make_cfg()
+        sess = self._make_intercom_sess(mic=55)
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bosch_camera, "resolve_cam", return_value=cfg["cameras"]),
+        ):
+            try:
+                bosch_camera.cmd_intercom(cfg, self._args_intercom(speaker_level=70))
+            except Exception:
+                pass
+        audio_put_bodies = [
+            call[1]["json"]
+            for call in sess.put.call_args_list
+            if "/audio" in call[0][0]
+        ]
+        assert audio_put_bodies, "No PUT to /audio was issued"
+        body = audio_put_bodies[0]
+        # Old buggy code sent {"audioEnabled": True, "SpeakerLevel": N} — assert gone
+        assert "SpeakerLevel" not in body, "Old buggy SpeakerLevel (capital S) still present"
+        assert "speakerLevel" in body, "speakerLevel (correct casing) must be in PUT body"

@@ -40,7 +40,7 @@ Usage (CLI):
   python3 bosch_camera.py light     [<cam-name>] [on|off|intensity N] [--local]
   python3 bosch_camera.py privacy-sound [<cam-name>] [on|off]
   python3 bosch_camera.py audio     [<cam-name>] [--mic N] [--speaker N] [--json]
-  python3 bosch_camera.py intrusion [<cam-name>] [--mode indoor|outdoor] [--sensitivity 0-7] [--distance 1-10] [--json]
+  python3 bosch_camera.py intrusion [<cam-name>] [--mode indoor|outdoor] [--sensitivity 0-7] [--distance 1-8] [--json]
   python3 bosch_camera.py wifi      [<cam-name>] [--json]
   python3 bosch_camera.py rules    [<cam-name>] [add|edit|delete]
   python3 bosch_camera.py friends  [invite|share|unshare|resend|remove]
@@ -90,7 +90,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.10.0"
+VERSION     = "10.10.1"
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -4077,19 +4077,30 @@ def cmd_intercom(cfg: dict, args) -> None:
 
     print(f"\n── Intercom: {cam_name} ──────────────────────────────────────")
 
-    # Step 1: Set speaker level
+    # Step 1: Set speaker level — GET current audio state first, then full-body PUT
+    # (Bosch /audio is a full-body endpoint; partial PUT can reset omitted fields)
     print(f"  🔊  Setting speaker level to {speaker_level}%...")
-    r = session.put(
-        f"{CLOUD_API}/v11/video_inputs/{cam_id}/audio",
-        json={"audioEnabled": True, "SpeakerLevel": speaker_level},
-        timeout=10,
-    )
-    if r.status_code in (200, 201, 204):
-        print(f"  ✅  Speaker level set to {speaker_level}%")
-    elif r.status_code == 442:
+    rg = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/audio", timeout=10)
+    if rg.status_code == 442:
         print(f"  ⚠️  Audio settings not supported on this camera model (HTTP 442)")
+    elif rg.status_code != 200:
+        print(f"  ⚠️  Could not fetch current audio state: HTTP {rg.status_code}")
     else:
-        print(f"  ⚠️  Could not set speaker level: HTTP {r.status_code}")
+        cur_audio = rg.json()
+        cur_enabled = cur_audio.get("audioEnabled", cur_audio.get("enabled", True))
+        cur_mic = cur_audio.get("microphoneLevel", cur_audio.get("MicrophoneLevel", 50))
+        r = session.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/audio",
+            json={"audioEnabled": cur_enabled, "microphoneLevel": cur_mic,
+                  "speakerLevel": speaker_level},
+            timeout=10,
+        )
+        if r.status_code in (200, 201, 204):
+            print(f"  ✅  Speaker level set to {speaker_level}%")
+        elif r.status_code == 442:
+            print(f"  ⚠️  Audio settings not supported on this camera model (HTTP 442)")
+        else:
+            print(f"  ⚠️  Could not set speaker level: HTTP {r.status_code}")
 
     # Step 2: Open live connection with audio enabled
     print(f"  📡  Opening live connection with audio...")
@@ -4467,11 +4478,11 @@ def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
       python3 bosch_camera.py intrusion [<cam>]                     # show current config
       python3 bosch_camera.py intrusion [<cam>] --mode indoor|outdoor
       python3 bosch_camera.py intrusion [<cam>] --sensitivity 0-7
-      python3 bosch_camera.py intrusion [<cam>] --distance 1-10
+      python3 bosch_camera.py intrusion [<cam>] --distance 1-8
       python3 bosch_camera.py intrusion [<cam>] --json              # machine-readable output
 
     API: GET/PUT /v11/video_inputs/{id}/intrusionDetectionConfig
-         Body: {"enabled": bool, "detectionMode": str, "sensitivity": 0-7, "distance": 1-10}
+         Body: {"enabled": bool, "detectionMode": str, "sensitivity": 0-7, "distance": 1-8}
     Source: captures/api-findings.md §6.2 (verified 2026-04); sensitivity range extended 0-7 in 2026.
     """
     import json as _json_mod
@@ -4525,7 +4536,7 @@ def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
             print(f"  {icon}  Enabled: {'YES' if enabled else 'NO'}")
             print(f"       Detection mode:   {det_mode}")
             print(f"       Sensitivity:      {cur_sens}  (0-7)")
-            print(f"       Distance:         {cur_dist}  (1-10)")
+            print(f"       Distance:         {cur_dist}  (1-8)")
 
         if mode is None and sens is None and dist is None:
             if not as_json:
@@ -4544,8 +4555,8 @@ def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
         if sens is not None and not (0 <= sens <= 7):
             print(f"  ❌  --sensitivity must be 0-7, got {sens}")
             return
-        if dist is not None and not (1 <= dist <= 10):
-            print(f"  ❌  --distance must be 1-10, got {dist}")
+        if dist is not None and not (1 <= dist <= 8):
+            print(f"  ❌  --distance must be 1-8, got {dist}")
             return
 
         MODE_MAP = {"indoor": "ALL_MOTIONS", "outdoor": "ZONES"}
@@ -8348,7 +8359,7 @@ def main():
         description=(
             "🚨  intrusion — Get or set intrusion detection configuration\n"
             "\n"
-            "  Reads or writes detectionMode, sensitivity (0-7), and distance (1-10).\n"
+            "  Reads or writes detectionMode, sensitivity (0-7), and distance (1-8).\n"
             "  API: GET/PUT /v11/video_inputs/{id}/intrusionDetectionConfig\n"
             "\n"
             "  Mode: indoor (ALL_MOTIONS) | outdoor (ZONES)"
@@ -8370,7 +8381,7 @@ def main():
     p_intrusion.add_argument("--sensitivity", type=int, metavar="N",
                              help="Sensitivity 0-7 (higher = more sensitive)")
     p_intrusion.add_argument("--distance", type=int, metavar="N",
-                             help="Detection distance 1-10")
+                             help="Detection distance 1-8 (Bosch rejects >8 with HTTP 400)")
     p_intrusion.add_argument("--json", action="store_true", default=False,
                              help="Machine-readable JSON output")
 

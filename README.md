@@ -1,8 +1,8 @@
 # Bosch Smart Home Camera — Python CLI Tool
 
-> **Reverse-engineered** Bosch Cloud API client for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innenkamera, Gen1+Gen2).
-> Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, real-time event watching, and **Mini-NVR (BETA)** — all from the command line.
-> No official API. No app needed after setup. **v10.10.0**
+Standalone Python CLI for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innenkamera, Gen1+Gen2). Live snapshots, live video stream (cloud + local LAN), privacy mode, light, notifications, pan control, intercom, camera sharing, automation rules, RCP protocol reads, real-time event watching, and **Mini-NVR (BETA)** — all from the command line. No official API. No app needed after setup.
+
+**Reverse-engineered Bosch Cloud API.** See [Disclaimer](#disclaimer).
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
@@ -12,6 +12,7 @@
 [![BuyMeCoffee][buymecoffeebadge]][buymecoffee]
 
 [![Community Forum][forum-shield]][forum]
+![AI-Assisted](https://img.shields.io/badge/AI--Assisted-blue?style=for-the-badge)
 
 [releases-shield]: https://img.shields.io/github/release/mosandlt/Bosch-Smart-Home-Camera-Tool-Python.svg?style=for-the-badge
 [releases]: https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python/releases
@@ -27,49 +28,45 @@
 
 ---
 
-## Disclaimer
-
-**This project is an independent, community-developed tool. It is not affiliated
-with, endorsed by, sponsored by, or in any way officially connected to Robert Bosch
-GmbH, Bosch Smart Home GmbH, or any of their subsidiaries or affiliates.
-"Bosch", "Bosch Smart Home", and related names and logos are registered trademarks
-of Robert Bosch GmbH.**
-
-This tool communicates with a reverse-engineered, undocumented, and unofficial API.
-The author(s) provide this software **"as is", without warranty of any kind**,
-express or implied, including but not limited to warranties of merchantability,
-fitness for a particular purpose, or non-infringement.
-
-**By using this software, you agree that:**
-
-- You use it entirely **at your own risk**.
-- The author(s) shall not be held liable for any direct, indirect, incidental,
-  special, or consequential damages arising from the use of, or inability to use,
-  this software — including but not limited to data loss, service disruption,
-  account suspension, or device damage.
-- The API may be changed, restricted, or shut down by Bosch at any time without
-  notice, which may render this tool non-functional.
-- You are solely responsible for ensuring your use complies with Bosch's Terms of
-  Service and any applicable laws in your jurisdiction.
-- All rights and any legal recourse are expressly disclaimed by the author(s).
-  Any use of this software is entirely your own responsibility.
-
-**Reverse engineering notice:** The API was discovered solely for the purpose of
-achieving interoperability with the user's own devices and data, which is explicitly
-permitted under **§ 69e of the German Copyright Act (UrhG)** and **Article 6 of
-EU Directive 2009/24/EC** on the legal protection of computer programs. No copy
-of Bosch's software was distributed. Only network protocol observations were used.
-
----
-
 ## Table of Contents
 
 - [Integration Comparison](#integration-comparison) — pick the right project for your platform
-- [Features](#features)
+- [Supported Cameras](#supported-cameras)
+- [Disclaimer](#disclaimer)
+- [Prerequisites — Setting Up a New Camera](#prerequisites--setting-up-a-new-camera)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Features](#features)
 - [CLI Reference](#cli-reference)
-- [What's New in v10.7](#whats-new-in-v107)
+  - [Status & Info](#status--info)
+  - [Snapshots](#snapshots)
+  - [Live Stream](#live-stream--30fps-h264--aac-audio)
+  - [WebRTC Streaming](#webrtc-streaming)
+  - [Privacy Mode](#privacy-mode)
+  - [Camera Light](#camera-light)
+  - [Push Notifications](#push-notifications)
+  - [Pan](#pan-camera_360-only)
+  - [Motion Detection](#motion-detection)
+  - [Recording Options](#recording-options)
+  - [Audio Levels](#audio-levels-mic--speaker)
+  - [Intrusion Detection](#intrusion-detection-config)
+  - [WiFi Info](#wifi-info)
+  - [Auto-Follow](#auto-follow-camera_360-only)
+  - [Intercom](#intercom)
+  - [Siren](#siren-camera_360-only)
+  - [Unread Events](#unread-events)
+  - [Privacy Sound](#privacy-sound-camera_360-only)
+  - [Rules — Cloud Automation](#rules--cloud-automation)
+  - [Camera Sharing & Friends](#friends--camera-sharing)
+  - [Rename](#rename)
+  - [Profile](#profile)
+  - [Account](#account)
+  - [RCP Protocol Reads](#rcp-protocol-reads)
+  - [Watch — Real-Time Event Monitoring](#watch--real-time-event-monitoring)
+  - [Token Management](#token-management)
+  - [Config & Rescan](#config--rescan)
+- [Mini-NVR (BETA)](#nvr-beta)
 - [How It Works](#how-it-works)
 - [Cloud API Reference](#cloud-api-reference)
 - [RCP Protocol — Low-Level Camera Reads](#rcp-protocol--low-level-camera-reads)
@@ -77,13 +74,15 @@ of Bosch's software was distributed. Only network protocol observations were use
 - [Camera Models](#camera-models)
 - [Event Types](#event-types)
 - [API Error Codes](#api-error-codes)
-- [Token Management](#token-management)
 - [Config File Reference](#config-file-reference)
 - [Troubleshooting](#troubleshooting)
 - [Example: Event Monitoring & Automation](#example-event-monitoring--automation)
 - [Known Limitations](#known-limitations)
-- [Version History](#version-history)
-- [Related](#related)
+- [File Structure](#file-structure)
+- [Releases](#releases) · [Full changelog](CHANGELOG.md) · [GitHub Releases](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python/releases)
+- [Related Projects](#related-projects)
+- [References](#references)
+- [License](#license)
 
 ---
 
@@ -93,7 +92,7 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via four sibling p
 
 | Feature | [Home Assistant Integration](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | [Python CLI Tool](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | [ioBroker Adapter](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) | [MCP Server](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-MCP) |
 |---|---|---|---|---|
-| **Maturity** | v13.0+ — HA Quality Scale **Platinum** | v10.7+ stable (Mini-NVR BETA) | v0.7+ beta | v1.3+ stable · PyPI |
+| **Maturity** | v13.3+ — HA Quality Scale **Platinum** | v10.10+ stable (Mini-NVR BETA) | v1.0+ stable · npm | v1.5+ stable · PyPI |
 | **Platform** | Home Assistant (HACS) | Standalone Python 3.10+ CLI | ioBroker (npm) | Python 3.10+ · pipx / uvx · stdio + streamable-HTTP for MCP clients (Claude Desktop, Claude Code, custom) |
 | **Login** | OAuth2 PKCE (browser) | OAuth2 PKCE (browser) | OAuth2 PKCE (browser) | OAuth2 PKCE (browser, one-time) |
 | **Snapshots** | ✅ Native `Camera.image` | ✅ `snapshot` command | ✅ File-store + base64 DP | ✅ `bosch_camera_snapshot` (LAN-only) |
@@ -131,107 +130,36 @@ The Bosch Smart Home Camera reverse-engineered API is exposed via four sibling p
 
 > All four projects share the same reverse-engineered Cloud API + RCP protocol research, but evolve independently. The Home Assistant integration is the most feature-complete reference implementation; the Python CLI is the lowest-level / scriptable surface; the ioBroker adapter targets VIS dashboards and Blockly automations; the MCP server exposes a curated, LAN-first tool surface to MCP clients (Claude Desktop, Claude Code, custom) for natural-language camera control.
 
+---
+
+## Supported Cameras
+
+All four current Bosch Smart Home cameras are supported.
+
+| Camera | Generation | Type | Codec / FW seen | Highlights |
+|---|---|---|---|---|
+| [**360° Innenkamera**](https://www.bosch-smarthome.com/de/de/produkte/sicherheitsprodukte/360-grad-innenkamera/) | Gen1 | Indoor | H.264 + AAC · FW 7.91.x | Pan/tilt motor, autofollow, IR night vision, mechanical privacy shutter |
+| [**Eyes Innenkamera II**](https://www.bosch-smarthome.com/de/de/produkte/sicherheitsprodukte/eyes-innenkamera-2/) | Gen2 | Indoor | H.264 + AAC · FW 9.40.x | Built-in 75 dB siren, Audio+ glass-break / smoke / CO, ZONES detection mode, RGB LEDs, retractable head |
+| [**Eyes Außenkamera**](https://www.bosch-smarthome.com/de/de/produkte/sicherheitsprodukte/eyes-aussenkamera/) | Gen1 | Outdoor (IP66) | H.264 + AAC · FW 7.91.x | Front spotlight, motion-triggered light, ambient-light sensor |
+| [**Eyes Außenkamera II**](https://www.bosch-smarthome.com/de/de/produkte/sicherheitsprodukte/eyes-aussenkamera-2/) | Gen2 | Outdoor (IP66) | H.264 + AAC · FW 9.40.x | Front + Top + Bottom RGB LED groups, DualRadar (motion + intrusion), wallwasher mode |
 
 ---
 
-## Features
+## Disclaimer
 
-| Feature | Command |
-|---------|---------|
-| Camera status (ONLINE / OFFLINE) | `status` |
-| Full camera info + live stream URLs | `info` |
-| Latest event snapshot (motion-triggered JPEG) | `snapshot` |
-| Live snapshot — current image, ~1.5 s | `liveshot` |
-| **Live stream — 30fps H.264 + AAC audio** | `live` |
-| Live stream in VLC | `live --vlc` |
-| Live stream — high quality | `live --hq` or `live --quality high` |
-| Live stream — low bandwidth | `live --quality low` |
-| Live stream — select instance | `live --inst N` |
-| **Live stream sub-stream (lower bandwidth)** | `live --sub` |
-| **Live stream WebRTC (sub-second latency, browser)** | `live --webrtc [cam]` |
-| **Live stream LOCAL (LAN, TLS proxy)** | `live --local [cam]` |
-| **Live stream LOCAL + best quality** | `live --local --quality high [cam]` |
-| **Privacy mode — get/set via cloud API** | `privacy [cam] [on\|off]` |
-| **Camera light — on/off via cloud API** | `light [cam] [on\|off]` |
-| **Push notifications — on/off** | `notifications [cam] [on\|off]` |
-| **Pan 360 camera** | `pan [cam] [--preset home\|left\|right\|back-left\|back-right] [<-120..120>]` |
-| **RCP reads via cloud proxy** | `rcp [cam] <info\|clock\|snapshot\|alarms\|...>` |
-| **Real-time event watching** | `watch [cam] [--interval N] [--duration N] [--auto-snapshot]` |
-| **Real-time via FCM push (~2s)** | `watch [cam] --push [--auto-snapshot]` |
-| **Signal alerts with snapshot** | `watch --signal http://signal:8080 --signal-sender +49... --signal-recipients +49...` |
-| **Motion detection — get/set** | `motion [cam] [--enable\|--disable] [--sensitivity S]` |
-| **Audio levels — mic/speaker 0-100** | `audio [cam] [--mic N] [--speaker N] [--json]` |
-| **Intrusion detection config** | `intrusion [cam] [--mode indoor\|outdoor] [--sensitivity 0-7] [--distance 1-10] [--json]` |
-| **WiFi info — RSSI/SSID/signal** | `wifi [cam] [--json]` |
-| **Recording options — sound on/off** | `recording [cam] [--sound-on\|--sound-off]` |
-| **Auto-follow — 360 camera motion tracking** | `autofollow [cam] [on\|off]` |
-| **Intercom — listen to camera audio** | `intercom [cam] [--duration N] [--speaker-level N]` |
-| **Siren — trigger acoustic alarm (360 only)** | `siren [cam]` |
-| **Unread events count** | `unread [cam]` |
-| **Push mode selection (auto/iOS/Android/polling)** | `watch --push --push-mode auto\|ios\|android\|polling` |
-| **Privacy sound — audible privacy indicator** | `privacy-sound [cam] [on\|off]` |
-| **Cloud automation rules** | `rules [cam] [list\|add\|edit\|delete]` |
-| **Motion detection zones** | `zones [cam] [list\|set\|clear]` |
-| **Privacy mask zones** | `privacy-masks [cam] [list\|set\|clear]` |
-| **Lighting schedule** | `lighting-schedule [cam] [set --on HH:MM --off HH:MM]` |
-| **Camera sharing with friends** | `friends [list\|invite\|share\|unshare\|resend\|remove]` |
-| **Rename a camera** | `rename [cam] "New Name"` |
-| **User profile management** | `profile [--name\|--language]` |
-| **Account info & feature flags** | `account` |
-| **Timestamp overlay — show/hide clock on video** | `timestamp [cam] [on\|off]` |
-| **Notification type toggles** | `notification-types [cam] [--set movement=on person=off]` |
-| Automatic token via browser login | `get_token.py` |
-| Silent token renewal / token fix | `token [fix\|browser]` |
-| **Mini-NVR: motion-triggered MP4 recording (BETA)** | `watch [cam] --auto-record` |
-| **NVR status / list / prune / upload (BETA)** | `nvr <status\|list\|prune\|upload> [cam]` |
+**This project is an independent, community-developed tool. It is not affiliated with, endorsed by, sponsored by, or in any way officially connected to Robert Bosch GmbH, Bosch Smart Home GmbH, or any of their subsidiaries or affiliates. "Bosch", "Bosch Smart Home", and related names and logos are registered trademarks of Robert Bosch GmbH.**
 
-### Architecture
+This tool communicates with a reverse-engineered, undocumented, and unofficial API. The author(s) provide this software **"as is", without warranty of any kind**, express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, or non-infringement.
 
-```mermaid
-flowchart LR
-    CLI[CLI<br/>bosch_camera.py] -->|OAuth2 PKCE<br/>token refresh| Cloud[Bosch CBS API<br/>residential.cbs<br/>.boschsecurity.com]
-    CLI -->|REST: video_inputs<br/>events / privacy /<br/>lighting / rules / ...| Cloud
-    Cloud -->|FCM push<br/>watch --push| CLI
-    CLI -->|PUT /connection<br/>type=LOCAL| Cloud
-    CLI -->|spawn| Proxy["TLS proxy<br/>localhost:&lt;port&gt;"]
-    Proxy -->|RTSP over TLS| Cam["Bosch Camera<br/>LAN :443"]
-    Cloud -.->|type=REMOTE<br/>cloud relay| CRP[proxy-NN.live<br/>.cbs.boschsecurity.com]
-    Proxy -.->|REMOTE| CRP
-    Proxy -->|rtsp://127.0.0.1| Player[ffplay / VLC /<br/>ffmpeg pipe]
-    CLI -->|Signal sendTo<br/>watch --signal| Signal[signal-cli<br/>REST API]
-    CLI -->|file write| Files[snapshots/<br/>downloads/<br/>bosch_config.json]
-```
+**By using this software, you agree that:**
 
-### LAN-fallback: `--local` flag
+- You use it entirely **at your own risk**.
+- The author(s) shall not be held liable for any direct, indirect, incidental, special, or consequential damages arising from the use of, or inability to use, this software — including but not limited to data loss, service disruption, account suspension, or device damage.
+- The API may be changed, restricted, or shut down by Bosch at any time without notice, which may render this tool non-functional.
+- You are solely responsible for ensuring your use complies with Bosch's Terms of Service and any applicable laws in your jurisdiction.
+- All rights and any legal recourse are expressly disclaimed by the author(s). Any use of this software is entirely your own responsibility.
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant CLI as bosch_camera.py
-    participant Cloud as Bosch CBS API
-    participant RCP as Camera LAN RCP
-    participant Cam as Camera 192.168.x.y:443
-
-    User->>CLI: privacy Outdoor on --local
-    CLI->>CLI: load lan_ips map from bosch_config.json
-    CLI->>RCP: RCP write 0x0d00 via HTTPS Digest (no token)
-    RCP->>Cam: direct LAN connection :443
-    Cam-->>CLI: 200 OK
-    Note over CLI,Cam: cloud never contacted — Gen2 only
-    Note over CLI: 5xx cloud error on other cmds → hint: try --local
-```
-
-### `bosch ping` flow
-
-```mermaid
-flowchart LR
-    User["bosch ping [cam]"] --> CLI[CLI load lan_ips]
-    CLI --> Loop{for each camera}
-    Loop --> TCP["TCP-connect :443\n1.5 s timeout"]
-    TCP -->|success| OK["OK  RTT ms"]
-    TCP -->|timeout| FAIL["FAIL"]
-    OK & FAIL --> Out[stdout / --json]
-```
+**Reverse engineering notice:** The API was discovered solely for the purpose of achieving interoperability with the user's own devices and data, which is explicitly permitted under **§ 69e of the German Copyright Act (UrhG)** and **Article 6 of EU Directive 2009/24/EC** on the legal protection of computer programs. No copy of Bosch's software was distributed. Only network protocol observations were used.
 
 ---
 
@@ -330,6 +258,109 @@ Press a number, the command runs, then press Enter to return to the menu.
 
 ---
 
+## Architecture
+
+```mermaid
+flowchart LR
+    CLI[CLI<br/>bosch_camera.py] -->|OAuth2 PKCE<br/>token refresh| Cloud[Bosch CBS API<br/>residential.cbs<br/>.boschsecurity.com]
+    CLI -->|REST: video_inputs<br/>events / privacy /<br/>lighting / rules / ...| Cloud
+    Cloud -->|FCM push<br/>watch --push| CLI
+    CLI -->|PUT /connection<br/>type=LOCAL| Cloud
+    CLI -->|spawn| Proxy["TLS proxy<br/>localhost:&lt;port&gt;"]
+    Proxy -->|RTSP over TLS| Cam["Bosch Camera<br/>LAN :443"]
+    Cloud -.->|type=REMOTE<br/>cloud relay| CRP[proxy-NN.live<br/>.cbs.boschsecurity.com]
+    Proxy -.->|REMOTE| CRP
+    Proxy -->|rtsp://127.0.0.1| Player[ffplay / VLC /<br/>ffmpeg pipe]
+    CLI -->|Signal sendTo<br/>watch --signal| Signal[signal-cli<br/>REST API]
+    CLI -->|file write| Files[snapshots/<br/>downloads/<br/>bosch_config.json]
+```
+
+### LAN-fallback: `--local` flag
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant CLI as bosch_camera.py
+    participant Cloud as Bosch CBS API
+    participant RCP as Camera LAN RCP
+    participant Cam as Camera LAN :443
+
+    User->>CLI: privacy Outdoor on --local
+    CLI->>CLI: load lan_ips map from bosch_config.json
+    CLI->>RCP: RCP write 0x0d00 via HTTPS Digest (no token)
+    RCP->>Cam: direct LAN connection :443
+    Cam-->>CLI: 200 OK
+    Note over CLI,Cam: cloud never contacted — Gen2 only
+    Note over CLI: 5xx cloud error on other cmds → hint: try --local
+```
+
+### `bosch ping` flow
+
+```mermaid
+flowchart LR
+    User["bosch ping [cam]"] --> CLI[CLI load lan_ips]
+    CLI --> Loop{for each camera}
+    Loop --> TCP["TCP-connect :443\n1.5 s timeout"]
+    TCP -->|success| OK["OK  RTT ms"]
+    TCP -->|timeout| FAIL["FAIL"]
+    OK & FAIL --> Out[stdout / --json]
+```
+
+---
+
+## Features
+
+| Feature | Command |
+|---------|---------|
+| Camera status (ONLINE / OFFLINE) | `status` |
+| Full camera info + live stream URLs | `info` |
+| Latest event snapshot (motion-triggered JPEG) | `snapshot` |
+| Live snapshot — current image, ~1.5 s | `liveshot` |
+| **Live stream — 30fps H.264 + AAC audio** | `live` |
+| Live stream in VLC | `live --vlc` |
+| Live stream — high quality | `live --hq` or `live --quality high` |
+| Live stream — low bandwidth | `live --quality low` |
+| Live stream — select instance | `live --inst N` |
+| **Live stream sub-stream (lower bandwidth)** | `live --sub` |
+| **Live stream WebRTC (sub-second latency, browser)** | `live --webrtc [cam]` |
+| **Live stream LOCAL (LAN, TLS proxy)** | `live --local [cam]` |
+| **Live stream LOCAL + best quality** | `live --local --quality high [cam]` |
+| **Privacy mode — get/set via cloud API** | `privacy [cam] [on\|off]` |
+| **Camera light — on/off via cloud API** | `light [cam] [on\|off]` |
+| **Push notifications — on/off** | `notifications [cam] [on\|off]` |
+| **Pan 360 camera** | `pan [cam] [--preset home\|left\|right\|back-left\|back-right] [<-120..120>]` |
+| **RCP reads via cloud proxy** | `rcp [cam] <info\|clock\|snapshot\|alarms\|...>` |
+| **Real-time event watching** | `watch [cam] [--interval N] [--duration N] [--auto-snapshot]` |
+| **Real-time via FCM push (~2s)** | `watch [cam] --push [--auto-snapshot]` |
+| **Signal alerts with snapshot** | `watch --signal http://signal:8080 --signal-sender +49... --signal-recipients +49...` |
+| **Motion detection — get/set** | `motion [cam] [--enable\|--disable] [--sensitivity S]` |
+| **Audio levels — mic/speaker 0-100** | `audio [cam] [--mic N] [--speaker N] [--json]` |
+| **Intrusion detection config** | `intrusion [cam] [--mode indoor\|outdoor] [--sensitivity 0-7] [--distance 1-8] [--json]` |
+| **WiFi info — RSSI/SSID/signal** | `wifi [cam] [--json]` |
+| **Recording options — sound on/off** | `recording [cam] [--sound-on\|--sound-off]` |
+| **Auto-follow — 360 camera motion tracking** | `autofollow [cam] [on\|off]` |
+| **Intercom — listen to camera audio** | `intercom [cam] [--duration N] [--speaker-level N]` |
+| **Siren — trigger acoustic alarm (360 only)** | `siren [cam]` |
+| **Unread events count** | `unread [cam]` |
+| **Push mode selection (auto/iOS/Android/polling)** | `watch --push --push-mode auto\|ios\|android\|polling` |
+| **Privacy sound — audible privacy indicator** | `privacy-sound [cam] [on\|off]` |
+| **Cloud automation rules** | `rules [cam] [list\|add\|edit\|delete]` |
+| **Motion detection zones** | `zones [cam] [list\|set\|clear]` |
+| **Privacy mask zones** | `privacy-masks [cam] [list\|set\|clear]` |
+| **Lighting schedule** | `lighting-schedule [cam] [set --on HH:MM --off HH:MM]` |
+| **Camera sharing with friends** | `friends [list\|invite\|share\|unshare\|resend\|remove]` |
+| **Rename a camera** | `rename [cam] "New Name"` |
+| **User profile management** | `profile [--name\|--language]` |
+| **Account info & feature flags** | `account` |
+| **Timestamp overlay — show/hide clock on video** | `timestamp [cam] [on\|off]` |
+| **Notification type toggles** | `notification-types [cam] [--set movement=on person=off]` |
+| Automatic token via browser login | `get_token.py` |
+| Silent token renewal / token fix | `token [fix\|browser]` |
+| **Mini-NVR: motion-triggered MP4 recording (BETA)** | `watch [cam] --auto-record` |
+| **NVR status / list / prune / upload (BETA)** | `nvr <status\|list\|prune\|upload> [cam]` |
+
+---
+
 ## CLI Reference
 
 ### Status & Info
@@ -356,7 +387,7 @@ flowchart LR
     CLI["CLI: live cmd"] -->|PUT /connection<br/>type=LOCAL or REMOTE| Cloud[Bosch CBS API]
     Cloud -->|rtspUrl + creds<br/>+ bufferingTime| CLI
     CLI -->|spawn TLS proxy<br/>localhost:&lt;port&gt;| Proxy
-    Cloud -.->|LOCAL only| Cam["Camera 192.168.x.y:443"]
+    Cloud -.->|LOCAL only| Cam["Camera LAN :443"]
     Cloud -.->|REMOTE only| Relay[proxy-NN.live<br/>.cbs.boschsecurity.com]
     Proxy[TLS proxy<br/>localhost] -->|TLS tunnel| Cam
     Proxy -.->|TLS tunnel<br/>cert SAN mismatch ignored| Relay
@@ -481,7 +512,7 @@ python3 bosch_camera.py intrusion Outdoor                  # show mode/sensitivi
 python3 bosch_camera.py intrusion Outdoor --mode indoor    # detection mode: ALL_MOTIONS
 python3 bosch_camera.py intrusion Outdoor --mode outdoor   # detection mode: ZONES
 python3 bosch_camera.py intrusion Outdoor --sensitivity 4  # sensitivity 0-7
-python3 bosch_camera.py intrusion Outdoor --distance 8     # detection distance 1-10
+python3 bosch_camera.py intrusion Outdoor --distance 8     # detection distance 1-8
 python3 bosch_camera.py intrusion Outdoor --mode indoor --sensitivity 4 --distance 6
 python3 bosch_camera.py intrusion --json
 ```
@@ -650,126 +681,73 @@ python3 bosch_camera.py rescan                   # re-discover cameras
 
 ---
 
-## What's New in v10.7
+## NVR (BETA)
 
-**TCP keep-alive on TLS proxy sockets**
-All TLS proxy sockets now enable `SO_KEEPALIVE` with 10 s idle / 5 s interval / 3 probes — detects dead connections before the OS default timeout, preventing zombie proxy threads on LOCAL streams.
+> **BETA — test before use in production. API and config keys may change.**
 
-**Directional select timeout**
-Camera-to-client direction has no timeout (dark/still outdoor scenes produce sparse RTP packets — TCP keep-alive handles dead connection detection). Client-to-camera direction uses 120 s timeout (FFmpeg sends periodic RTCP/keepalive). Prevents false proxy teardown during low-bitrate nighttime streams.
+The Mini-NVR records motion-triggered MP4 clips locally via ffmpeg, with optional upload to a SMB/NAS share.
 
-<details>
-<summary><strong>v7.0.0</strong></summary>
+### Requirements
 
-**LOCAL LAN streaming with TLS proxy**
-New `live --local` command streams directly from the camera over your local network — no cloud proxy needed. A built-in TLS proxy handles the camera's self-signed certificate and Digest authentication, which FFmpeg cannot process natively. Audio + video in HD quality (30 Mbps) by default on LAN.
+- `ffmpeg` (already required for `live` command): `brew install ffmpeg` / `apt-get install ffmpeg`
+- `smbprotocol` (only for SMB upload): `pip install smbprotocol`
 
-**Menu: Local stream entries + exit with "q"**
-The interactive menu now includes "Live stream LOCAL" entries for each camera. Exit changed from "0" to "q".
+### Quick Start
 
-**Code cleanup**
-Removed download and events commands (cloud event access removed). 123 lines of dead code cleaned up.
-</details>
+```bash
+# Start watching + auto-record on motion
+python3 bosch_camera.py watch Garten --auto-record
 
-<details>
-<summary><strong>v5.2.0</strong></summary>
+# Clips land in: captures/Garten/nvr/YYYY-MM-DD/HHMMSS.mp4
 
-**Live stream session — up to 60 minutes**
-The live stream (`live` command) now uses `maxSessionDuration=3600`, giving you a full 60-minute session before a reconnect is needed.
-</details>
+# Show status
+python3 bosch_camera.py nvr status Garten
 
----
+# List last 10 clips
+python3 bosch_camera.py nvr list Garten --limit 10
 
-<details>
-<summary><strong>Previous Version History</strong></summary>
+# Manually prune to 20 most recent clips
+python3 bosch_camera.py nvr prune Garten --keep 20
 
-### What's New in v5.0.0
+# Upload all clips to NAS
+python3 bosch_camera.py nvr upload Garten
+```
 
-**New `privacy-sound` command**
-Show or toggle the audible privacy indicator on CAMERA_360 indoor cameras. When enabled, the camera plays a sound when privacy mode changes. Returns HTTP 442 on outdoor cameras (not supported).
+### Configuration (`bosch_config.json`)
 
-**New `rules` command**
-Manage cloud-side camera automation rules (time-based schedules). Subcommands: `list`, `add`, `edit`, `delete`. Rules are stored in the Bosch cloud, not on the camera firmware.
+```json
+"nvr": {
+  "max_clips": 50,
+  "max_duration": 60,
+  "smb": {
+    "host": "nas.local",
+    "share": "Backup",
+    "username": "user",
+    "password": "secret",
+    "path": "bosch/nvr",
+    "delete_after_upload": false
+  }
+}
+```
 
-**New `friends` command**
-Manage camera sharing with friends. Subcommands: `list`, `invite`, `share`, `unshare`, `resend`, `remove`. Uses the invitation-based sharing system discovered in the iOS app.
+| Key | Default | Description |
+|-----|---------|-------------|
+| `nvr.max_clips` | `50` | FIFO clip limit per camera — oldest deleted automatically |
+| `nvr.max_duration` | `60` | Max clip length in seconds; clip is closed early on falling edge |
+| `nvr.smb.host` | `""` | NAS hostname or IP; leave empty to disable SMB upload |
+| `nvr.smb.share` | `""` | SMB share name |
+| `nvr.smb.username` | `""` | SMB username |
+| `nvr.smb.password` | `""` | SMB password |
+| `nvr.smb.path` | `""` | Remote subdirectory inside the share |
+| `nvr.smb.delete_after_upload` | `false` | Remove local file after successful upload |
 
-**New `rename` command**
-Rename a camera via the cloud API. The new name is reflected in the Bosch app and all API responses.
+### BETA Limitations
 
-**New `profile` command**
-Show or edit user profile information: display name, email, language preference, marketing consent.
-
-**New `account` command**
-Show account info including feature flags, Terms & Conditions versions, and subscription status.
-
-**HTTP 444 handling**
-Proper handling of HTTP 444 responses (connection closed without response). Previously these caused unhandled exceptions; now they are caught and reported as transient errors with retry guidance.
-
----
-
-### What's New in v4.0.0
-
-- **`intercom` command**: listen to camera audio in real-time via cloud proxy RTSPS stream (listen-only, configurable duration + speaker volume)
-- **`siren` command**: trigger acoustic alarm on CAMERA_360 indoor camera (442 on outdoor)
-- **`unread` command**: show unread event count per camera
-- **Person detection icon**: `PERSON_DETECTED` events show a person icon in `watch` and `events` output
-- **Mark-as-read**: events auto-marked as read after download or push alert processing
-- **`--push-mode` flag**: select FCM push mode explicitly (`auto`/`ios`/`android`/`polling`)
-
-### What's New in v3.0.0
-
-- **FCM push notifications** (`watch --push`): real-time event detection via Firebase Cloud Messaging (~2s latency instead of 30s polling)
-- **Signal messenger alerts**: `watch --signal` sends snapshot + text to Signal via signal-cli-rest-api
-- **Auto-follow command**: get/set motion tracking on CAMERA_360
-- **Fixed motion sensitivity enum**: corrected `DISABLED` → `OFF` in PUT payload
-- **Firebase API keys base64-encoded** in source (public Bosch app keys, not personal)
-
-### What's New in v2.0.0
-
-- Code cleanup: removed dead code, consolidated helper functions, unified error handling
-
-### What's New in v1.9.0
-
-- Push notification architecture documented from APK analysis
-
-### What's New in v1.8.0
-
-- **RCP session caching**: 2-step handshake cached per proxy connection (5-min TTL)
-- **`watch --snapshot`**: auto-downloads event JPEG on new events
-- **`rcp snapshot` resolution fix**: reads 0x0a88 for actual resolution
-
-### What's New in v1.7.0
-
-- **`--quality` flag**: `auto` (default, ~7.5 Mbps), `high` (~30 Mbps), `low` (~1.9 Mbps)
-
-### What's New in v1.6.0
-
-- **`watch` command**: real-time event polling with `--interval` and `--duration`
-- **`motion` command**: get/set motion detection + sensitivity
-- **`recording` command**: get/set cloud recording sound on/off
-
-### What's New in v1.5.0
-
-- `maxSessionDuration` 60 → 3600s, `--hq` flag, `--inst N` flag, `rcp bitrate`
-
-### What's New in v1.4.0
-
-- `rcp frame` (YUV422 → JPEG), `rcp script` (IVA automation), `rcp iva` (rule types)
-
-### What's New in v1.3.0
-
-- `rcp` command: low-level RCP protocol reads via cloud proxy
-
-### What's New in v1.2.0
-
-- `info --full`, `privacy on --minutes N`, WiFi info, proxy 404 retry, 3-state notifications
-
-### What's New in v1.1.0
-
-- `light`, `privacy`, `notifications`, `pan` commands, auto token renewal, interactive menu
-
-</details>
+- RTSP URL must be pre-resolved: run `live <cam>` once before `watch --auto-record` so the URL is cached in `last_live`.
+- Clip names are second-precision; two clips starting in the same second on the same camera will collide.
+- No automatic RTSP URL refresh during a long watch session. If the stream URL rotates (~every hour), recording will fail silently until the next rising edge forces a re-check.
+- SMB upload is synchronous and happens in the watch loop — large clips may add latency on slow NAS links.
+- No H.265 transcoding — stream is remuxed as-is; clip codec depends on camera firmware.
 
 ---
 
@@ -796,10 +774,7 @@ Proper handling of HTTP 444 responses (connection closed without response). Prev
                                   └──────────────────────────────┘
 ```
 
-Most camera access goes through the Bosch Cloud — there is no supported
-direct local API for the full feature set. The Smart Home Controller (SHC)
-bridges the camera to the cloud. Selected commands (`privacy --local`,
-`light --local`) use the LAN RCP path directly without the cloud.
+Most camera access goes through the Bosch Cloud — there is no supported direct local API for the full feature set. The Smart Home Controller (SHC) bridges the camera to the cloud. Selected commands (`privacy --local`, `light --local`) use the LAN RCP path directly without the cloud.
 
 ---
 
@@ -843,8 +818,7 @@ grant_type=refresh_token&refresh_token={saved_token}&client_secret=...
 → New access_token + rotated refresh_token
 ```
 
-All of this is handled automatically by `get_token.py`, which is imported
-and called by `bosch_camera.py` on startup when the saved token is missing.
+All of this is handled automatically by `get_token.py`, which is imported and called by `bosch_camera.py` on startup when the saved token is missing.
 
 ---
 
@@ -873,22 +847,15 @@ Response (array):
 ]
 ```
 
-Both `imageUrl` and `videoClipUrl` are authenticated with the same Bearer
-token and downloaded directly. Files are named
-`YYYY-MM-DD_HH-MM-SS_{type}_{id}.jpg/mp4`.
+Both `imageUrl` and `videoClipUrl` are authenticated with the same Bearer token and downloaded directly. Files are named `YYYY-MM-DD_HH-MM-SS_{type}_{id}.jpg/mp4`.
 
-**Video clip re-request:** If a clip has status `Unavailable` or was not generated,
-you can re-request it via `POST /v11/events/{eventId}/clip_request`. This tells
-the camera to re-upload the clip from its local storage (if still available). The
-clip status will change to `Pending` while uploading. Error `-353` means the clip
-cannot be requested (too old or camera has overwritten the local recording).
+**Video clip re-request:** If a clip has status `Unavailable` or was not generated, you can re-request it via `POST /v11/events/{eventId}/clip_request`. This tells the camera to re-upload the clip from its local storage (if still available). The clip status will change to `Pending` while uploading. Error `-353` means the clip cannot be requested (too old or camera has overwritten the local recording).
 
 ---
 
 ### Live Snapshot — Current Image
 
-To get the **current** camera image (not the last motion event), the tool
-opens a live proxy connection:
+To get the **current** camera image (not the last motion event), the tool opens a live proxy connection:
 
 ```
 PUT /v11/video_inputs/{camera-uuid}/connection
@@ -917,11 +884,9 @@ Replace `{url}` with `urls[0]` to get the live snap URL:
 https://proxy-20.live.cbs.boschsecurity.com:42090/{hash}/snap.jpg
 ```
 
-This URL requires **no authentication** — the session hash is the credential.
-It returns a full **1920x1080 JPEG** of the current camera view.
+This URL requires **no authentication** — the session hash is the credential. It returns a full **1920x1080 JPEG** of the current camera view.
 
-The proxy session expires after ~60 seconds. A new `PUT /connection` opens
-a new session.
+The proxy session expires after ~60 seconds. A new `PUT /connection` opens a new session.
 
 **Connection types:**
 
@@ -930,8 +895,7 @@ a new session.
 | `REMOTE` | Cloud proxy host:port/hash | None (hash = credential) | ~1.5 s |
 | `LOCAL` | Camera LAN IP:443 | HTTP Digest (user/password in response) | ~15 s |
 
-`REMOTE` is always faster. `LOCAL` is only useful as a fallback if the
-cloud is unreachable.
+`REMOTE` is always faster. `LOCAL` is only useful as a fallback if the cloud is unreachable.
 
 ---
 
@@ -970,8 +934,7 @@ GET /v11/events?videoInputId={id}&limit=400
 The tool iterates all events and downloads:
 - `snap.jpg` for each event with `imageUrl`
 
-Already-downloaded files are skipped (by filename). Rate-limited to
-0.5 s between requests to avoid API throttling.
+Already-downloaded files are skipped (by filename). Rate-limited to 0.5 s between requests to avoid API throttling.
 
 ---
 
@@ -1160,17 +1123,10 @@ Port 443 for RTSPS (not 42090). No auth needed — the hash IS the credential. S
 
 ### Push Notification Modes (FCM)
 
-The Bosch Smart Camera app uses Firebase Cloud Messaging for push notifications. Both Android and iOS credentials work with the same Firebase project.
+The Bosch Smart Camera app uses Firebase Cloud Messaging for push notifications.
 
-| Mode | App ID | Project |
-|------|--------|---------|
-| **Android** | `1:404630424405:android:9e5b6b58e4c70075` | `bosch-smart-cameras` |
-| **iOS** | `1:404630424405:ios:715aae2570e39faad9bddc` | `bosch-smart-cameras` |
-
-- **GCM Sender ID**: `404630424405`
-- **API keys**: Base64-encoded in the source code (public Bosch app keys, not personal)
-- **Auto mode**: Tries iOS credentials first, then Android, then falls back to polling
-- **Push flow**: Camera → CBS cloud → Firebase FCM → silent push → app/tool polls `GET /v11/events`
+- **Auto mode**: Tries Android credentials first, then falls back to polling
+- **Push flow**: Camera → CBS cloud → Firebase FCM → silent push → tool polls `GET /v11/events`
 - **Latency**: ~2–3 seconds from camera trigger to push delivery
 
 **iOS push payload keys:**
@@ -1205,8 +1161,7 @@ Content-Type: application/json
 → HTTP 204 No Content on success
 ```
 
-Also available from the `GET /v11/video_inputs` response — each camera object includes
-a top-level `"privacyMode"` field, so no extra poll is needed for status.
+Also available from the `GET /v11/video_inputs` response — each camera object includes a top-level `"privacyMode"` field, so no extra poll is needed for status.
 
 ### Camera Light Override
 
@@ -1243,17 +1198,13 @@ Content-Type: application/json
 
 ## RCP Protocol — Low-Level Camera Reads
 
-After a REMOTE proxy connection is opened (`PUT /connection`), the same
-proxy hash also exposes the camera's **RCP (Remote Configuration Protocol)**
-endpoint at:
+After a REMOTE proxy connection is opened (`PUT /connection`), the same proxy hash also exposes the camera's **RCP (Remote Configuration Protocol)** endpoint at:
 
 ```
 https://proxy-NN.live.cbs.boschsecurity.com:42090/{hash}/rcp.xml
 ```
 
-RCP is Bosch's proprietary binary protocol used internally for low-level
-camera configuration. All payloads are hex-encoded in the URL query string.
-Responses are XML containing a `<str>HEX</str>` field with the result bytes.
+RCP is Bosch's proprietary binary protocol used internally for low-level camera configuration. All payloads are hex-encoded in the URL query string. Responses are XML containing a `<str>HEX</str>` field with the result bytes.
 
 **Session handshake:**
 
@@ -1265,9 +1216,7 @@ GET /rcp.xml?command=0xff0c&direction=WRITE&type=P_OCTET&payload=0102004000...
 GET /rcp.xml?command=0xff0d&direction=WRITE&type=P_OCTET&sessionid=0xXXXXXXXX&payload=...
 ```
 
-Basic auth `empty:empty` is used (the proxy hash is the real credential).
-Auth level via cloud proxy = **3 (viewer)** — read-only. Writes require
-auth level 5 (service account), which is not accessible via the cloud proxy.
+Basic auth `empty:empty` is used (the proxy hash is the real credential). Auth level via cloud proxy = **3 (viewer)** — read-only. Writes require auth level 5 (service account), which is not accessible via the cloud proxy.
 
 **893 accessible RCP commands** at auth level 3. Most useful reads:
 
@@ -1306,17 +1255,13 @@ auth level 5 (service account), which is not accessible via the cloud proxy.
 | `0xff10` | P_OCTET | Capability list |
 | `0xff12` | P_OCTET | Full command manifest (893 IDs) |
 
-**Note:** The `rcp snapshot` subcommand (0x099e) returns a small 160x90 JPEG
-thumbnail directly from the camera's firmware — distinct from the cloud proxy
-`snap.jpg` which is a full 1920x1080 image.
+**Note:** The `rcp snapshot` subcommand (0x099e) returns a small 160x90 JPEG thumbnail directly from the camera's firmware — distinct from the cloud proxy `snap.jpg` which is a full 1920x1080 image.
 
 ---
 
 ## Undocumented API Endpoints (from iOS App Analysis)
 
-The following endpoints were discovered by analyzing the Bosch Smart Camera iOS app
-v2.11.2 (Xamarin.iOS / .NET 9.0 AOT). These are **not documented by Bosch** and may
-require Gen2 cameras or specific subscription tiers.
+The following endpoints were discovered by analyzing the Bosch Smart Camera iOS app v2.11.2 (Xamarin.iOS / .NET 9.0 AOT). These are **not documented by Bosch** and may require Gen2 cameras or specific subscription tiers.
 
 ### Gen2 Camera Features
 
@@ -1426,8 +1371,7 @@ DELETE /v11/alexa/link                       — unlink from Alexa
 | `HOME_Eyes_Indoor` | Indoor | Camera paired via Smart Home Controller |
 | `HOME_Eyes_Outdoor` | Outdoor | Camera paired via Smart Home Controller |
 
-Gen2 cameras use a separate SSL certificate chain from Gen1. The iOS app includes
-both Gen1 (`BoschStRootCAPem`) and Gen2 (`CbsRoot2ndGenCertPem`) root certificates.
+Gen2 cameras use a separate SSL certificate chain from Gen1. The iOS app includes both Gen1 (`BoschStRootCAPem`) and Gen2 (`CbsRoot2ndGenCertPem`) root certificates.
 
 ---
 
@@ -1468,95 +1412,6 @@ both Gen1 (`BoschStRootCAPem`) and Gen2 (`CbsRoot2ndGenCertPem`) root certificat
 | `-352` | CIAM (identity provider) internal error |
 | `-353` | Event clip cannot be requested (recording overwritten or too old) |
 | `-700` | Local connection failed → automatic fallback to Internet |
-
----
-
-## Token Management
-
-### Automatic (recommended)
-
-```bash
-python3 get_token.py           # first login → browser → saves refresh_token
-python3 get_token.py --refresh # force silent renewal via saved refresh_token
-python3 get_token.py --show    # show token info + expiry time
-python3 get_token.py --browser # force new browser login (if refresh expired)
-```
-
-After the first login, `bosch_camera.py` renews the token automatically
-on every run — no browser, no user interaction.
-
-### Manual (mitmproxy fallback)
-
-If the browser login flow fails, you can capture a token directly from
-the Bosch Smart Home Camera app using mitmproxy:
-
-1. Install: `pip3 install mitmproxy`
-2. Find your Mac's local IP: `ipconfig getifaddr en0`
-3. Start the proxy:
-   ```bash
-   mitmdump --listen-host YOUR_MAC_IP --listen-port 8890
-   ```
-4. On your iPhone: **Settings → WiFi → your network → Configure Proxy → Manual**
-   - Server: `YOUR_MAC_IP`, Port: `8890`
-5. Visit `http://mitm.it` on the phone → install CA cert → enable Certificate Trust
-6. Force-close and reopen the **Bosch Smart Home Camera** app
-7. The terminal shows the Bearer token — copy it
-8. Add to `bosch_config.json`:
-   ```json
-   "bearer_token": "eyJ..."
-   ```
-
-> Note: The Bosch Smart Camera app has **no SSL certificate pinning**
-> (`NSAllowsArbitraryLoads: true` on iOS). mitmproxy intercepts at the OS level
-> after installing the CA cert.
-
-### Capturing App Traffic with mitmproxy
-
-The included `start_proxy.py` script sets up mitmproxy with everything pre-configured
-for Bosch Smart Camera app traffic analysis. This is useful for:
-
-- **Investigating motion detection rules** — the camera reverts motion settings within ~1s; capturing app traffic may reveal which endpoint the official app uses
-- **Discovering new API endpoints** — see exactly what the app sends
-- **Capturing local camera credentials** — Digest auth headers when the app connects directly to cameras on LAN
-
-#### Quick Start
-
-```bash
-pip3 install mitmproxy          # one-time install
-python3 start_proxy.py          # starts proxy, auto-detects your Mac IP
-python3 start_proxy.py --dump   # same, but saves all flows to captures/ folder
-```
-
-#### Phone Configuration
-
-1. **WiFi proxy**: Settings → WiFi → your network → Configure Proxy → Manual
-   - Server: your Mac's IP (shown by the script), Port: `8890`
-2. **Install CA cert**: open `http://mitm.it` in phone browser → download + install
-3. **iOS only**: Settings → General → About → Certificate Trust Settings → enable mitmproxy
-4. **Force-close** and reopen the Bosch Smart Camera app
-5. All traffic appears in the terminal
-
-#### What to Look For
-
-| Goal | Watch for |
-|------|-----------|
-| Motion detection rules | `PUT /v11/video_inputs/{id}/rules/{ruleId}` |
-| Motion settings | `PUT /v11/video_inputs/{id}/motion` |
-| Local camera credentials | `Authorization: Digest ...` to `192.168.x.x` |
-| Bearer tokens | `Authorization: Bearer eyJ...` |
-| New endpoints | Any `PUT`/`POST` to `residential.cbs.boschsecurity.com` |
-
-#### Saved Flows
-
-When using `--dump`, flows are saved to `captures/bosch_flows_YYYY-MM-DD_HHMMSS.mitm`.
-View them later:
-
-```bash
-mitmproxy --rfile captures/bosch_flows_2026-03-25_143000.mitm
-```
-
-> **Important**: Captured flows contain your Bearer token and personal data.
-> Never share `.mitm` files publicly. The `captures/` folder is in `.gitignore`.
 
 ---
 
@@ -1603,52 +1458,38 @@ mitmproxy --rfile captures/bosch_flows_2026-03-25_143000.mitm
 | `local_password` | Optional: Digest auth password (randomly set by SHC) |
 | `download_base_path` | Where to save events. Empty = same folder as script |
 
-Local credentials (`local_username` / `local_password`) are randomly
-generated by the Smart Home Controller during camera pairing. They can
-be captured via mitmproxy from the **Bosch Smart Home** (not Camera) app
-traffic. These are optional — the cloud API works without them.
+Local credentials (`local_username` / `local_password`) are randomly generated by the Smart Home Controller during camera pairing. They can be captured via mitmproxy from the **Bosch Smart Home** (not Camera) app traffic. These are optional — the cloud API works without them.
 
 ---
 
 ## Troubleshooting
 
 **Token expired / HTTP 401**
-→ Run `python3 get_token.py` to renew. If the refresh_token is also expired
-  (after months of inactivity), use `python3 get_token.py --browser` for
-  a new browser login.
+→ Run `python3 get_token.py` to renew. If the refresh_token is also expired (after months of inactivity), use `python3 get_token.py --browser` for a new browser login.
 
 **Camera OFFLINE**
-→ Check the Bosch Smart Home Controller app. The camera may have lost its
-  LAN connection to the SHC.
+→ Check the Bosch Smart Home Controller app. The camera may have lost its LAN connection to the SHC.
 
 **Live stream shows only one frame**
 → Make sure `ffmpeg` / `ffplay` is installed: `brew install ffmpeg`
 
 **Live snapshot slow (~15 s)**
-→ The tool tried LOCAL first and it timed out. This is normal if no local
-  credentials are set. REMOTE fallback works in ~1.5 s.
+→ The tool tried LOCAL first and it timed out. This is normal if no local credentials are set. REMOTE fallback works in ~1.5 s.
 
 **`get_token.py` browser login fails**
-→ Make sure you paste the **full redirect URL** (starting with
-  `https://www.bosch.com/boschcam?code=...`), not just the code.
-  The page shows a 404 — that is expected.
+→ Make sure you paste the **full redirect URL** (starting with `https://www.bosch.com/boschcam?code=...`), not just the code. The page shows a 404 — that is expected.
 
 **Download stops mid-way**
-→ Token expired during a large download. Re-run `python3 get_token.py`
-  and restart the download. Already-downloaded files are skipped.
+→ Token expired during a large download. Re-run `python3 get_token.py` and restart the download. Already-downloaded files are skipped.
 
 **Error `-353` on clip request**
-→ The video clip cannot be re-requested. The camera has already overwritten
-  the local recording, or the event is too old. Only recent events with
-  locally stored footage can be re-requested.
+→ The video clip cannot be re-requested. The camera has already overwritten the local recording, or the event is too old. Only recent events with locally stored footage can be re-requested.
 
 **Error `-307` (rate limited)**
-→ Too many API requests in a short time. Wait a few minutes and retry.
-  The tool uses a 0.5s delay between download requests to avoid this.
+→ Too many API requests in a short time. Wait a few minutes and retry. The tool uses a 0.5s delay between download requests to avoid this.
 
 **Error `-351` (camera busy)**
-→ Another session (e.g., the official app) is using the camera's audio/video
-  channel. Close the other session and retry.
+→ Another session (e.g., the official app) is using the camera's audio/video channel. Close the other session and retry.
 
 ---
 
@@ -1786,6 +1627,28 @@ Quick start:
 bash examples/timelapse_assemble.sh /var/lib/bosch-timelapse/outdoor 24 outdoor_today.mp4
 ```
 
+### Capturing App Traffic with mitmproxy
+
+The included `start_proxy.py` script sets up mitmproxy with everything pre-configured for Bosch Smart Camera app traffic analysis. This is useful for:
+
+- **Investigating motion detection rules** — the camera reverts motion settings within ~1s; capturing app traffic may reveal which endpoint the official app uses
+- **Discovering new API endpoints** — see exactly what the app sends
+- **Capturing local camera credentials** — Digest auth headers when the app connects directly to cameras on LAN
+
+```bash
+pip3 install mitmproxy          # one-time install
+python3 start_proxy.py          # starts proxy, auto-detects your Mac IP
+python3 start_proxy.py --dump   # same, but saves all flows to captures/ folder
+```
+
+**Phone Configuration:**
+1. **WiFi proxy**: Settings → WiFi → your network → Configure Proxy → Manual (server: your Mac's IP, port: `8890`)
+2. **Install CA cert**: open `http://mitm.it` in phone browser → download + install
+3. **iOS only**: Settings → General → About → Certificate Trust Settings → enable mitmproxy
+4. **Force-close** and reopen the Bosch Smart Camera app
+
+> **Important**: Captured flows contain your Bearer token and personal data. Never share `.mitm` files publicly. The `captures/` folder is in `.gitignore`.
+
 ---
 
 ## Known Limitations
@@ -1793,10 +1656,8 @@ bash examples/timelapse_assemble.sh /var/lib/bosch-timelapse/outdoor 24 outdoor_
 - **LOCAL stream startup delay (25–35s)** — the camera's H.264 encoder needs 25s (360 Innenkamera) to 35s (Eyes Außenkamera) after connection setup before producing valid frames. The stream will show a black screen initially, then start playing.
 - **Motion sensitivity changes revert after ~1s** — the camera's internal IVA rules engine overwrites cloud-set motion sensitivity via RCP. Not fixable via the API.
 - **Session management** — stream sessions last up to 60 minutes; the `live` command manages reconnects automatically on each run.
-- **Cloud dependency** — everything goes through `residential.cbs.boschsecurity.com`.
-  There is no documented local API on the SHC for camera images.
-- **VLC needs ffmpeg** — the `live --vlc` option requires ffmpeg to proxy the stream,
-  because VLC cannot skip TLS certificate verification for `rtsps://`.
+- **Cloud dependency** — everything goes through `residential.cbs.boschsecurity.com`. There is no documented local API on the SHC for camera images.
+- **VLC needs ffmpeg** — the `live --vlc` option requires ffmpeg to proxy the stream, because VLC cannot skip TLS certificate verification for `rtsps://`.
 - **Camera light control** — the `light on/off` command uses `PUT /v11/video_inputs/{id}/lighting_override` (cloud API, no SHC needed). Full light schedule control is only available via the SHC local API with mutual TLS.
 - **Two-way audio** — the `intercom` command is listen-only. Sending audio to the camera (microphone → speaker) requires the proprietary media tunnel protocol, which is not yet reverse-engineered.
 - **Gen2 cameras** — many Gen2-only features (lens elevation, intrusion detection, polygon zones, SocketKnocker wake) are documented but not yet implemented as CLI commands.
@@ -1812,142 +1673,38 @@ tool/
   get_token.py         — OAuth2 PKCE token manager (browser login + renewal)
   bosch_config.json    — auto-created config (credentials + camera list)
   README.md            — this file
+  CHANGELOG.md         — full version history
   Outdoor/             — downloaded outdoor camera events (JPEG + MP4)
   Indoor/              — downloaded indoor camera events (JPEG + MP4)
 ```
 
 ---
 
-## NVR (BETA)
+## Releases
 
-> **BETA — test before use in production. API and config keys may change.**
+See [CHANGELOG.md](CHANGELOG.md) for the full version history or [GitHub Releases](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python/releases) for release notes and downloads.
 
-The Mini-NVR records motion-triggered MP4 clips locally via ffmpeg, with optional upload to a SMB/NAS share.
-
-### Requirements
-
-- `ffmpeg` (already required for `live` command): `brew install ffmpeg` / `apt-get install ffmpeg`
-- `smbprotocol` (only for SMB upload): `pip install smbprotocol`
-
-### Quick Start
-
-```bash
-# Start watching + auto-record on motion
-python3 bosch_camera.py watch Garten --auto-record
-
-# Clips land in: captures/Garten/nvr/YYYY-MM-DD/HHMMSS.mp4
-
-# Show status
-python3 bosch_camera.py nvr status Garten
-
-# List last 10 clips
-python3 bosch_camera.py nvr list Garten --limit 10
-
-# Manually prune to 20 most recent clips
-python3 bosch_camera.py nvr prune Garten --keep 20
-
-# Upload all clips to NAS
-python3 bosch_camera.py nvr upload Garten
-```
-
-### Configuration (`bosch_config.json`)
-
-```json
-"nvr": {
-  "max_clips": 50,
-  "max_duration": 60,
-  "smb": {
-    "host": "nas.local",
-    "share": "Backup",
-    "username": "user",
-    "password": "secret",
-    "path": "bosch/nvr",
-    "delete_after_upload": false
-  }
-}
-```
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `nvr.max_clips` | `50` | FIFO clip limit per camera — oldest deleted automatically |
-| `nvr.max_duration` | `60` | Max clip length in seconds; clip is closed early on falling edge |
-| `nvr.smb.host` | `""` | NAS hostname or IP; leave empty to disable SMB upload |
-| `nvr.smb.share` | `""` | SMB share name |
-| `nvr.smb.username` | `""` | SMB username |
-| `nvr.smb.password` | `""` | SMB password |
-| `nvr.smb.path` | `""` | Remote subdirectory inside the share |
-| `nvr.smb.delete_after_upload` | `false` | Remove local file after successful upload |
-
-### BETA Limitations
-
-- RTSP URL must be pre-resolved: run `live <cam>` once before `watch --auto-record` so the URL is cached in `last_live`.
-- Clip names are second-precision; two clips starting in the same second on the same camera will collide. (TODO: add sub-second suffix)
-- No automatic RTSP URL refresh during a long watch session. If the stream URL rotates (Bosch renews it ~every hour), recording will fail silently until the next rising edge forces a re-check.
-- SMB upload is synchronous and happens in the watch loop — large clips may add latency on slow NAS links. (TODO: background upload thread)
-- No H.265 transcoding — stream is remuxed as-is; clip codec depends on camera firmware.
-
----
-
-## Version History
-
-| Version | Changes |
-|---------|---------|
-| **v10.7.7** | **Fix: event snapshots + clips downloadable again.** The shared `requests.Session` default `Accept: application/json` caused Bosch's nginx to respond `HTTP 500 sh:internal.error` on `/v11/events/{id}/snap.jpg` and `/v11/events/{id}/clip.mp4` — the JSON-only Accept made the server refuse to serve the binary payload even though the cloud actually had the bytes. Default is now `Accept: */*`; JSON endpoints accept `*/*` unchanged, binary endpoints work without each call site having to override the header. Two ad-hoc per-command `Accept: */*` overrides in `cmd_snapshot` and `cmd_live` removed as redundant. Live-verified end-to-end against an Outdoor II Gen2: 18 event snapshots + 9 cloud-uploaded clips fetched in a single pass. New regression suite (`tests/test_accept_header.py`) pins the session default + the imageUrl/videoClipUrl end-to-end. |
-| **v10.7.6** | **Security pass (cross-port from HA v12.7.2).** `defusedxml.ElementTree` replacing `xml.etree` in `bosch_maintenance.py` (XXE hardening). TOFU certificate fingerprint pinning for self-signed camera certs via new `bosch_tls.py` module (`bosch_get`/`bosch_post`/`bosch_put`). Fingerprints stored in `bosch_config.json[cam_cert_fingerprints]`; mismatch raises `CertPinningError`. `get_token.py` Keycloak calls switched to `verify=True`. 21 new tests in `tests/test_cert_pinning.py`. |
-| **v10.7.5** | **PTZ pan presets + webhook event delivery (cross-port from HA v12.7.0).** New `pan <cam> --preset home\|left\|right\|back-left\|back-right` flag — named pan positions (0° / -60° / +60° / -120° / +120°). New `watch --webhook URL` flag — POSTs JSON `{camera, event_type, timestamp, extra}` to user-configured HTTP endpoint on every motion / audio_alarm / person / intrusion event. POST failures logged, never propagated. 21 new regression tests in `tests/test_pan_presets.py` (14) + `tests/test_webhook.py` (7). |
-| **v10.7.4** | **Audio/Intrusion/WiFi commands (cross-port from HA v12.7.0).** `bosch audio [<cam>] [--mic N] [--speaker N] [--json]`: get/set microphone and speaker levels 0–100 (GET/PUT `/audio`). `bosch intrusion [<cam>] [--mode indoor\|outdoor] [--sensitivity 0-7] [--distance 1-10] [--json]`: get/set intrusion detection config — mode maps `indoor→ALL_MOTIONS`, `outdoor→ZONES`; sensitivity extended to 0–7 (was 0–5). `bosch wifi [<cam>] [--json]`: read-only WiFi info (RSSI dBm, SSID, signal %) from `/wifiinfo`. All three commands support `--json` for scripting. |
-| **v10.7.3** | **LAN-fallback feature set (cross-port from HA v12.4.10).** `bosch ping [<cam>] [--json]`: TCP-connect probe to each camera's LAN IP port 443 — shows OK/FAIL + RTT in ms, JSON via `--json`. `bosch privacy <cam> on\|off --local`: writes directly via LAN RCP (Gen2 only, no token needed), skips cloud entirely. `bosch light <cam> on\|off\|intensity N --local`: same for front-light brightness (wallwasher is cloud-only). `bosch lan-ips [set\|unset\|sync]`: list and edit the `cam_id → LAN IP` map stored in `bosch_config.json` under `lan_ips`; `sync` copies existing `local_ip` fields. 5xx cloud errors now print a one-line hint pointing at the `--local` flag. |
-| **v10.7.2** | **`maintenance` subcommand (cross-port from HA v12.4.5).** `bosch maintenance` fetches Bosch community RSS feeds (Wartungsarbeiten + Statusmeldungen) and shows the current state (active / scheduled / past / recent). Falls back to HTML scraping when RSS is unavailable. `--json` flag for scripting. When a cloud request returns a persistent 5xx, a one-line hint is printed automatically if maintenance is active or scheduled. Parser behavior is byte-identical to the HA integration's `maintenance.py`. |
-| **v10.7.1** | **FCM cleanup — remove iOS path (aligned with HA v12.4.5).** Removed `FCM_IOS_APP_ID`, `_get_fcm_ios_api_key()`, and the iOS `AIzaSy…` key (non-sanctioned, extracted from iOS app). The OSS-sanctioned Android key (`FCM_APP_ID`) handles all platforms. `deviceType` is now hardcoded to `"ANDROID"` (`bosch_camera.py` near `_watch_fcm_push`). The `auto` push-mode dispatch chain collapses from iOS→Android→polling to Android→polling. `--push-mode android` and `--push-mode ios` still accepted for back-compat but emit a deprecation warning to stderr and are treated as `auto`. |
-| **v10.7.0** | **Mini-NVR (BETA).** `watch --auto-record`: motion rising edge → ffmpeg MP4 clip, falling edge → clean stop. `nvr` subcommand: `status`, `list`, `prune`, `upload`. FIFO clip eviction (default 50 per camera). Optional SMB/NAS upload via `smbprotocol` with per-upload fresh connection cache (avoids SMB credit starvation). 13 new i18n keys across all 11 languages. +370 LOC, +46 tests. |
-| **v10.2.1** | **Revert privacy-mode cross-check from v10.2.0.** A/B testing 2026-04-27 (toggle privacy ON↔OFF, read RCP 0x0d00 before and after) proved `0x0d00 byte[1]` stays `1` independent of the user-facing privacy-mode toggle. That byte does not represent the mode flag — `rcp_findings.txt`'s "PRIVACY MASK state" label refers to a separate static configuration. The "Privacy MISMATCH" line therefore produced a permanent false positive. The Bosch cloud `/v11/video_inputs.privacyMode` field is the correct source. **Kept:** the v10.2.0 `?JpegSize=1206` snap.jpg latency fix (still valid). |
-| **v10.2.0** | **Cross-version sync with HA integration v10.4.5 + v10.4.8.** Two changes: **(1) Fix: LOCAL `snap.jpg` is now ~1.4 s instead of ~6–10 s when the camera is idle.** Append `?JpegSize=1206` to the local snap URL — without the parameter, the camera triggers a slow on-demand full-sensor capture; with it, the cached path serves quickly. Same fix that landed in HA integration v10.4.5; the Python CLI was using the unparameterised URL on the local Digest path (`bosch_camera.py:806`). **(2) New: privacy-mode cross-check in `--status` RCP block.** Bosch cloud `/v11/video_inputs.privacyMode` has been observed to misreport `'OFF'` for ONLINE cameras that are physically in privacy (Gen2 Outdoor, FW 9.40.25, 2026-04-27). The CLI now reads RCP `0x0d00` via the cloud-proxy session it already has open and compares byte[1] to the cloud-reported `privacyMode`. On mismatch it prints a `⚠️  Privacy MISMATCH: cloud='OFF', hardware=ON (via RCP)` line — the camera hardware is authoritative. Read-only diagnostic; no behavior change in any other path. The HA integration takes the corresponding fix one step further by overriding its internal cache so the privacy switch flips automatically. The CLI just surfaces the discrepancy at status time. |
-| **v10.1.2** | **Atomic save_config.** `save_config()` now writes to a temp file in the same directory and `os.replace()`s atomically (POSIX rename guarantee), so a crash during write can no longer leave a half-written `bosch_config.json` that breaks the next startup. |
-| **v10.1.1** | **Switch FCM push to official Bosch OSS Google API key.** Firebase/FCM registration now uses the official OSS key provided by Bosch instead of the app-embedded Firebase key from the APK. Bosch added the required Firebase Installations and FCM registration permissions on 2026-04-20 — confirmed working end-to-end. No user action required. |
-| **v10.1.0** | **Thread safety + TLS proxy reliability.** **(1) Pre-emptive token refresh.** New `_is_token_near_expiry(token_str, buffer_secs=60)` — stdlib-only JWT decode (no extra library). Called at the top of each watch-loop iteration and in the FCM callback; refreshes the token 60 s before expiry, preventing the single failed API call at the exact expiry moment. **(2) TLS proxy reconnect with exponential backoff.** The LOCAL RTSP TLS proxy thread retries on connection failure: 1 s → 2 s → 4 s. After 3 consecutive failures it exits cleanly with a clear stderr message instead of looping forever. Counter resets after 30 s of stable uptime. **(3) Connection pooling.** Singleton `requests.Session` with `HTTPAdapter(pool_connections=10, pool_maxsize=20)` — avoids TCP handshake overhead on repeated API calls. **(4) Graceful shutdown.** `threading.Event` SIGTERM/SIGINT handler; watch loop exits cleanly on signal. **(5) Retry with backoff.** `_request_with_retry`: 3 attempts, 1 s/2 s/4 s backoff on 5xx/Timeout/ConnectionError; 401 always passed through unchanged. |
-| **v10.0.0** | **Security hardening release (full pentest).** Based on a comprehensive penetration test. **(1)** `urllib3.disable_warnings()` scoped to `InsecureRequestWarning` only (was global suppression). **(2)** `bosch_config.json` file permissions set to `0600` (owner-only) on every save — was world-readable `0644`. |
-| **v9.0.4** | Version bump only. |
-| **v9.0.3** | **Fix: Mark events as read uses correct API shape.** `api_mark_events_read` previously tried `PUT /v11/events/bulk` with body `{events: [{id, isSeen: true}]}` (wrong endpoint method, wrong key) and fell back to `PUT /v11/events/{id}` with `{isSeen: true}` (wrong path, wrong key). Network capture analysis showed the actual shape is `PUT /v11/events` with body `{id, isRead: true}` per event, and the bulk endpoint is `POST {ids, action: "DELETE"}` only. Function now sends per-event PUTs with the correct payload — events actually get marked as read on the cloud now. |
-| **v9.0.2** | **Automatic OAuth login.** `get_token.py` now uses a local HTTP callback server (`localhost:8321`) — after browser login, Bosch Keycloak redirects back automatically and the auth code is captured without manual URL copy-paste. Redirect URI `localhost:8321/callback` registered by Bosch for the OSS OAuth client. Falls back to manual paste if port is busy. |
-| **v9.0.1** | **Info: intrusion detection + ambient light fix.** `info --full` now shows `intrusionDetectionConfig` (enabled, detectionMode, sensitivity, distance) for Gen2 cameras. Fixed ambient light field name (`ambientLightSensorLevel`), shows percentage. |
-| **v9.0.0** | **Gen2 camera support.** Gen2 model names (`HOME_Eyes_Outdoor`, `HOME_Eyes_Indoor`). Firmware update detection (`UPDATING_REGULAR` → 🔄). Proxy dump path fix. |
-| **v8.0.4** | **OSS OAuth credentials.** Switched to dedicated Bosch OSS OAuth client (`oss_residential_app`) — provided by Bosch for open source projects. Firebase/FCM API keys unchanged (OSS key lacks FCM permissions). Re-login required (`python3 get_token.py`). |
-| **v8.0.3** | **New commands + protocol check.** New: `accept-invite` (accept friend invitation), `shared` (show which friends have camera access). Protocol version check on startup (warns if Bosch API v11 unsupported). Feature flags in `info --full`. Dynamic hardware version display (human-readable names). |
-| **v8.0.0** | **Complete Gen1 Support.** All discovered Bosch Cloud API endpoints implemented — 100% coverage for Gen1 cameras. Includes: motion zones (`zones`), privacy masks (`privacy-masks`), lighting schedule (`lighting-schedule`), extended rules edit (`--name`/`--start`/`--end`/`--days`), friends/sharing, and all camera controls. |
-| **v7.4.0** | **Lighting schedule command** (`lighting-schedule`): view and modify light schedule for outdoor cameras (on/off times, motion trigger, darkness threshold). Supports `--on`, `--off`, `--motion`, `--threshold` parameters. |
-| **v7.3.0** | **Privacy masks command** (`privacy-masks`): list, set, and clear privacy mask zones via cloud API. Same coordinate system as motion zones (normalized 0.0–1.0). |
-| **v7.2.0** | **Motion zones command** (`zones`): list, set, and clear motion detection zones via cloud API (normalized 0.0–1.0 coordinates). **Rules edit extended:** `edit` now supports `--name`, `--start`, `--end`, `--days` in addition to `--active`/`--inactive`. HTTP 443 handling (privacy mode blocks zone access). |
-| **v7.1.0** | TCP keep-alive on TLS proxy sockets (10 s idle / 5 s interval / 3 probes). Directional select timeout for stable LOCAL streams. |
-| **v7.0.0** | LOCAL LAN streaming with TLS proxy. Menu: local stream entries + exit with "q". Code cleanup. |
-| **v5.2.0** | Fix live stream session duration (`maxSessionDuration=3600` — stream runs up to 60 min). |
-| **v5.1.0** | New commands: privacy-sound, rules, friends, rename, profile, account. HTTP 444 handling. |
-| v4.0.0 | Intercom (listen-only), siren command, unread events, person detection icon, mark-as-read, `--push-mode` flag |
-| v3.0.0 | FCM push notifications, Signal alerts, auto-follow, fixed motion sensitivity enum |
-| v2.0.0 | Code cleanup |
-| v1.9.0 | Push notification architecture documented |
-| v1.8.0 | RCP session caching, `watch --snapshot`, resolution fix |
-| v1.7.0 | `--quality` flag (auto/high/low) |
-| v1.6.0 | `watch`, `motion`, `recording` commands |
-| v1.5.0 | `maxSessionDuration` fix, `--hq`, `--inst N`, `rcp bitrate` |
-| v1.4.0 | `rcp frame`, `rcp script`, `rcp iva` |
-| v1.3.0 | `rcp` command with RCP protocol reads |
-| v1.2.0 | `info --full`, `privacy --minutes`, WiFi info, 404 retry |
-| v1.1.0 | `light`, `privacy`, `notifications`, `pan`, auto token renewal, interactive menu |
-| v1.0.0 | Initial release — status, snapshot, liveshot, live, download, events |
+**Current version: v10.10.1**
 
 ---
 
 ## Related Projects
 
+Part of a five-implementation family for Bosch Smart Home Cameras (plus an alpha frontend):
+
 | Implementation | Repo | Status |
 |---|---|---|
-| 🏆 Home Assistant Integration | [Bosch-Smart-Home-Camera-Tool-HomeAssistant](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | **v12.8.4** · HA Quality Scale **Platinum** · production-ready |
-| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | **v10.7.7** · Mini-NVR + SMB upload (BETA) · LAN-fallback (ping / --local) · PTZ presets · webhook delivery · maintenance status · capture / research / no-HA standalone |
-| 🟢 ioBroker Adapter | [ioBroker.bosch-smart-home-camera](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) | **v0.7.14** · beta · npm · audit-pass data-plane fixes · privacy-toggle Digest rotation · PTZ · MQTT bridge · VIS-2 widget alpha |
-| 🤖 MCP Server | [Bosch-Smart-Home-Camera-Tool-MCP](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-MCP) | **v1.3.5** · cred-rotation · PTZ presets · LAN-ping + prefer_local · Claude Code / Claude Desktop integration |
-| 🔴 Node-RED nodes (alpha) | [Bosch-Smart-Home-Camera-Tool-NodeRED](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-NodeRED) | v0.1.0-alpha · skeleton — 4 nodes (event/snapshot/privacy/config) |
+| 🏆 Home Assistant Integration | [Bosch-Smart-Home-Camera-Tool-HomeAssistant](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | **v13.3.1** · HA Quality Scale **Platinum** · production-ready |
+| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | **v10.10.1** · Mini-NVR + SMB upload (BETA) · LAN-fallback (ping / --local) · PTZ presets · webhook delivery · capture / research / standalone |
+| 🟢 ioBroker Adapter | [ioBroker.bosch-smart-home-camera](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) | **v1.0.3** · stable · npm · privacy-toggle Digest rotation · MQTT bridge · PTZ presets · VIS-2 widget |
+| 🤖 MCP Server | [Bosch-Smart-Home-Camera-Tool-MCP](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-MCP) | **v1.5.0** · cred-rotation · PTZ presets · TOFU cert pinning · LAN-ping + prefer_local · Claude Code / Claude Desktop integration |
+| 🔴 Node-RED nodes (alpha) | [Bosch-Smart-Home-Camera-Tool-NodeRED](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-NodeRED) | v0.1.0-alpha · skeleton — 4 nodes (event / snapshot / privacy / config) |
 
 Also: [Bosch Smart Home Camera — Python Frontend (NiceGUI)](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python-frontend) — v0.1.0-alpha Phase-1 skeleton (dashboard + camera detail + settings) — community interest welcome
+
+HA stays the **reference implementation** — features land there first; the Python CLI, ioBroker Adapter and MCP Server catch up over time.
+
+---
 
 ## References
 
@@ -1955,3 +1712,9 @@ Also: [Bosch Smart Home Camera — Python Frontend (NiceGUI)](https://github.com
 - [Bosch SHC API Issue #30](https://github.com/BoschSmartHome/bosch-shc-api-docs/issues/30) — camera integration discussion
 - [boschshcpy](https://github.com/tschamm/boschshcpy) — Python library for the local SHC API (not camera images)
 - [Bosch RCP Documentation](https://download.aras.nl/Video/Bosch/Firmware/Camera/CPP_ALL%206.32.1621/rcpdoc.htm)
+
+---
+
+## License
+
+[MIT](LICENSE)
