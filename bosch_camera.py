@@ -77,6 +77,7 @@ import urllib3
 import requests
 from requests.adapters import HTTPAdapter
 from typing import Optional
+from urllib.parse import urlparse
 
 from bosch_i18n import t, set_lang, detect_lang
 from bosch_maintenance import MaintenanceWindow, fetch_maintenance
@@ -91,6 +92,24 @@ BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
 VERSION     = "10.10.1"
+
+# SSRF guard: event snapshot/clip URLs come from the cloud API response, so they
+# must be validated against a Bosch-domain allowlist before we fetch them with
+# the bearer-carrying session (mirrors the HA integration's _is_safe_bosch_url).
+_SAFE_BOSCH_DOMAINS = (".boschsecurity.com", ".bosch.com")
+
+
+def _is_safe_bosch_url(url: str) -> bool:
+    """Return True only for https:// URLs on a known Bosch domain."""
+    try:
+        parsed = urlparse(url)
+    except (ValueError, TypeError):
+        return False
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname is not None
+        and parsed.hostname.endswith(_SAFE_BOSCH_DOMAINS)
+    )
 
 DELAY = 0.5   # seconds between download requests (rate-limit protection)
 
@@ -936,7 +955,7 @@ def snap_from_events(session, cam_info: dict) -> tuple[bytes | None, str]:
     events = api_get_events(session, cam_info["id"], limit=10)
     for ev in events:
         img_url = ev.get("imageUrl")
-        if not img_url:
+        if not img_url or not _is_safe_bosch_url(img_url):
             continue
         try:
             r = session.get(img_url, timeout=20)
@@ -1859,7 +1878,7 @@ def cmd_live(cfg: dict, args) -> None:
             events = api_get_events(session, cam_info["id"], limit=5)
             for ev in events:
                 img_url = ev.get("imageUrl")
-                if img_url:
+                if img_url and _is_safe_bosch_url(img_url):
                     r = session.get(img_url, timeout=20)
                     if r.status_code == 200:
                         ts   = ev.get("timestamp", "")[:19].replace(":", "-").replace("T", "_")
@@ -3191,7 +3210,7 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
                         name, etype, ts, img_url, tok,
                     )
 
-                if auto_snap and img_url:
+                if auto_snap and img_url and _is_safe_bosch_url(img_url):
                     try:
                         r = sess.get(img_url, timeout=15)
                         if r.status_code == 200 and "image" in r.headers.get("Content-Type", ""):
@@ -3927,7 +3946,7 @@ def cmd_watch(cfg: dict, args) -> None:
                     if webhook_url:
                         _post_event_webhook(webhook_url, name, cam_id, etype, ts, ev)
                     # Auto-download and open the event snapshot if requested
-                    if auto_snap and img_url:
+                    if auto_snap and img_url and _is_safe_bosch_url(img_url):
                         try:
                             r = session.get(img_url, timeout=15)
                             if r.status_code == 200 and "image" in r.headers.get("Content-Type", ""):
