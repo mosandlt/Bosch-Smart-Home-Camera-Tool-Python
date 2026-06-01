@@ -91,7 +91,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.10.1"
+VERSION     = "10.10.2"
 
 # SSRF guard: event snapshot/clip URLs come from the cloud API response, so they
 # must be validated against a Bosch-domain allowlist before we fetch them with
