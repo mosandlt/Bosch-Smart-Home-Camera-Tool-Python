@@ -390,6 +390,10 @@ class TestCmdInfo:
             patch.object(bosch_camera, "get_token", return_value=FAKE_TOKEN),
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "rcp_open_connection", side_effect=RuntimeError("no RCP")),
+            # check_token_age falls back to os.path.getmtime(CONFIG_FILE) when the
+            # JWT has no usable exp claim; the real bosch_config.json is absent on
+            # CI runners → stub it (token-age display is not under test here).
+            patch.object(bosch_camera, "check_token_age", return_value="valid (mock)"),
         ):
             bosch_camera.cmd_info(cfg, _make_args(full=full))
 
@@ -1364,6 +1368,7 @@ class TestCmdInfoExceptionBranches:
             patch.object(bosch_camera, "get_token", return_value=FAKE_TOKEN),
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "rcp_open_connection", side_effect=RuntimeError("no RCP")),
+            patch.object(bosch_camera, "check_token_age", return_value="valid (mock)"),
         ):
             bosch_camera.cmd_info(_cfg(), _make_args(full=True))
 
