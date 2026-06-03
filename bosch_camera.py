@@ -76,7 +76,7 @@ import urllib3
 
 import requests
 from requests.adapters import HTTPAdapter
-from typing import Optional
+from typing import Any, Optional, cast
 from urllib.parse import urlparse
 
 from bosch_i18n import t, set_lang, detect_lang
@@ -204,18 +204,18 @@ DEFAULT_CONFIG = {
 
 # ══════════════════════════ CONFIG MANAGEMENT ═════════════════════════════════
 
-def load_config() -> dict:
+def load_config() -> dict[str, Any]:
     """Load config from file. Creates default config if it doesn't exist."""
     if not os.path.exists(CONFIG_FILE):
         _create_default_config()
     with open(CONFIG_FILE, "r") as f:
-        cfg = json.load(f)
+        cfg: dict[str, Any] = json.load(f)
     # Merge in any missing keys from DEFAULT_CONFIG (forward-compat)
     _merge_defaults(cfg, DEFAULT_CONFIG)
     return cfg
 
 
-def save_config(cfg: dict) -> None:
+def save_config(cfg: dict[str, Any]) -> None:
     """Save config to file.
 
     Serialized via _CONFIG_LOCK so concurrent writes (main thread saving a fresh
@@ -248,7 +248,7 @@ def _create_default_config() -> None:
     print(t("cli.config.created.hint"))
 
 
-def _merge_defaults(cfg: dict, defaults: dict) -> None:
+def _merge_defaults(cfg: dict[str, Any], defaults: dict[str, Any]) -> None:
     """Recursively add missing keys from defaults into cfg (in-place)."""
     for key, val in defaults.items():
         if key not in cfg:
@@ -273,7 +273,7 @@ def _is_token_expired(token: str) -> bool:
         if len(parts) >= 2:
             pad  = len(parts[1]) % 4
             body = _b64.urlsafe_b64decode(parts[1] + "=" * pad)
-            exp  = _json.loads(body).get("exp", 0)
+            exp: int = int(_json.loads(body).get("exp", 0))
             return exp == 0 or (exp - time.time()) < 60
     except Exception:
         pass
@@ -293,14 +293,14 @@ def _is_token_near_expiry(token_str: str, buffer_secs: int = 60) -> bool:
         if len(parts) >= 2:
             pad  = len(parts[1]) % 4
             body = _b64.urlsafe_b64decode(parts[1] + "=" * pad)
-            exp  = _json.loads(body).get("exp", 0)
+            exp: int = int(_json.loads(body).get("exp", 0))
             return exp == 0 or (exp - time.time()) < buffer_secs
     except Exception:
         pass
     return True
 
 
-def get_token(cfg: dict) -> str:
+def get_token(cfg: dict[str, Any]) -> str:
     """
     Return a valid Bearer token. Tries in order:
       1. Saved bearer_token in config (if not expired)
@@ -308,12 +308,12 @@ def get_token(cfg: dict) -> str:
       3. Browser login via get_token.py (auto-opens browser)
       4. Manual paste as last resort
     """
-    token = cfg["account"].get("bearer_token", "").strip()
+    token: str = cfg["account"].get("bearer_token", "").strip()
     if token and not _is_token_expired(token):
         return token
 
     # Token expired or missing — try silent renewal first
-    refresh = cfg["account"].get("refresh_token", "").strip()
+    refresh: str = cfg["account"].get("refresh_token", "").strip()
     if refresh:
         try:
             from get_token import _do_refresh
@@ -321,8 +321,8 @@ def get_token(cfg: dict) -> str:
                 print(t("cli.token.renewing"))
             tokens = _do_refresh(refresh)
             if tokens:
-                new_token   = tokens.get("access_token", "")
-                new_refresh = tokens.get("refresh_token", refresh)
+                new_token: str   = tokens.get("access_token", "")
+                new_refresh: str = tokens.get("refresh_token", refresh)
                 cfg["account"]["bearer_token"]  = new_token
                 cfg["account"]["refresh_token"] = new_refresh
                 save_config(cfg)
@@ -340,9 +340,9 @@ def get_token(cfg: dict) -> str:
     try:
         from get_token import get_token_auto
         print(t("cli.token.no_token"))
-        new_token = get_token_auto(cfg)
-        if new_token:
-            return new_token
+        auto_token: Optional[str] = get_token_auto(cfg)
+        if auto_token:
+            return auto_token
     except ImportError:
         # get_token.py not in path — fall through to manual
         pass
@@ -365,7 +365,7 @@ def get_token(cfg: dict) -> str:
     return token
 
 
-def check_token_age(cfg: dict) -> str:
+def check_token_age(cfg: dict[str, Any]) -> str:
     """Return human-readable token expiry decoded from JWT claims."""
     import base64 as _b64
     import json as _json
@@ -403,7 +403,7 @@ def check_token_age(cfg: dict) -> str:
         return f"~{mins} min old ❌  — run: python3 bosch_camera.py token fix"
 
 
-def handle_401(cfg: dict) -> str:
+def handle_401(cfg: dict[str, Any]) -> str:
     """Called when API returns 401. Clears token, prompts for a new one."""
     print(t("cli.token.expired_401"))
     cfg["account"]["bearer_token"] = ""
@@ -483,7 +483,7 @@ def _install_stop_handlers() -> None:
     """
     if threading.current_thread() is not threading.main_thread():
         return
-    def _handler(signum, frame):
+    def _handler(signum: int, frame: Any) -> None:
         _STOP_REQUESTED.set()
     try:
         signal.signal(signal.SIGINT, _handler)
@@ -494,7 +494,7 @@ def _install_stop_handlers() -> None:
 
 
 def _request_with_retry(session: requests.Session, method: str, url: str,
-                         max_attempts: int = 3, **kwargs) -> requests.Response:
+                         max_attempts: int = 3, **kwargs: Any) -> requests.Response:
     """Issue an HTTP request with exponential backoff on transient failures.
 
     Retries only on HTTP 5xx responses and on requests.exceptions.Timeout /
@@ -529,7 +529,7 @@ def _request_with_retry(session: requests.Session, method: str, url: str,
 
 # ══════════════════════════ CAMERA DISCOVERY ══════════════════════════════════
 
-def discover_cameras(cfg: dict, session: requests.Session) -> dict:
+def discover_cameras(cfg: dict[str, Any], session: requests.Session) -> dict[str, Any]:
     """
     GET /v11/video_inputs → discover all cameras.
     Returns dict keyed by camera name (title):
@@ -583,21 +583,21 @@ def discover_cameras(cfg: dict, session: requests.Session) -> dict:
     return cameras
 
 
-def get_cameras(cfg: dict, session: requests.Session) -> dict:
+def get_cameras(cfg: dict[str, Any], session: requests.Session) -> dict[str, Any]:
     """Return cameras from config; auto-discover if none are saved yet."""
     if not cfg.get("cameras"):
         print(t("cli.cam.no_cameras_discovering"))
         return discover_cameras(cfg, session)
-    return cfg["cameras"]
+    return cast(dict[str, Any], cfg["cameras"])
 
 
-def resolve_cam(cfg: dict, key: str | None) -> dict:
+def resolve_cam(cfg: dict[str, Any], key: str | None) -> dict[str, Any]:
     """
     Resolve a partial camera name to the full cameras dict entry.
     If key is None → return all cameras.
     If key matches exactly or case-insensitively → return that single camera dict.
     """
-    cameras = cfg.get("cameras", {})
+    cameras: dict[str, Any] = cfg.get("cameras", {})
     if not key:
         return cameras
     # Exact match
@@ -629,7 +629,7 @@ def api_ping(session: requests.Session, cam_id: str) -> str:
         return f"ERROR: {e}"
 
 
-def api_get_events(session: requests.Session, cam_id: str, limit: int = 400) -> list:
+def api_get_events(session: requests.Session, cam_id: str, limit: int = 400) -> list[Any]:
     r = _request_with_retry(
         session, "GET",
         f"{CLOUD_API}/v11/events?videoInputId={cam_id}&limit={limit}",
@@ -638,7 +638,7 @@ def api_get_events(session: requests.Session, cam_id: str, limit: int = 400) -> 
     if r.status_code == 401:
         return []
     r.raise_for_status()
-    return r.json()
+    return cast(list[Any], r.json())
 
 
 def api_mark_events_read(session: requests.Session, event_ids: list[str]) -> bool:
@@ -665,7 +665,7 @@ def api_mark_events_read(session: requests.Session, event_ids: list[str]) -> boo
     return success
 
 
-def api_get_camera(session: requests.Session, cam_id: str) -> dict | None:
+def api_get_camera(session: requests.Session, cam_id: str) -> dict[str, Any] | None:
     """
     GET /v11/video_inputs/{cam_id} — fetch a single camera object by ID.
     Returns the camera dict or None on error.
@@ -673,7 +673,7 @@ def api_get_camera(session: requests.Session, cam_id: str) -> dict | None:
     try:
         r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}", timeout=15)
         if r.status_code == 200:
-            return r.json()
+            return cast(dict[str, Any], r.json())
     except Exception:
         pass
     return None
@@ -745,7 +745,7 @@ def open_vlc(url: str, user: str = "", password: str = "", token: str = "") -> N
 
 # ══════════════════════════ COMMANDS ══════════════════════════════════════════
 
-def cmd_status(cfg: dict, args) -> None:
+def cmd_status(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show all cameras with ONLINE/OFFLINE status."""
     token   = get_token(cfg)
     session = make_session(token)
@@ -782,7 +782,7 @@ def cmd_status(cfg: dict, args) -> None:
         print()
 
 
-def cmd_events(cfg: dict, args) -> None:
+def cmd_events(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show latest events — removed (cloud event listing no longer available)."""
     print(t("cmd.status.events_removed"))
     return
@@ -791,8 +791,8 @@ def cmd_events(cfg: dict, args) -> None:
 
 # ══════════════════════════ LIVE SNAPSHOT METHODS ═══════════════════════════
 
-def snap_from_proxy(cam_info: dict, token: str, hq: bool = False,
-                     cfg: Optional[dict] = None) -> bytes | None:
+def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
+                     cfg: Optional[dict[str, Any]] = None) -> bytes | None:
     """
     Live snapshot via PUT /connection.
     Tries LOCAL first (faster on home network), then REMOTE (cloud proxy).
@@ -902,7 +902,7 @@ def snap_from_proxy(cam_info: dict, token: str, hq: bool = False,
 
 
 def snap_from_local(
-    cam_info: dict, cfg: Optional[dict] = None
+    cam_info: dict[str, Any], cfg: Optional[dict[str, Any]] = None
 ) -> bytes | None:
     """
     Method 2 — Local camera snap.jpg via HTTP Digest authentication.
@@ -949,7 +949,7 @@ def snap_from_local(
     return None
 
 
-def snap_from_events(session, cam_info: dict) -> tuple[bytes | None, str]:
+def snap_from_events(session: requests.Session, cam_info: dict[str, Any]) -> tuple[bytes | None, str]:
     """
     Method 3 — Latest event snapshot (cloud API, motion-triggered).
     Returns (jpeg_bytes, timestamp_str) or (None, "").
@@ -985,7 +985,7 @@ def _save_and_open(data: bytes, name: str, ts: str, method: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-def cmd_snapshot(cfg: dict, args) -> None:
+def cmd_snapshot(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """
     Fetch and open the best available snapshot for a camera.
 
@@ -1056,9 +1056,8 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
     import http.server
     import socket
 
-    ffplay = shutil.which("ffplay") or "/opt/homebrew/bin/ffplay"
-    if not os.path.exists(ffplay):
-        ffplay = None
+    _ffplay_path: str = shutil.which("ffplay") or "/opt/homebrew/bin/ffplay"
+    ffplay: Optional[str] = _ffplay_path if os.path.exists(_ffplay_path) else None
 
     if not ffplay:
         print("\n  ❌  ffplay not found. Install with: brew install ffmpeg\n")
@@ -1071,10 +1070,10 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
 
     stop_event = threading.Event()
     frame_lock  = threading.Lock()
-    current_frame: list = [None]  # [bytes | None]
+    current_frame: list[bytes | None] = [None]  # [bytes | None]
 
     # ── Fetcher thread: polls snap.jpg ────────────────────────────────────────
-    def fetcher():
+    def fetcher() -> None:
         count = 0
         while not stop_event.is_set():
             t0 = time.time()
@@ -1098,9 +1097,9 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
 
     # ── MJPEG HTTP server ─────────────────────────────────────────────────────
     class MJPEGHandler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *args): pass  # silence request logs
+        def log_message(self, *args: Any) -> None: pass  # silence request logs
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--frame")
             self.end_headers()
@@ -1138,7 +1137,7 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
         stop_event.set()
         return
 
-    def _serve():
+    def _serve() -> None:
         server.serve_forever()
 
     server_thread = threading.Thread(target=_serve, daemon=True)
@@ -1204,10 +1203,10 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", 0))
-    port = srv.getsockname()[1]
+    port: int = srv.getsockname()[1]
     srv.listen(2)
 
-    def _proxy_thread():
+    def _proxy_thread() -> None:
         _reconnect_attempts = [0]
         while True:
             try:
@@ -1220,7 +1219,9 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
                 # TCP keep-alive to prevent OS from dropping idle connections
                 raw.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
                 try:
-                    raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+                    _tcp_keepidle = getattr(socket, "TCP_KEEPIDLE", None)
+                    if _tcp_keepidle is not None:
+                        raw.setsockopt(socket.IPPROTO_TCP, _tcp_keepidle, 30)
                     raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
                     raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
                 except (AttributeError, OSError):
@@ -1240,7 +1241,7 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
                 continue
             client.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
-            def _pipe(src, dst, is_cam_to_client=False):
+            def _pipe(src: Any, dst: Any, is_cam_to_client: bool = False) -> None:
                 try:
                     while True:
                         # CAM→Client: no timeout (dark scenes have sparse RTP)
@@ -1270,7 +1271,7 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
             t1.start()
             t2.start()
             # Reset failure counter after the connection stays up 30s+.
-            def _reset_on_stable(start, counter):
+            def _reset_on_stable(start: float, counter: list[int]) -> None:
                 t1.join(timeout=30)
                 if time.time() - start >= 30:
                     counter[0] = 0
@@ -1313,7 +1314,8 @@ def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "
         print("  ▶️   Launching VLC via ffmpeg pipe (audio+video)...")
         proxy = subprocess.Popen(ffmpeg_pipe, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         proc  = subprocess.Popen([vlc, "-"], stdin=proxy.stdout, stderr=subprocess.DEVNULL)
-        proxy.stdout.close()
+        if proxy.stdout is not None:
+            proxy.stdout.close()
         time.sleep(1.5)
         subprocess.Popen(["osascript", "-e", 'tell application "VLC" to activate'],
                          stderr=subprocess.DEVNULL)
@@ -1354,7 +1356,7 @@ def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "
         print("\n  ⏹️   Live view stopped.")
 
 
-def cmd_test_local(cfg: dict, args) -> None:
+def cmd_test_local(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Test LOCAL vs REMOTE connection — dumps full API response, snap timing, RTSP URL.
 
     Calls PUT /connection with both types and prints:
@@ -1470,8 +1472,8 @@ def cmd_test_local(cfg: dict, args) -> None:
 # extra unless consumed. Gen1 cameras (INDOOR/OUTDOOR) may silently ignore
 # inst=2 and fall back to their default stream — same URL, same data.
 def _build_stream_urls(
-    cam: dict,
-    conn_result: dict,
+    cam: dict[str, Any],
+    conn_result: dict[str, Any],
     inst: int = 2,
     *,
     use_tls_proxy: bool = False,
@@ -1579,7 +1581,7 @@ def _start_go2rtc_with_camera(
     go2rtc_bin: str = "go2rtc",
     stream_name: str = "bosch_cam",
     start_timeout: float = 10.0,
-) -> tuple[subprocess.Popen, str]:
+) -> tuple[subprocess.Popen[bytes], str]:
     """Start go2rtc as a subprocess and wait until its HTTP port is reachable.
 
     Args:
@@ -1659,7 +1661,7 @@ def _start_go2rtc_with_camera(
     # 6. Register cleanup: terminate + unlink config on SIGTERM
     _orig_sigterm = signal.getsignal(signal.SIGTERM)
 
-    def _cleanup_go2rtc(signum, frame):
+    def _cleanup_go2rtc(signum: int, frame: Any) -> None:
         proc.terminate()
         try:
             os.unlink(cfg_path)
@@ -1718,7 +1720,7 @@ def _open_webrtc_stream(
         print("\n  ⏹️   WebRTC stopped.")
 
 
-def cmd_live(cfg: dict, args) -> None:
+def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Open live stream — tries PUT /connection → open VLC on success.
 
     --hq:    request highQualityVideo=true in PUT /connection (higher bitrate stream).
@@ -1767,7 +1769,7 @@ def cmd_live(cfg: dict, args) -> None:
 
         print("  🔄  Opening live connection...")
         conn_url    = f"{CLOUD_API}/v11/video_inputs/{cam_info['id']}/connection"
-        result: Optional[dict] = None
+        result: Optional[dict[str, Any]] = None
         result_type = ""
 
         # --local flag forces LOCAL (direct LAN); default is REMOTE (cloud proxy).
@@ -1886,7 +1888,7 @@ def cmd_live(cfg: dict, args) -> None:
                         break
 
 
-def cmd_config(cfg: dict, args) -> None:
+def cmd_config(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show current config (mask all credentials for security)."""
     display = json.loads(json.dumps(cfg))  # deep copy
     # Mask every secret-shaped field, not just bearer/refresh — access_token,
@@ -1896,7 +1898,7 @@ def cmd_config(cfg: dict, args) -> None:
         "local_password", "password",
         "private", "secret", "token", "security_token",
     )
-    def _mask(obj):
+    def _mask(obj: Any) -> Any:
         if isinstance(obj, dict):
             return {
                 k: (f"{str(v)[:20]}...({len(str(v))} chars)"
@@ -1913,7 +1915,7 @@ def cmd_config(cfg: dict, args) -> None:
     print(f"\n  Token age: {check_token_age(cfg)}")
 
 
-def cmd_info(cfg: dict, args) -> None:
+def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show full camera information from the API.
 
     Usage:
@@ -2031,7 +2033,7 @@ def cmd_info(cfg: dict, args) -> None:
                 timeout=15,
             )
             if sr.status_code == 200:
-                sd: dict = sr.json()
+                sd: dict[str, Any] = sr.json()
                 conn_urls: list[str] = sd.get("urls", [])
                 if conn_urls:
                     u = conn_urls[0]
@@ -2300,7 +2302,7 @@ def _lan_tcp_ping(host: str, port: int = 443, timeout: float = 3.0) -> tuple[boo
         return False, 0.0
 
 
-def _resolve_lan_ip(cfg: dict, cam_id: str, cam_info: dict) -> str | None:
+def _resolve_lan_ip(cfg: dict[str, Any], cam_id: str, cam_info: dict[str, Any]) -> str | None:
     """Return the LAN IP for a camera.
 
     Priority:
@@ -2333,7 +2335,7 @@ def _hint_local_on_5xx(status_code: int, command_hint: str = "") -> None:
 # ══════════════════════ LAN-FALLBACK COMMANDS ════════════════════════════════
 
 
-def cmd_ping(cfg: dict, args) -> None:
+def cmd_ping(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """TCP-connect probe to every configured camera's LAN IP on port 443.
 
     Usage:
@@ -2345,7 +2347,7 @@ def cmd_ping(cfg: dict, args) -> None:
     cam_arg  = getattr(args, "cam", None)
     as_json  = getattr(args, "json", False)
     cams     = resolve_cam(cfg, cam_arg)
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
 
     for name, cam_info in cams.items():
         cam_id = cam_info.get("id", "")
@@ -2372,7 +2374,7 @@ def cmd_ping(cfg: dict, args) -> None:
         print(_json_mod.dumps(results, indent=2))
 
 
-def cmd_lan_ips(cfg: dict, args) -> None:
+def cmd_lan_ips(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """List or edit the LAN IP map used by --local flag commands.
 
     Usage:
@@ -2386,7 +2388,7 @@ def cmd_lan_ips(cfg: dict, args) -> None:
     ip_arg  = getattr(args, "lan_ip", None)
 
     lan_ips: dict[str, str] = cfg.setdefault("lan_ips", {})
-    cameras: dict[str, dict] = cfg.get("cameras", {})
+    cameras: dict[str, dict[str, Any]] = cfg.get("cameras", {})
 
     if sub == "set":
         if not cam_arg or not ip_arg:
@@ -2444,7 +2446,7 @@ def cmd_lan_ips(cfg: dict, args) -> None:
     print()
 
 
-def cmd_privacy(cfg: dict, args) -> None:
+def cmd_privacy(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Get or set privacy mode for a camera via the Bosch cloud API.
 
     Usage:
@@ -2542,6 +2544,7 @@ def cmd_privacy(cfg: dict, args) -> None:
             continue
 
         minutes = getattr(args, "minutes", None)
+        body: dict[str, Any]
         if new_state == "ON" and minutes:
             body = {"privacyMode": "ON", "privacyTimeSeconds": int(minutes) * 60}
             print(f"  🔄  Setting privacy mode → ON for {minutes} minute(s)...")
@@ -2571,7 +2574,7 @@ def cmd_privacy(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
-def cmd_light(cfg: dict, args) -> None:
+def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Get or set the camera light (manual override) via the Bosch cloud API.
 
     Usage:
@@ -2806,7 +2809,7 @@ PAN_PRESET_MAP: dict[str, int] = {
 }
 
 
-def cmd_pan(cfg: dict, args) -> None:
+def cmd_pan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Get or set the pan position of the 360 camera via the Bosch cloud API.
 
     Usage:
@@ -2845,8 +2848,9 @@ def cmd_pan(cfg: dict, args) -> None:
             int(cam_arg)
             action, cam_arg = cam_arg, None   # "pan 45" → action=45, cam=None
         except ValueError:
-            if cam_arg.lower() in PRESETS:
-                action, cam_arg = cam_arg.lower(), None
+            cam_arg_str: str = str(cam_arg)
+            if cam_arg_str.lower() in PRESETS:
+                action, cam_arg = cam_arg_str.lower(), None
 
     cams = resolve_cam(cfg, cam_arg)
 
@@ -2944,7 +2948,7 @@ def cmd_pan(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {resp.status_code}  {resp.text[:200]}")
 
 
-def cmd_notifications(cfg: dict, args) -> None:
+def cmd_notifications(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Get or set notification settings for a camera via the Bosch cloud API.
 
     Usage:
@@ -3049,7 +3053,7 @@ def _send_signal_alert(
     import base64 as _b64
 
     msg = f"{cam_name}: {event_type} um {ts}"
-    body: dict = {
+    body: dict[str, Any] = {
         "message": msg,
         "number": sender,
         "recipients": recipients,
@@ -3085,7 +3089,7 @@ def _post_event_webhook(
     cam_id: str,
     event_type: str,
     timestamp: str,
-    event: dict,
+    event: dict[str, Any],
 ) -> None:
     """POST a single camera event as JSON to the configured webhook URL.
 
@@ -3104,7 +3108,7 @@ def _post_event_webhook(
             "clip_url": "<url or ''>",
         }
     """
-    payload: dict = {
+    payload: dict[str, Any] = {
         "camera":     cam_name,
         "camera_id":  cam_id,
         "event_type": event_type,
@@ -3126,7 +3130,7 @@ def _post_event_webhook(
         print(f"             ⚠️  Webhook POST error: {err}", file=sys.stderr)
 
 
-def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap: bool,
+def _watch_fcm_push(cfg: dict[str, Any], token: str, cams: dict[str, Any], duration: int, auto_snap: bool,
                     signal_url: str = "", signal_sender: str = "", signal_recipients: list[str] | None = None,
                     fcm_app_id: str = "", fcm_api_key: str = "", mode_label: str = "Android") -> None:
     """Watch for events using FCM push notifications instead of polling.
@@ -3157,7 +3161,7 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
     total_new = [0]
     start_time = [time.time()]
 
-    def on_notification(notification, persistent_id, obj=None):
+    def on_notification(notification: Any, persistent_id: Any, obj: Any = None) -> None:
         """Called on each FCM push — fetch events for all cameras."""
         now_str = datetime.datetime.now().strftime("%H:%M:%S")
         # Re-get token in case it was refreshed. make_session() returns the
@@ -3227,11 +3231,11 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
                     except Exception:
                         pass
 
-    def on_creds_updated(creds):
+    def on_creds_updated(creds: Any) -> None:
         cfg["settings"][FCM_CRED_KEY] = creds
         save_config(cfg)
 
-    async def _run():
+    async def _run() -> None:
         fcm_config = FcmRegisterConfig(
             project_id=FCM_PROJECT_ID,
             app_id=fcm_app_id or FCM_APP_ID,
@@ -3333,7 +3337,7 @@ class MotionEdgeTracker:
     def state(self) -> str:
         return self._state
 
-    def update(self, events: list[dict], now: Optional[float] = None) -> Optional[str]:
+    def update(self, events: list[dict[str, Any]], now: Optional[float] = None) -> Optional[str]:
         """
         Process a list of new motion-related events and return an edge transition.
 
@@ -3514,7 +3518,7 @@ def _nvr_disk_mb(cam_name: str, base_dir: Optional[str] = None) -> float:
 
 
 def _start_motion_recording(
-    cam: dict,
+    cam: dict[str, Any],
     output_dir: Optional[str] = None,
     max_duration: int = _NVR_DEFAULT_MAX_DURATION,
     base_dir: Optional[str] = None,
@@ -3572,7 +3576,7 @@ def _start_motion_recording(
         return None
 
 
-def _nvr_smb_upload(clip_path: str, cfg: dict) -> tuple[bool, str]:
+def _nvr_smb_upload(clip_path: str, cfg: dict[str, Any]) -> tuple[bool, str]:
     """Upload *clip_path* to the configured SMB share.
 
     Best-practice: fresh connection_cache per upload session (avoids SMB credit
@@ -3591,7 +3595,7 @@ def _nvr_smb_upload(clip_path: str, cfg: dict) -> tuple[bool, str]:
         return False, t("nvr.upload.not_configured")
 
     try:
-        import smbclient  # type: ignore[import-unresolved]
+        import smbclient
     except ImportError:
         return False, t("err.smb.library_missing")
 
@@ -3604,7 +3608,7 @@ def _nvr_smb_upload(clip_path: str, cfg: dict) -> tuple[bool, str]:
     remote_file = remote_dir + "\\" + fname
 
     # Fresh connection_cache per upload — prevents credit starvation
-    conn_cache: dict = {}
+    conn_cache: dict[str, Any] = {}
 
     t_start = time.time()
     try:
@@ -3663,7 +3667,7 @@ def _nvr_recording_duration(cam_name: str) -> int:
 
 # ── NVR sub-command handlers ──────────────────────────────────────────────────
 
-def _cmd_nvr_status(cfg: dict, args) -> None:
+def _cmd_nvr_status(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     cam_arg = getattr(args, "cam", None)
     cams = resolve_cam(cfg, cam_arg)
     base_dir = BASE_DIR
@@ -3676,7 +3680,7 @@ def _cmd_nvr_status(cfg: dict, args) -> None:
             print(t("nvr.status.recording", camera=name, duration_secs=dur))
 
 
-def _cmd_nvr_list(cfg: dict, args) -> None:
+def _cmd_nvr_list(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     cam_arg = getattr(args, "cam", None)
     limit = getattr(args, "limit", 20) or 20
     cams = resolve_cam(cfg, cam_arg)
@@ -3692,7 +3696,7 @@ def _cmd_nvr_list(cfg: dict, args) -> None:
             print(f"    {p}  ({size_kb} KB)")
 
 
-def _cmd_nvr_prune(cfg: dict, args) -> None:
+def _cmd_nvr_prune(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     cam_arg = getattr(args, "cam", None)
     keep = getattr(args, "keep", None)
     if keep is None:
@@ -3703,7 +3707,7 @@ def _cmd_nvr_prune(cfg: dict, args) -> None:
         print(t("nvr.prune.done", camera=name, removed=removed, kept=kept))
 
 
-def _cmd_nvr_upload(cfg: dict, args) -> None:
+def _cmd_nvr_upload(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     smb_cfg = cfg.get("nvr", {}).get("smb", {})
     host = smb_cfg.get("host", "").strip()
     if not host:
@@ -3738,7 +3742,7 @@ def _cmd_nvr_upload(cfg: dict, args) -> None:
                 pass
 
 
-def cmd_nvr(cfg: dict, args) -> None:
+def cmd_nvr(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """BETA: Mini-NVR sub-command dispatcher (status / list / prune / upload)."""
     sub = getattr(args, "nvr_sub", None)
     handlers = {
@@ -3754,7 +3758,7 @@ def cmd_nvr(cfg: dict, args) -> None:
     handlers[sub](cfg, args)
 
 
-def cmd_watch(cfg: dict, args) -> None:
+def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """
     Watch for new camera events by polling GET /v11/events every N seconds.
 
@@ -4057,7 +4061,7 @@ def cmd_watch(cfg: dict, args) -> None:
         print(f"\n\n  Stopped after {elapsed}s. Total new events seen: {total_new}")
 
 
-def cmd_intercom(cfg: dict, args) -> None:
+def cmd_intercom(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """
     Open a two-way audio (intercom) session to a camera.
 
@@ -4188,7 +4192,7 @@ def cmd_intercom(cfg: dict, args) -> None:
         print(f"  ❌  Intercom error: {e}")
 
 
-def cmd_maintenance(cfg: dict, args: argparse.Namespace) -> None:
+def cmd_maintenance(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show the current Bosch cloud maintenance / outage status.
 
     Fetches the community RSS feeds and prints the best-match announcement.
@@ -4242,7 +4246,7 @@ def cmd_maintenance(cfg: dict, args: argparse.Namespace) -> None:
     print()
 
 
-def cmd_motion(cfg: dict, args) -> None:
+def cmd_motion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """
     Get or set motion detection settings.
 
@@ -4316,7 +4320,7 @@ def cmd_motion(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
-def cmd_recording(cfg: dict, args) -> None:
+def cmd_recording(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """
     Get or set cloud recording options.
 
@@ -4380,7 +4384,7 @@ def cmd_recording(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
-def cmd_audio(cfg: dict, args: argparse.Namespace) -> None:
+def cmd_audio(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Get or set microphone and speaker levels for a camera.
 
     Usage:
@@ -4403,7 +4407,7 @@ def cmd_audio(cfg: dict, args: argparse.Namespace) -> None:
     as_json  = getattr(args, "json", False)
 
     cams = resolve_cam(cfg, cam_arg)
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
 
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
@@ -4430,7 +4434,7 @@ def cmd_audio(cfg: dict, args: argparse.Namespace) -> None:
         mic_lvl = data.get("microphoneLevel", data.get("MicrophoneLevel", 50))
         spk_lvl = data.get("speakerLevel", data.get("SpeakerLevel", 50))
 
-        entry: dict = {"cam": name, "audioEnabled": enabled,
+        entry: dict[str, Any] = {"cam": name, "audioEnabled": enabled,
                        "microphoneLevel": mic_lvl, "speakerLevel": spk_lvl}
 
         if not as_json:
@@ -4483,7 +4487,7 @@ def cmd_audio(cfg: dict, args: argparse.Namespace) -> None:
         print(_json_mod.dumps(results, indent=2))
 
 
-def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
+def cmd_intrusion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Get or set intrusion detection configuration.
 
     Usage:
@@ -4508,7 +4512,7 @@ def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
     as_json  = getattr(args, "json", False)
 
     cams = resolve_cam(cfg, cam_arg)
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
 
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
@@ -4537,7 +4541,7 @@ def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
         cur_sens  = data.get("sensitivity", 3)
         cur_dist  = data.get("distance", 5)
 
-        entry: dict = {"cam": name, "enabled": enabled,
+        entry: dict[str, Any] = {"cam": name, "enabled": enabled,
                        "detectionMode": det_mode,
                        "sensitivity": cur_sens,
                        "distance": cur_dist}
@@ -4601,7 +4605,7 @@ def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
         print(_json_mod.dumps(results, indent=2))
 
 
-def cmd_wifi(cfg: dict, args: argparse.Namespace) -> None:
+def cmd_wifi(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show WiFi info (RSSI, SSID, signal strength) for cameras.
 
     Usage:
@@ -4619,7 +4623,7 @@ def cmd_wifi(cfg: dict, args: argparse.Namespace) -> None:
     as_json  = getattr(args, "json", False)
 
     cams = resolve_cam(cfg, cam_arg)
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
 
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
@@ -4646,7 +4650,7 @@ def cmd_wifi(cfg: dict, args: argparse.Namespace) -> None:
         ip_w   = data.get("ipAddress", data.get("ip", "?"))
         mac_w  = data.get("macAddress", data.get("mac", "?"))
 
-        entry: dict = {"cam": name, "ssid": ssid, "rssi_dbm": rssi,
+        entry: dict[str, Any] = {"cam": name, "ssid": ssid, "rssi_dbm": rssi,
                        "signal_pct": signal, "ip": ip_w, "mac": mac_w}
         results.append(entry)
 
@@ -4804,7 +4808,7 @@ def rcp_read(rcp_url: str, command: str, sessionid: str,
     """
     import re as _re
 
-    params = {
+    params: dict[str, str | int] = {
         "command":   command,
         "direction": "READ",
         "type":      type_,
@@ -4909,7 +4913,7 @@ def rcp_parse_word(data: bytes) -> int | None:
     return None
 
 
-def _rcp_setup(cam_info: dict, token: str) -> tuple[str, str]:
+def _rcp_setup(cam_info: dict[str, Any], token: str) -> tuple[str, str]:
     """
     Open a REMOTE connection and perform RCP session handshake.
     Returns (rcp_url, sessionid).
@@ -4926,7 +4930,7 @@ def _rcp_setup(cam_info: dict, token: str) -> tuple[str, str]:
     return rcp_url, sessionid
 
 
-def cmd_rcp(cfg: dict, args) -> None:
+def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """
     RCP — Remote Configuration Protocol reads via cloud proxy.
 
@@ -5238,7 +5242,7 @@ def cmd_rcp(cfg: dict, args) -> None:
         print()
 
 
-def cmd_token(cfg: dict, args) -> None:
+def cmd_token(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show token status and optionally renew it.
 
     Usage:
@@ -5304,7 +5308,7 @@ def cmd_token(cfg: dict, args) -> None:
     print()
 
 
-def cmd_rescan(cfg: dict, args) -> None:
+def cmd_rescan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Re-discover cameras from API and update config."""
     token   = get_token(cfg)
     session = make_session(token)
@@ -5317,7 +5321,7 @@ def cmd_rescan(cfg: dict, args) -> None:
 
 # ══════════════════════════ INTERACTIVE MENU ══════════════════════════════════
 
-def cmd_menu(cfg: dict) -> None:
+def cmd_menu(cfg: dict[str, Any]) -> None:
     """Interactive numbered menu."""
     cameras = cfg.get("cameras", {})
     cam_names = list(cameras.keys())
@@ -5505,19 +5509,21 @@ def cmd_menu(cfg: dict) -> None:
 
     choice = input("  Enter choice: ").strip()
 
-    class A:
-        cam     = None
-        action  = None
-        sub     = None
-        limit   = None
-        re_download = False
-        live    = False
-        vlc     = False
-        local   = False
-        full    = False
-        minutes = None
-
-    a = A()
+    a = argparse.Namespace(
+        cam=None,
+        action=None,
+        sub=None,
+        limit=None,
+        re_download=False,
+        live=False,
+        vlc=False,
+        local=False,
+        full=False,
+        minutes=None,
+        quality=None,
+        duration=None,
+        speaker_level=None,
+    )
 
     if choice.lower() in ("q", "quit", "exit", "0"):
         sys.exit(0)
@@ -5626,7 +5632,7 @@ def cmd_menu(cfg: dict) -> None:
     input("\n  Press Enter to return to menu...")
 
 
-def cmd_autofollow(cfg: dict, args) -> None:
+def cmd_autofollow(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Get or set auto-follow for a 360 camera via the Bosch cloud API.
 
     Usage:
@@ -5692,7 +5698,7 @@ def cmd_autofollow(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
-def cmd_siren(cfg: dict, args) -> None:
+def cmd_siren(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Trigger or stop the siren on a camera.
 
     Usage:
@@ -5779,7 +5785,7 @@ def cmd_siren(cfg: dict, args) -> None:
         print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
 
 
-def cmd_unread(cfg: dict, args) -> None:
+def cmd_unread(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show unread event count per camera.
 
     Usage:
@@ -5813,7 +5819,7 @@ def cmd_unread(cfg: dict, args) -> None:
             print(f"  ❌  {name}: HTTP {r.status_code}")
 
 
-def cmd_privacy_sound(cfg: dict, args) -> None:
+def cmd_privacy_sound(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Get or set privacy sound override for a camera.
 
     Usage:
@@ -5894,7 +5900,7 @@ def cmd_privacy_sound(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
-def cmd_rules(cfg: dict, args) -> None:
+def cmd_rules(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Manage camera automation rules (time-based schedules).
 
     Usage:
@@ -6083,7 +6089,7 @@ def cmd_rules(cfg: dict, args) -> None:
             print()
 
 
-def cmd_friends(cfg: dict, args) -> None:
+def cmd_friends(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Manage camera sharing with friends.
 
     Usage:
@@ -6279,7 +6285,7 @@ def cmd_friends(cfg: dict, args) -> None:
         print()
 
 
-def cmd_accept_invite(cfg: dict, args) -> None:
+def cmd_accept_invite(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Accept an incoming friend/camera sharing invitation.
 
     Usage:
@@ -6321,7 +6327,7 @@ def cmd_accept_invite(cfg: dict, args) -> None:
         print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
 
 
-def cmd_shared_with_friends(cfg: dict, args) -> None:
+def cmd_shared_with_friends(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show which friends have access to a specific camera.
 
     Usage:
@@ -6385,7 +6391,7 @@ def cmd_shared_with_friends(cfg: dict, args) -> None:
     print()
 
 
-def cmd_zones(cfg: dict, args) -> None:
+def cmd_zones(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Manage motion detection zones (cloud API).
 
     Usage:
@@ -6486,7 +6492,7 @@ def cmd_zones(cfg: dict, args) -> None:
         print(f"\n  JSON: {_json.dumps(zones)}")
 
 
-def cmd_privacy_masks(cfg: dict, args) -> None:
+def cmd_privacy_masks(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Manage privacy mask zones (cloud API).
 
     Usage:
@@ -6582,7 +6588,7 @@ def cmd_privacy_masks(cfg: dict, args) -> None:
         print(f"\n  JSON: {_json.dumps(masks)}")
 
 
-def cmd_lighting_schedule(cfg: dict, args) -> None:
+def cmd_lighting_schedule(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """View or modify the lighting schedule for cameras with LED light.
 
     Usage:
@@ -6667,7 +6673,7 @@ def cmd_lighting_schedule(cfg: dict, args) -> None:
         print(f"  Wallwasher:     {'An' if d.get('wallwasherInGeneralLightOn') else 'Aus'}")
 
 
-def cmd_rename(cfg: dict, args) -> None:
+def cmd_rename(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Rename a camera via the Bosch cloud API.
 
     Usage:
@@ -6729,7 +6735,7 @@ def cmd_rename(cfg: dict, args) -> None:
         print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
 
 
-def cmd_profile(cfg: dict, args) -> None:
+def cmd_profile(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show or edit user profile.
 
     Usage:
@@ -6849,7 +6855,7 @@ def cmd_profile(cfg: dict, args) -> None:
         print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
-def cmd_account(cfg: dict, args) -> None:
+def cmd_account(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show account info: feature flags, contracts, subscription status.
 
     Usage:
@@ -6967,7 +6973,7 @@ def fetch_rcp_lan(
     from requests.auth import HTTPDigestAuth
 
     url = f"https://{cam_ip}/rcp.xml"
-    params: dict[str, object] = {
+    params: dict[str, str | int] = {
         "command":   opcode_hex,
         "direction": "READ",
         "type":      type_,
@@ -7037,7 +7043,7 @@ def _get_local_connection_creds(
 
 # ══════════════════════ NEW CLI COMMANDS (F1/F4/F6/F13) ══════════════════════
 
-def cmd_snapshot_mjpeg(cfg: dict, args: argparse.Namespace) -> None:
+def cmd_snapshot_mjpeg(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """F1 — MJPEG/FFmpeg snapshot for Gen2 cameras (faster than snap.jpg).
 
     Captures a single JPEG frame via FFmpeg from the local RTSP stream.
@@ -7134,7 +7140,7 @@ def cmd_snapshot_mjpeg(cfg: dict, args: argparse.Namespace) -> None:
         open_file(dest)
 
 
-def cmd_onvif_scopes(cfg: dict, args: argparse.Namespace) -> None:
+def cmd_onvif_scopes(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """F4 — ONVIF Scopes Reader via RCP 0x0a98 (LAN, Digest auth).
 
     Reads the ONVIF scope string from the camera directly over LAN (HTTPS + Digest).
@@ -7152,7 +7158,7 @@ def cmd_onvif_scopes(cfg: dict, args: argparse.Namespace) -> None:
     as_json = getattr(args, "json", False)
 
     cams = resolve_cam(cfg, cam_arg)
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
 
     for name, cam_info in cams.items():
         if not as_json:
@@ -7185,7 +7191,7 @@ def cmd_onvif_scopes(cfg: dict, args: argparse.Namespace) -> None:
             if s:
                 scopes.append(s)
 
-        entry: dict = {"cam": name, "scopes": scopes, "raw_hex": raw.hex()}
+        entry: dict[str, Any] = {"cam": name, "scopes": scopes, "raw_hex": raw.hex()}
         results.append(entry)
 
         if not as_json:
@@ -7201,7 +7207,7 @@ def cmd_onvif_scopes(cfg: dict, args: argparse.Namespace) -> None:
         print(_json_mod.dumps(results, indent=2))
 
 
-def cmd_rcp_version(cfg: dict, args: argparse.Namespace) -> None:
+def cmd_rcp_version(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """F6 — Print RCP protocol version from camera via cloud proxy.
 
     Reads opcodes 0xff00 (primary version) and 0xff04 (secondary version).
@@ -7255,7 +7261,7 @@ def cmd_rcp_version(cfg: dict, args: argparse.Namespace) -> None:
             print("\n  ⚠️   RCP version opcodes not available on this camera.")
 
 
-def cmd_feature_flags(cfg: dict, args: argparse.Namespace) -> None:
+def cmd_feature_flags(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """F13 — Print Bosch Cloud feature flags for this account.
 
     GET /v11/feature_flags — account-level capabilities bitmask.
@@ -7297,7 +7303,7 @@ def cmd_feature_flags(cfg: dict, args: argparse.Namespace) -> None:
         flags_dict = {}
         for item in flags:
             if isinstance(item, dict):
-                key = item.get("name", item.get("key", "?"))
+                key: str = str(item.get("name", item.get("key", "?")))
                 val = item.get("value", item.get("enabled", "?"))
                 flags_dict[key] = val
             else:
@@ -7329,7 +7335,7 @@ def cmd_feature_flags(cfg: dict, args: argparse.Namespace) -> None:
         print()
 
 
-def cmd_timestamp(cfg: dict, args) -> None:
+def cmd_timestamp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Get or set time/date overlay on camera video.
 
     Usage:
@@ -7396,7 +7402,7 @@ def cmd_timestamp(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
-def cmd_notification_types(cfg: dict, args) -> None:
+def cmd_notification_types(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show or toggle per-type notification settings.
 
     Usage:
@@ -7463,7 +7469,7 @@ def cmd_notification_types(cfg: dict, args) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
-def main():
+def main() -> None:
     # ── Top-level parser ───────────────────────────────────────────────────────
     parser = argparse.ArgumentParser(
         prog="bosch_camera.py",

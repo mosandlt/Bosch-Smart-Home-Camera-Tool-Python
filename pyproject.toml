@@ -20,8 +20,7 @@ line-length = 100
 target-version = "py310"
 
 [tool.mypy]
-# Project-wide: lenient. STRICT_TYPING applies to NEW functions written after v10.2.1.
+# Project-wide strict typing (family-parity with the HA integration).
 python_version = "3.10"
-strict = false
-warn_return_any = false
+strict = true
 ignore_missing_imports = true

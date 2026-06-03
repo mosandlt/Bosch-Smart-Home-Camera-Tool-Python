@@ -69,10 +69,10 @@ def _fetch_fingerprint(host: str, port: int = 443, timeout: float = 5.0) -> str:
     try:
         with socket.create_connection((host, port), timeout=timeout) as raw_sock:
             with ctx.wrap_socket(raw_sock, server_hostname=host) as tls_sock:
-                der_bytes: bytes = tls_sock.getpeercert(binary_form=True)
-                if not der_bytes:
+                der_bytes_raw: bytes | None = tls_sock.getpeercert(binary_form=True)
+                if not der_bytes_raw:
                     raise CertPinningError(f"No certificate received from {host}:{port}")
-                return hashlib.sha256(der_bytes).hexdigest()
+                return hashlib.sha256(der_bytes_raw).hexdigest()
     except CertPinningError:
         raise
     except Exception as exc:

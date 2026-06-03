@@ -33,6 +33,7 @@ import base64
 import secrets
 import webbrowser
 import argparse
+from typing import Any
 from urllib.parse import urlparse, parse_qs, urlencode
 
 import requests
@@ -58,16 +59,16 @@ REDIRECT_URI  = "http://localhost:8321/callback"
 
 # ══════════════════════════ CONFIG ════════════════════════════════════════════
 
-def load_config() -> dict:
+def load_config() -> dict[str, Any]:
     if not os.path.exists(CONFIG_FILE):
         print(f"❌  Config not found: {CONFIG_FILE}")
         print("    Run bosch_camera.py first to create it.")
         sys.exit(1)
     with open(CONFIG_FILE) as f:
-        return json.load(f)
+        return json.load(f)  # type: ignore[no-any-return]
 
 
-def save_config(cfg: dict) -> None:
+def save_config(cfg: dict[str, Any]) -> None:
     with open(CONFIG_FILE, "w") as f:
         json.dump(cfg, f, indent=2)
     os.chmod(CONFIG_FILE, 0o600)
@@ -111,7 +112,7 @@ def _wait_for_callback(timeout: int = 120) -> str | None:
     error_msg = None
 
     class CallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
+        def do_GET(self) -> None:
             nonlocal auth_code, error_msg
             qs = parse_qs(urlparse(self.path).query)
 
@@ -138,7 +139,7 @@ def _wait_for_callback(timeout: int = 120) -> str | None:
             else:
                 self.wfile.write(b"<html><body><h2>No auth code received.</h2></body></html>")
 
-        def log_message(self, format, *args):
+        def log_message(self, format: str, *args: Any) -> None:
             pass  # suppress HTTP log noise
 
     print()
@@ -157,7 +158,7 @@ def _wait_for_callback(timeout: int = 120) -> str | None:
 
     server.timeout = timeout
 
-    def serve():
+    def serve() -> None:
         server.handle_request()  # handle exactly one request
 
     t = threading.Thread(target=serve, daemon=True)
@@ -203,7 +204,7 @@ def _wait_for_callback_manual() -> str | None:
 
 # ══════════════════════════ TOKEN EXCHANGE ════════════════════════════════════
 
-def _exchange_code(auth_code: str, code_verifier: str) -> dict | None:
+def _exchange_code(auth_code: str, code_verifier: str) -> dict[str, Any] | None:
     r = requests.post(
         f"{KEYCLOAK_BASE}/token",
         data={
@@ -217,13 +218,14 @@ def _exchange_code(auth_code: str, code_verifier: str) -> dict | None:
         verify=True, timeout=15,
     )
     if r.status_code == 200:
-        return r.json()
+        result: dict[str, Any] = r.json()
+        return result
     print(f"  ❌  Token exchange failed: HTTP {r.status_code}")
     print(f"      {r.text[:300]}")
     return None
 
 
-def _do_refresh(refresh: str) -> dict | None:
+def _do_refresh(refresh: str) -> dict[str, Any] | None:
     r = requests.post(
         f"{KEYCLOAK_BASE}/token",
         data={
@@ -235,14 +237,15 @@ def _do_refresh(refresh: str) -> dict | None:
         verify=True, timeout=15,
     )
     if r.status_code == 200:
-        return r.json()
+        result: dict[str, Any] = r.json()
+        return result
     print(f"  ⚠️   Refresh failed: HTTP {r.status_code} — {r.text[:80]}")
     return None
 
 
 # ══════════════════════════ MAIN FLOW ═════════════════════════════════════════
 
-def get_token_auto(cfg: dict, force_browser: bool = False) -> str | None:
+def get_token_auto(cfg: dict[str, Any], force_browser: bool = False) -> str | None:
     """
     Obtain a valid access token using the best available method.
     Saves access_token + refresh_token to config.
@@ -256,8 +259,8 @@ def get_token_auto(cfg: dict, force_browser: bool = False) -> str | None:
         print("  🔄  Renewing token via saved refresh_token...")
         tokens = _do_refresh(saved_refresh)
         if tokens:
-            access  = tokens.get("access_token", "")
-            refresh = tokens.get("refresh_token", saved_refresh)
+            access: str  = str(tokens.get("access_token", ""))
+            refresh: str = str(tokens.get("refresh_token", saved_refresh))
             acct["bearer_token"]  = access
             acct["refresh_token"] = refresh
             save_config(cfg)
@@ -289,23 +292,23 @@ def get_token_auto(cfg: dict, force_browser: bool = False) -> str | None:
     if not tokens:
         return None
 
-    access  = tokens.get("access_token", "")
-    refresh = tokens.get("refresh_token", "")
+    access_val: str  = str(tokens.get("access_token", ""))
+    refresh_val: str = str(tokens.get("refresh_token", ""))
 
-    acct["bearer_token"]  = access
-    acct["refresh_token"] = refresh
+    acct["bearer_token"]  = access_val
+    acct["refresh_token"] = refresh_val
     save_config(cfg)
 
-    print(f"  ✅  Access token:  {len(access)} chars")
-    if refresh:
-        print(f"  ✅  Refresh token: {len(refresh)} chars — saved for automatic renewal")
+    print(f"  ✅  Access token:  {len(access_val)} chars")
+    if refresh_val:
+        print(f"  ✅  Refresh token: {len(refresh_val)} chars — saved for automatic renewal")
         print("      Next token refresh will be silent (no browser).")
     else:
         print("  ⚠️   No refresh_token — you'll need to log in again when this token expires.")
-    return access
+    return access_val
 
 
-def show_token_info(cfg: dict) -> None:
+def show_token_info(cfg: dict[str, Any]) -> None:
     acct    = cfg.get("account", {})
     token   = acct.get("bearer_token", "")
     refresh = acct.get("refresh_token", "")
@@ -338,7 +341,7 @@ def show_token_info(cfg: dict) -> None:
 
 # ══════════════════════════ CLI ═══════════════════════════════════════════════
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Bosch camera token manager")
     parser.add_argument("--browser",  action="store_true", help="Force new browser login")
     parser.add_argument("--refresh",  action="store_true", help="Force refresh_token renewal")
