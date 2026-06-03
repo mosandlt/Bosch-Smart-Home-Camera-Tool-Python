@@ -20,11 +20,9 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-import responses as responses_lib
 
 import bosch_camera
 from bosch_camera import (
-    CLOUD_API,
     cmd_audio,
     cmd_intrusion,
     cmd_wifi,
@@ -40,10 +38,11 @@ CAM_NAME = "Testcam"
 
 def _make_cfg(cam_id: str = CAM_ID, cam_name: str = CAM_NAME) -> dict[str, Any]:
     """Minimal config dict with one camera and a dummy token."""
-    import base64, time
+    import base64
+    import time
 
     def _jwt() -> str:
-        import base64, json as _j
+        import json as _j
         hdr = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
         pay = base64.urlsafe_b64encode(
             _j.dumps({"exp": int(time.time()) + 3600}).encode()

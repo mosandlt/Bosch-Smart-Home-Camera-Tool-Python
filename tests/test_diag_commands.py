@@ -20,7 +20,6 @@ import pytest
 
 import bosch_camera
 from bosch_camera import (
-    CLOUD_API,
     cmd_feature_flags,
     cmd_onvif_scopes,
     cmd_rcp_version,

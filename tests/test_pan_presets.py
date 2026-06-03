@@ -9,7 +9,6 @@ Source: HA integration v12.6.1 PTZ preset port.
 
 from __future__ import annotations
 
-import json
 import types
 import unittest.mock as mock
 

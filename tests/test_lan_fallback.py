@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import socket
-from typing import Iterator
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import responses as responses_lib

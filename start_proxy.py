@@ -30,7 +30,6 @@ import os
 import socket
 import subprocess
 import sys
-import time
 from datetime import datetime
 
 
@@ -114,14 +113,14 @@ def main():
     print()
     print("  Phone Setup (iOS / Android):")
     print("  ─────────────────────────────────────────────────────")
-    print(f"  1. WiFi → your network → Proxy → Manual")
+    print("  1. WiFi → your network → Proxy → Manual")
     print(f"     Server: {local_ip}   Port: {port}")
-    print(f"  2. Open http://mitm.it on the phone browser")
-    print(f"     → download + install the CA certificate")
-    print(f"  3. iOS: Settings → General → About → Certificate Trust")
-    print(f"     → enable mitmproxy cert")
-    print(f"  4. Force-close the Bosch Smart Camera app")
-    print(f"  5. Reopen the app — traffic appears below")
+    print("  2. Open http://mitm.it on the phone browser")
+    print("     → download + install the CA certificate")
+    print("  3. iOS: Settings → General → About → Certificate Trust")
+    print("     → enable mitmproxy cert")
+    print("  4. Force-close the Bosch Smart Camera app")
+    print("  5. Reopen the app — traffic appears below")
     print()
     print("  What to look for:")
     print("  ─────────────────────────────────────────────────────")

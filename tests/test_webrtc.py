@@ -10,16 +10,12 @@ from __future__ import annotations
 
 import argparse
 import errno
-import os
 import socket
-import subprocess
-import sys
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-import bosch_camera
 from bosch_camera import (
     Go2rtcError,
     _build_go2rtc_config,

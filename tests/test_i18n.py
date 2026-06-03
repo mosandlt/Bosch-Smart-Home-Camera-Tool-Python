@@ -13,8 +13,6 @@ Coverage:
 from __future__ import annotations
 
 import ast
-import importlib
-import os
 import sys
 import warnings
 from pathlib import Path
@@ -287,6 +285,6 @@ class TestEnJsonCoversAllTCallSites:
                     missing.append(f"  line {node.lineno}: t({key!r})")
 
         assert not missing, (
-            f"The following t() keys are used in bosch_camera.py but missing from en.json:\n"
+            "The following t() keys are used in bosch_camera.py but missing from en.json:\n"
             + "\n".join(missing)
         )

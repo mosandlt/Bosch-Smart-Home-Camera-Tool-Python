@@ -162,7 +162,7 @@ def _wait_for_callback(timeout: int = 120) -> str | None:
 
     t = threading.Thread(target=serve, daemon=True)
     t.start()
-    print(f"  ⏳  Waiting for login callback on http://localhost:8321/callback ...")
+    print("  ⏳  Waiting for login callback on http://localhost:8321/callback ...")
     t.join(timeout=timeout)
     server.server_close()
 
@@ -196,7 +196,7 @@ def _wait_for_callback_manual() -> str | None:
         return None
     code = qs.get("code", [None])[0]
     if not code:
-        print(f"  ❌  No 'code' found in the URL.")
+        print("  ❌  No 'code' found in the URL.")
         return None
     return code
 
@@ -268,7 +268,7 @@ def get_token_auto(cfg: dict, force_browser: bool = False) -> str | None:
 
     # ── Method 2: Browser PKCE login ─────────────────────────────────────────
     username = acct.get("username", "your email")
-    print(f"\n  🌐  Opening browser login (SingleKey ID)...")
+    print("\n  🌐  Opening browser login (SingleKey ID)...")
     print(f"      Account: {username}")
     print()
 

@@ -65,8 +65,8 @@ def test_event_image_fetch_does_not_send_json_only_accept() -> None:
     sequence broken in the 2026-05-24 incident.
     """
     cam_id = "AABBCCDD-DEAD-BEEF-0000-000000000001"
-    img_url = f"https://residential.cbs.boschsecurity.com/v11/events/E1/snap.jpg"
-    clip_url = f"https://residential.cbs.boschsecurity.com/v11/events/E1/clip.mp4"
+    img_url = "https://residential.cbs.boschsecurity.com/v11/events/E1/snap.jpg"
+    clip_url = "https://residential.cbs.boschsecurity.com/v11/events/E1/clip.mp4"
 
     # /v11/events list — JSON, returns one event with imageUrl + videoClipUrl
     responses_lib.add(

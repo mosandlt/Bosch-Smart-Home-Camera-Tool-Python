@@ -9,13 +9,11 @@ PIN_EVERY_MODE:
 from __future__ import annotations
 
 import argparse
-import sys
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import bosch_camera
 from bosch_camera import _build_stream_urls
 
 

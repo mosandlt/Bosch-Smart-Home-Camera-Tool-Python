@@ -81,7 +81,7 @@ from urllib.parse import urlparse
 
 from bosch_i18n import t, set_lang, detect_lang
 from bosch_maintenance import MaintenanceWindow, fetch_maintenance
-from bosch_tls import bosch_get, CertPinningError  # TOFU fingerprint pinning for LAN cameras
+from bosch_tls import bosch_get  # TOFU fingerprint pinning for LAN cameras
 
 # Suppress InsecureRequestWarning — bosch_tls handles LAN camera TLS security via
 # TOFU fingerprint pinning (verify=False + SHA-256 pin comparison).
@@ -266,7 +266,8 @@ def _is_token_expired(token: str) -> bool:
     Matches _is_token_near_expiry semantics so an undecodable token never
     bypasses a refresh and gets sent to the cloud API.
     """
-    import base64 as _b64, json as _json
+    import base64 as _b64
+    import json as _json
     try:
         parts = token.split(".")
         if len(parts) >= 2:
@@ -285,7 +286,8 @@ def _is_token_near_expiry(token_str: str, buffer_secs: int = 60) -> bool:
     Fail-safe: returns True (treat as near-expiry) if decoding fails.
     Uses only stdlib: base64, json, time.
     """
-    import base64 as _b64, json as _json
+    import base64 as _b64
+    import json as _json
     try:
         parts = token_str.split(".")
         if len(parts) >= 2:
@@ -365,7 +367,8 @@ def get_token(cfg: dict) -> str:
 
 def check_token_age(cfg: dict) -> str:
     """Return human-readable token expiry decoded from JWT claims."""
-    import base64 as _b64, json as _json
+    import base64 as _b64
+    import json as _json
     token = cfg["account"].get("bearer_token", "").strip()
     if not token:
         return "no token"
@@ -1058,7 +1061,7 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
         ffplay = None
 
     if not ffplay:
-        print(f"\n  ❌  ffplay not found. Install with: brew install ffmpeg\n")
+        print("\n  ❌  ffplay not found. Install with: brew install ffmpeg\n")
         return
 
     # Find a free port
@@ -1125,7 +1128,7 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
     threading.Thread(target=fetcher, daemon=True).start()
 
     # Wait for first frame
-    print(f"\n  📺  Starting live view (press Q in player window or Ctrl+C to stop)...")
+    print("\n  📺  Starting live view (press Q in player window or Ctrl+C to stop)...")
     for _ in range(30):
         if current_frame[0]:
             break
@@ -1178,7 +1181,7 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
     finally:
         stop_event.set()
         server.shutdown()
-        print(f"\n  ⏹️   Live view stopped.")
+        print("\n  ⏹️   Live view stopped.")
 
 
 def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
@@ -1315,7 +1318,7 @@ def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "
             "-i", rtsps_url,
             "-c", "copy", "-f", "mpegts", "pipe:1",
         ]
-        print(f"  ▶️   Launching VLC via ffmpeg pipe (audio+video)...")
+        print("  ▶️   Launching VLC via ffmpeg pipe (audio+video)...")
         proxy = subprocess.Popen(ffmpeg_pipe, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         proc  = subprocess.Popen([vlc, "-"], stdin=proxy.stdout, stderr=subprocess.DEVNULL)
         proxy.stdout.close()
@@ -1328,7 +1331,7 @@ def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "
             proc.kill()
         finally:
             proxy.kill()
-            print(f"\n  ⏹️   Live view stopped.")
+            print("\n  ⏹️   Live view stopped.")
         return
     elif ffplay and os.path.exists(ffplay):
         cmd = [ffplay,
@@ -1356,7 +1359,7 @@ def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "
     except KeyboardInterrupt:
         proc.kill()
     finally:
-        print(f"\n  ⏹️   Live view stopped.")
+        print("\n  ⏹️   Live view stopped.")
 
 
 def cmd_test_local(cfg: dict, args) -> None:
@@ -1460,7 +1463,7 @@ def cmd_test_local(cfg: dict, args) -> None:
                 print(f"  API scheme: {full_url}")
 
             if getattr(args, "play", False):
-                print(f"  ▶️   Opening stream...")
+                print("  ▶️   Opening stream...")
                 _open_rtsps_stream(rtsp_url, name, snap_url)
 
         print()
@@ -1720,7 +1723,7 @@ def _open_webrtc_stream(
                 os.unlink(cfg_path)
             except OSError:
                 pass
-        print(f"\n  ⏹️   WebRTC stopped.")
+        print("\n  ⏹️   WebRTC stopped.")
 
 
 def cmd_live(cfg: dict, args) -> None:
@@ -1937,7 +1940,7 @@ def cmd_info(cfg: dict, args) -> None:
     r.raise_for_status()
     cameras = r.json()
 
-    print(f"\n── Camera Info ──────────────────────────────────────────────")
+    print("\n── Camera Info ──────────────────────────────────────────────")
     print(f"   Token age: {check_token_age(cfg)}")
 
     # Protocol version check
@@ -2027,7 +2030,7 @@ def cmd_info(cfg: dict, args) -> None:
         # ── Streaming URLs (live connection) ──────────────────────────────
         # Uses inst=1 for main (max quality) and inst=2 for sub-stream.
         # Both share the same Bosch REMOTE session — sub costs nothing extra.
-        print(f"      Fetching stream URLs...")
+        print("      Fetching stream URLs...")
         try:
             sr = session.put(
                 f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
@@ -2045,7 +2048,7 @@ def cmd_info(cfg: dict, args) -> None:
                     print(f"      Snap URL:      {snap_url}")
                     print(t("cmd.info.stream_url_main", url=main_url))
                     print(t("cmd.info.stream_url_sub",  url=sub_url))
-                    print(f"      Stream:        H.264 1920×1080 30fps + AAC 16kHz (session ~60s)")
+                    print("      Stream:        H.264 1920×1080 30fps + AAC 16kHz (session ~60s)")
             else:
                 print(f"      Stream URLs:   unavailable (HTTP {sr.status_code})")
         except Exception as e:
@@ -2053,7 +2056,7 @@ def cmd_info(cfg: dict, args) -> None:
 
         # ── Extra endpoints (--full only) ─────────────────────────────────
         if full:
-            print(f"\n      ── Full details (--full) ───────────────────────────────")
+            print("\n      ── Full details (--full) ───────────────────────────────")
 
             # /commissioned
             try:
@@ -2161,12 +2164,12 @@ def cmd_info(cfg: dict, args) -> None:
                     psd = psr.json()
                     print(f"      Privacy sound: {psd.get('result', '?')}")
                 elif psr.status_code == 442:
-                    print(f"      Privacy sound: not supported (HTTP 442)")
+                    print("      Privacy sound: not supported (HTTP 442)")
             except Exception:
                 pass
 
             # ── RCP (via proxy) ───────────────────────────────────────────
-            print(f"\n      ── RCP (via proxy) ──────────────────────────────────────")
+            print("\n      ── RCP (via proxy) ──────────────────────────────────────")
             try:
                 # We already opened a REMOTE connection above for stream URLs.
                 # Re-use it by opening a new RCP session on the same proxy hash.
@@ -2210,7 +2213,7 @@ def cmd_info(cfg: dict, args) -> None:
 
     # ── Feature flags (account-level, shown with --full) ──────────────
     if full:
-        print(f"── Feature Flags ─────────────────────────────────────────────")
+        print("── Feature Flags ─────────────────────────────────────────────")
         try:
             ffr = session.get(f"{CLOUD_API}/v11/feature_flags", timeout=10)
             if ffr.status_code == 200:
@@ -2251,7 +2254,6 @@ def _lan_rcp_write(cam_ip: str, command: str, payload_hex: str,
     Returns True on success.  payload_hex may or may not start with "0x".
     `num=1` is required for T_WORD-typed writes (e.g. 0x0c22 LED dimmer).
     """
-    import re as _re
     base = f"http://{cam_ip}/rcp.xml"
     if not payload_hex.lower().startswith("0x"):
         payload_hex = "0x" + payload_hex
@@ -2496,7 +2498,7 @@ def cmd_privacy(cfg: dict, args) -> None:
                 print(f"  {icon_new}  Privacy mode set to {new_state} (LAN RCP).")
             else:
                 print(f"  ❌  LOCAL RCP write failed for {name} ({ip}).")
-                print(f"     Is it a Gen2 camera reachable on LAN?")
+                print("     Is it a Gen2 camera reachable on LAN?")
         return
 
     # ── cloud path (default) ───────────────────────────────────────────────────
@@ -2537,7 +2539,7 @@ def cmd_privacy(cfg: dict, args) -> None:
                 print(f"       Duration:       {dur if dur else 'indefinite'}")
                 if end:
                     print(f"       End time:       {end}")
-            print(f"\n  Run with 'on' or 'off' to toggle. E.g.:")
+            print("\n  Run with 'on' or 'off' to toggle. E.g.:")
             print(f"    python3 bosch_camera.py privacy {name.lower()} on")
             continue
 
@@ -2660,10 +2662,10 @@ def cmd_light(cfg: dict, args) -> None:
             if ok:
                 icon = "💡" if brightness > 0 else "🌑"
                 print(f"  {icon}  Front light set to {desc} (LAN RCP).")
-                print(f"     Note: wallwasher control is cloud-only and was not changed.")
+                print("     Note: wallwasher control is cloud-only and was not changed.")
             else:
                 print(f"  ❌  LOCAL RCP write failed for {name} ({ip}).")
-                print(f"     Is it a Gen2 camera reachable on LAN?")
+                print("     Is it a Gen2 camera reachable on LAN?")
         return
 
     # ── cloud path (default) ───────────────────────────────────────────────────
@@ -2692,7 +2694,7 @@ def cmd_light(cfg: dict, args) -> None:
 
         print(f"\n── Camera Light: {name} ─────────────────────────────────────")
         if not has_light:
-            print(f"  ℹ️   This camera does not support a built-in light.")
+            print("  ℹ️   This camera does not support a built-in light.")
             continue
 
         sched     = feat_status.get("scheduleStatus", "UNKNOWN")
@@ -2709,7 +2711,7 @@ def cmd_light(cfg: dict, args) -> None:
         print(f"  {'💡' if front_on else '🌑'}  General light mode:  {'ON' if front_on else 'OFF'}  "
               f"(intensity: {intensity:.0%})")
         if wall_on:
-            print(f"  💡  Wallwasher:          ON")
+            print("  💡  Wallwasher:          ON")
         print(f"  🕐  Schedule window:     {on_time} → {off_time}")
         print(f"  🏃  Light on motion:     {'YES' if on_motion else 'NO'}  "
               f"(follow-up: {follow_up}s)")
@@ -2723,7 +2725,7 @@ def cmd_light(cfg: dict, args) -> None:
             ovr_front = ovr.get("frontLightOn", False)
             ovr_wall  = ovr.get("wallwasherOn", False)
             ovr_int   = ovr.get("frontLightIntensity")
-            print(f"  ── Override (instant) ──")
+            print("  ── Override (instant) ──")
             print(f"  {'💡' if ovr_front else '🌑'}  Front light:         {'ON' if ovr_front else 'OFF'}"
                   + (f"  (intensity: {ovr_int:.0%})" if ovr_int is not None else ""))
             print(f"  {'💡' if ovr_wall else '🌑'}  Wallwasher:          {'ON' if ovr_wall else 'OFF'}")
@@ -2732,7 +2734,7 @@ def cmd_light(cfg: dict, args) -> None:
 
         if action is None:
             print()
-            print(f"  Commands:")
+            print("  Commands:")
             print(f"    light {name.lower()} on              # both lights ON 100%")
             print(f"    light {name.lower()} off             # both lights OFF")
             print(f"    light {name.lower()} front on/off    # front light only")
@@ -2870,7 +2872,7 @@ def cmd_pan(cfg: dict, args) -> None:
 
         print(f"\n── Pan Control: {name} ──────────────────────────────────────")
         if not pan_limit:
-            print(f"  ℹ️   This camera does not support pan (panLimit=0).")
+            print("  ℹ️   This camera does not support pan (panLimit=0).")
             continue
 
         # Fetch current position
@@ -2945,7 +2947,7 @@ def cmd_pan(cfg: dict, args) -> None:
             at_limit = data.get("cameraStoppedAtLimit", False)
             print(f"  ✅  Moving to {new_pos:+d}°  (ETA: {eta_ms}ms)")
             if at_limit:
-                print(f"  ⚠️   Camera stopped at mechanical limit.")
+                print("  ⚠️   Camera stopped at mechanical limit.")
         else:
             print(f"  ❌  Failed: HTTP {resp.status_code}  {resp.text[:200]}")
 
@@ -3000,7 +3002,7 @@ def cmd_notifications(cfg: dict, args) -> None:
         print(f"  {icon}  Current state:  {current}  →  {state_label}")
 
         if action is None:
-            print(f"\n  Run with 'on' or 'off' to toggle. E.g.:")
+            print("\n  Run with 'on' or 'off' to toggle. E.g.:")
             print(f"    python3 bosch_camera.py notifications {name.lower()} on")
             continue
 
@@ -3153,7 +3155,7 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
 
     # Build baseline
     last_seen: dict[str, str] = {}
-    print(f"\n  Fetching baseline events...")
+    print("\n  Fetching baseline events...")
     for name, cam_info in cams.items():
         events = api_get_events(session_req, cam_info["id"], limit=1)
         if events:
@@ -3254,7 +3256,7 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
             credentials_updated_callback=on_creds_updated,
         )
 
-        print(f"\n  🔑  Registering with FCM...")
+        print("\n  🔑  Registering with FCM...")
         fcm_token = await client.checkin_or_register()
         print(f"  ✅  FCM Token: {fcm_token[:50]}...")
 
@@ -3269,16 +3271,16 @@ def _watch_fcm_push(cfg: dict, token: str, cams: dict, duration: int, auto_snap:
             timeout=10,
         )
         if r.status_code in (200, 201, 204):
-            print(f"  ✅  Registered with Bosch CBS!")
+            print("  ✅  Registered with Bosch CBS!")
         else:
             print(f"  ⚠️   CBS registration: HTTP {r.status_code} — pushes may not arrive")
 
         n_cams = len(cams)
         print(f"\n  📡  Listening for FCM pushes ({n_cams} camera(s), mode={mode_label})...")
-        print(f"      Near-instant event detection (~2-3s latency)")
+        print("      Near-instant event detection (~2-3s latency)")
         if duration:
             print(f"      Will stop after {duration}s.")
-        print(f"      Press Ctrl+C to stop.\n")
+        print("      Press Ctrl+C to stop.\n")
 
         start_time[0] = time.time()
 
@@ -3838,12 +3840,12 @@ def cmd_watch(cfg: dict, args) -> None:
             return
 
         if push_mode != "polling":
-            print(f"  🔄  FCM failed — falling back to standard API polling...")
+            print("  🔄  FCM failed — falling back to standard API polling...")
         # Fall through to polling code below
 
     # Build initial baseline of seen event IDs per camera
     last_seen: dict[str, str] = {}
-    print(f"\n  Fetching baseline events...")
+    print("\n  Fetching baseline events...")
     for name, cam_info in cams.items():
         events = api_get_events(session, cam_info["id"], limit=1)
         if events:
@@ -3858,7 +3860,7 @@ def cmd_watch(cfg: dict, args) -> None:
         print(f"  Will stop after {duration}s.")
     print(f"  Polling every {interval}s.")
     if auto_snap:
-        print(f"  --snapshot: will auto-download and open event JPEG on new events.")
+        print("  --snapshot: will auto-download and open event JPEG on new events.")
     print()
 
     start_time = time.time()
@@ -4101,7 +4103,7 @@ def cmd_intercom(cfg: dict, args) -> None:
     print(f"  🔊  Setting speaker level to {speaker_level}%...")
     rg = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/audio", timeout=10)
     if rg.status_code == 442:
-        print(f"  ⚠️  Audio settings not supported on this camera model (HTTP 442)")
+        print("  ⚠️  Audio settings not supported on this camera model (HTTP 442)")
     elif rg.status_code != 200:
         print(f"  ⚠️  Could not fetch current audio state: HTTP {rg.status_code}")
     else:
@@ -4117,12 +4119,12 @@ def cmd_intercom(cfg: dict, args) -> None:
         if r.status_code in (200, 201, 204):
             print(f"  ✅  Speaker level set to {speaker_level}%")
         elif r.status_code == 442:
-            print(f"  ⚠️  Audio settings not supported on this camera model (HTTP 442)")
+            print("  ⚠️  Audio settings not supported on this camera model (HTTP 442)")
         else:
             print(f"  ⚠️  Could not set speaker level: HTTP {r.status_code}")
 
     # Step 2: Open live connection with audio enabled
-    print(f"  📡  Opening live connection with audio...")
+    print("  📡  Opening live connection with audio...")
     conn_data = None
     for conn_type in LIVE_TYPE_CANDIDATES:
         try:
@@ -4138,7 +4140,7 @@ def cmd_intercom(cfg: dict, args) -> None:
             continue
 
     if not conn_data or not conn_data.get("urls"):
-        print(f"  ❌  Could not open live connection for intercom.")
+        print("  ❌  Could not open live connection for intercom.")
         return
 
     proxy_url = conn_data["urls"][0]
@@ -4148,7 +4150,7 @@ def cmd_intercom(cfg: dict, args) -> None:
     # Build RTSPS URL with audio enabled
     rtsps_url = f"rtsps://{proxy_host}:443/{proxy_hash}/rtsp_tunnel?inst=2&enableaudio=1&fmtp=1&maxSessionDuration={duration}"
 
-    print(f"  ✅  Connection established!")
+    print("  ✅  Connection established!")
     print(f"  🎤  Intercom session ({duration}s)")
     print(f"  🔗  Audio stream: {rtsps_url}")
     print()
@@ -4156,15 +4158,15 @@ def cmd_intercom(cfg: dict, args) -> None:
     # Step 3: Use ffmpeg for bidirectional audio
     # Listen: RTSPS stream -> local speakers
     # Talk: local microphone -> not yet supported via cloud API (requires media tunnel)
-    print(f"  📻  Starting audio playback from camera...")
-    print(f"      (Two-way talk requires direct media tunnel — listen-only via RTSPS)")
-    print(f"      Press Ctrl+C to stop.\n")
+    print("  📻  Starting audio playback from camera...")
+    print("      (Two-way talk requires direct media tunnel — listen-only via RTSPS)")
+    print("      Press Ctrl+C to stop.\n")
 
     # Use ffplay for audio playback
     ffplay = shutil.which("ffplay")
     if not ffplay:
-        print(f"  ❌  ffplay not found. Install ffmpeg to use intercom.")
-        print(f"      brew install ffmpeg")
+        print("  ❌  ffplay not found. Install ffmpeg to use intercom.")
+        print("      brew install ffmpeg")
         return
 
     try:
@@ -4183,14 +4185,14 @@ def cmd_intercom(cfg: dict, args) -> None:
             stderr=subprocess.DEVNULL,
         )
         print(f"  🔊  Playing camera audio (PID {proc.pid})...")
-        print(f"      Ctrl+C to stop.")
+        print("      Ctrl+C to stop.")
         proc.wait(timeout=duration)
     except subprocess.TimeoutExpired:
         proc.terminate()
         print(f"\n  ⏱️  Duration of {duration}s reached.")
     except KeyboardInterrupt:
         proc.terminate()
-        print(f"\n  ⏹️  Intercom stopped.")
+        print("\n  ⏹️  Intercom stopped.")
     except Exception as e:
         print(f"  ❌  Intercom error: {e}")
 
@@ -4291,7 +4293,7 @@ def cmd_motion(cfg: dict, args) -> None:
         print(f"  {icon}  Motion: {enabled_str}  Sensitivity: {current_sens}")
 
         if not enable and not disable and not sensitivity:
-            print(f"\n  Run with --enable / --disable / --sensitivity to change.")
+            print("\n  Run with --enable / --disable / --sensitivity to change.")
             print(f"  E.g.: python3 bosch_camera.py motion {name.lower()} --enable --sensitivity SUPER_HIGH")
             continue
 
@@ -4360,7 +4362,7 @@ def cmd_recording(cfg: dict, args) -> None:
         print(f"  {icon}  Record Sound: {sound_str}")
 
         if not sound_on and not sound_off:
-            print(f"\n  Run with --sound-on or --sound-off to change.")
+            print("\n  Run with --sound-on or --sound-off to change.")
             print(f"  E.g.: python3 bosch_camera.py recording {name.lower()} --sound-on")
             continue
 
@@ -4449,7 +4451,7 @@ def cmd_audio(cfg: dict, args: argparse.Namespace) -> None:
 
         if mic is None and speaker is None:
             if not as_json:
-                print(f"\n  Run with --mic N / --speaker N (0-100) to change. E.g.:")
+                print("\n  Run with --mic N / --speaker N (0-100) to change. E.g.:")
                 print(f"    python3 bosch_camera.py audio {name.lower()} --mic 60 --speaker 80")
             results.append(entry)
             continue
@@ -4559,7 +4561,7 @@ def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
 
         if mode is None and sens is None and dist is None:
             if not as_json:
-                print(f"\n  Run with --mode / --sensitivity / --distance to change. E.g.:")
+                print("\n  Run with --mode / --sensitivity / --distance to change. E.g.:")
                 print(f"    python3 bosch_camera.py intrusion {name.lower()} --mode indoor --sensitivity 4")
             results.append(entry)
             continue
@@ -4822,7 +4824,7 @@ def rcp_read(rcp_url: str, command: str, sessionid: str,
     try:
         r = requests.get(rcp_url, params=params,
                          auth=("", ""), timeout=10, verify=False)
-    except Exception as e:
+    except Exception:
         return None
 
     if r.status_code != 200:
@@ -4924,10 +4926,10 @@ def _rcp_setup(cam_info: dict, token: str) -> tuple[str, str]:
     Prints status messages. Raises RuntimeError on failure.
     """
     cam_id = cam_info["id"]
-    print(f"  🌐  Opening REMOTE proxy connection...")
+    print("  🌐  Opening REMOTE proxy connection...")
     proxy_base, _ = rcp_open_connection(cam_id, token)
     print(f"  🔗  Proxy: {proxy_base}")
-    print(f"  🤝  RCP session handshake (cached)...")
+    print("  🤝  RCP session handshake (cached)...")
     sessionid = rcp_session_cached(proxy_base)
     print(f"  ✅  Session: {sessionid}")
     rcp_url = f"{proxy_base}/rcp.xml"
@@ -4988,26 +4990,26 @@ def cmd_rcp(cfg: dict, args) -> None:
 
         # ── info ──────────────────────────────────────────────────────────────
         if sub in ("info", "all"):
-            print(f"\n  ── Identity ──────────────────────────────────────────────")
+            print("\n  ── Identity ──────────────────────────────────────────────")
             # 0x0aea — product name (null-terminated ASCII)
             d = rcp_read(rcp_url, "0x0aea", sessionid)
             if d:
                 print(f"  Product:    {rcp_parse_string(d)}")
             else:
-                print(f"  Product:    (not available)")
+                print("  Product:    (not available)")
             # 0x0aee — cloud FQDN
             d = rcp_read(rcp_url, "0x0aee", sessionid)
             if d:
                 print(f"  Cloud FQDN: {rcp_parse_string(d)}")
             else:
-                print(f"  Cloud FQDN: (not available)")
+                print("  Cloud FQDN: (not available)")
             # 0x0a36 — LAN IP (4-byte or string)
             d = rcp_read(rcp_url, "0x0a36", sessionid)
             if d:
                 ip_str = rcp_parse_ip(d) if len(d) == 4 else rcp_parse_string(d)
                 print(f"  LAN IP:     {ip_str}  (via RCP)")
             else:
-                print(f"  LAN IP:     (not available)")
+                print("  LAN IP:     (not available)")
             # 0x0a30 — MAC address (6 bytes)
             d = rcp_read(rcp_url, "0x0a30", sessionid)
             if d and len(d) >= 6:
@@ -5016,21 +5018,21 @@ def cmd_rcp(cfg: dict, args) -> None:
             elif d:
                 print(f"  MAC:        {rcp_parse_string(d)}")
             else:
-                print(f"  MAC:        (not available)")
+                print("  MAC:        (not available)")
 
         # ── clock ─────────────────────────────────────────────────────────────
         if sub in ("clock", "all"):
-            print(f"\n  ── Camera Clock ──────────────────────────────────────────")
+            print("\n  ── Camera Clock ──────────────────────────────────────────")
             d = rcp_read(rcp_url, "0x0a0f", sessionid)
             if d:
                 print(f"  Clock:      {rcp_parse_clock(d)}  (camera local time)")
                 print(f"  Raw:        {d.hex()}")
             else:
-                print(f"  Clock:      (not available)")
+                print("  Clock:      (not available)")
 
         # ── snapshot ──────────────────────────────────────────────────────────
         if sub in ("snapshot", "all"):
-            print(f"\n  ── RCP Thumbnail Snapshot ────────────────────────────────")
+            print("\n  ── RCP Thumbnail Snapshot ────────────────────────────────")
             # Confirm resolution via 0x0a88 (returns 8B: width 4B BE + height 4B BE)
             import struct as _struct
             res_d = rcp_read(rcp_url, "0x0a88", sessionid)
@@ -5057,11 +5059,11 @@ def cmd_rcp(cfg: dict, args) -> None:
                 print(f"  Data:       {len(d)} bytes (not JPEG — saved as .bin: {tmp})")
                 print(f"  Header:     {d[:16].hex()}")
             else:
-                print(f"  Snapshot:   (not available)")
+                print("  Snapshot:   (not available)")
 
         # ── alarms ────────────────────────────────────────────────────────────
         if sub in ("alarms", "all"):
-            print(f"\n  ── Alarm Catalog (0x0c38) ────────────────────────────────")
+            print("\n  ── Alarm Catalog (0x0c38) ────────────────────────────────")
             d = rcp_read(rcp_url, "0x0c38", sessionid)
             if d:
                 strings = rcp_parse_utf16be_strings(d)
@@ -5071,11 +5073,11 @@ def cmd_rcp(cfg: dict, args) -> None:
                 else:
                     print(f"  (no strings decoded — raw {len(d)} bytes: {d[:32].hex()}...)")
             else:
-                print(f"  Alarms:     (not available)")
+                print("  Alarms:     (not available)")
 
         # ── privacy ───────────────────────────────────────────────────────────
         if sub in ("privacy", "all"):
-            print(f"\n  ── Privacy Mask State (0x0d00) ───────────────────────────")
+            print("\n  ── Privacy Mask State (0x0d00) ───────────────────────────")
             d = rcp_read(rcp_url, "0x0d00", sessionid)
             if d and len(d) >= 1:
                 state_byte = d[1] if len(d) > 1 else d[0]
@@ -5084,11 +5086,11 @@ def cmd_rcp(cfg: dict, args) -> None:
                 print(f"  {icon}  Privacy mask: {state_str}  (byte[1]={state_byte:#04x})")
                 print(f"  Raw:          {d.hex()}")
             else:
-                print(f"  Privacy:    (not available)")
+                print("  Privacy:    (not available)")
 
         # ── dimmer ────────────────────────────────────────────────────────────
         if sub in ("dimmer", "all"):
-            print(f"\n  ── LED Dimmer (0x0c22) ───────────────────────────────────")
+            print("\n  ── LED Dimmer (0x0c22) ───────────────────────────────────")
             d = rcp_read(rcp_url, "0x0c22", sessionid, type_="T_WORD")
             if d is None:
                 # Try P_OCTET fallback
@@ -5100,11 +5102,11 @@ def cmd_rcp(cfg: dict, args) -> None:
                 else:
                     print(f"  Dimmer raw: {d.hex()}")
             else:
-                print(f"  Dimmer:     (not available)")
+                print("  Dimmer:     (not available)")
 
         # ── motion ────────────────────────────────────────────────────────────
         if sub in ("motion", "all"):
-            print(f"\n  ── Motion Zones (0x0c0a) ─────────────────────────────────")
+            print("\n  ── Motion Zones (0x0c0a) ─────────────────────────────────")
             d = rcp_read(rcp_url, "0x0c0a", sessionid)
             if d:
                 # Each zone is typically 8 bytes: x1(2B) y1(2B) x2(2B) y2(2B) in 0-10000 units
@@ -5122,11 +5124,11 @@ def cmd_rcp(cfg: dict, args) -> None:
                     else:
                         print(f"  Zone {z}:     {chunk.hex()}")
             else:
-                print(f"  Motion:     (not available)")
+                print("  Motion:     (not available)")
 
         # ── services ──────────────────────────────────────────────────────────
         if sub in ("services", "all"):
-            print(f"\n  ── Network Services (0x0c62) ─────────────────────────────")
+            print("\n  ── Network Services (0x0c62) ─────────────────────────────")
             d = rcp_read(rcp_url, "0x0c62", sessionid)
             if d:
                 # Services list is typically null-terminated ASCII strings
@@ -5137,11 +5139,11 @@ def cmd_rcp(cfg: dict, args) -> None:
                 else:
                     print(f"  Services raw: {len(d)} bytes  {d[:48].hex()}")
             else:
-                print(f"  Services:   (not available)")
+                print("  Services:   (not available)")
 
         # ── frame ─────────────────────────────────────────────────────────────
         if sub in ("frame", "all"):
-            print(f"\n  ── Raw Frame (0x0c98) ────────────────────────────────────")
+            print("\n  ── Raw Frame (0x0c98) ────────────────────────────────────")
             d = rcp_read(rcp_url, "0x0c98", sessionid)
             if d and len(d) == 115200:
                 safe_name = name.replace(' ', '_')
@@ -5169,7 +5171,7 @@ def cmd_rcp(cfg: dict, args) -> None:
                     with open(path, "wb") as f:
                         f.write(d)
                     print(f"  Frame:      320x180 YUV422 ({len(d):,} bytes) -> saved as raw YUV: {path}")
-                    print(f"  Note:       Install numpy + Pillow for JPEG conversion")
+                    print("  Note:       Install numpy + Pillow for JPEG conversion")
             elif d:
                 safe_name = name.replace(' ', '_')
                 path = os.path.join(BASE_DIR, f"rcp_frame_{safe_name}.bin")
@@ -5177,11 +5179,11 @@ def cmd_rcp(cfg: dict, args) -> None:
                     f.write(d)
                 print(f"  Frame:      {len(d):,} bytes (unexpected size — saved as .bin: {path})")
             else:
-                print(f"  Frame:      (not available)")
+                print("  Frame:      (not available)")
 
         # ── script ────────────────────────────────────────────────────────────
         if sub in ("script", "all"):
-            print(f"\n  ── IVA Automation Script (0x09f3) ────────────────────────")
+            print("\n  ── IVA Automation Script (0x09f3) ────────────────────────")
             d = rcp_read(rcp_url, "0x09f3", sessionid)
             if d and d[:2] == b'\x1f\x8b':  # gzip magic
                 import gzip
@@ -5197,11 +5199,11 @@ def cmd_rcp(cfg: dict, args) -> None:
                 print(f"  Data:       {len(d):,} bytes (not gzip)")
                 print(f"  Raw header: {d[:16].hex()}")
             else:
-                print(f"  Script:     (not available)")
+                print("  Script:     (not available)")
 
         # ── iva ───────────────────────────────────────────────────────────────
         if sub in ("iva", "all"):
-            print(f"\n  ── IVA Rules & resiMotion Config ─────────────────────────")
+            print("\n  ── IVA Rules & resiMotion Config ─────────────────────────")
             # 0x0ba9 — IVA rule type names (null-terminated ASCII list)
             d = rcp_read(rcp_url, "0x0ba9", sessionid)
             if d:
@@ -5213,7 +5215,7 @@ def cmd_rcp(cfg: dict, args) -> None:
                 else:
                     print(f"  IVA rule types: raw {len(d)} bytes  {d[:32].hex()}")
             else:
-                print(f"  IVA rule types: (not available)")
+                print("  IVA rule types: (not available)")
             # 0x0a1b — resiMotion config (motion detection polygon + sensitivity params)
             d = rcp_read(rcp_url, "0x0a1b", sessionid)
             if d:
@@ -5225,11 +5227,11 @@ def cmd_rcp(cfg: dict, args) -> None:
                 except Exception:
                     print(f"  resiMotion raw: {len(d):,} bytes  {d[:32].hex()}")
             else:
-                print(f"  resiMotion config: (not available)")
+                print("  resiMotion config: (not available)")
 
         # ── bitrate ───────────────────────────────────────────────────────────────
         if sub in ("bitrate", "all"):
-            print(f"\n  ── Bitrate Ladder (0x0c81) ───────────────────────────────")
+            print("\n  ── Bitrate Ladder (0x0c81) ───────────────────────────────")
             d = rcp_read(rcp_url, "0x0c81", sessionid)
             if d and len(d) >= 4:
                 import struct as _s
@@ -5241,9 +5243,9 @@ def cmd_rcp(cfg: dict, args) -> None:
                     label = labels[i] if i < len(labels) else f"tier{i}"
                     marker = " ←" if i == len(tiers)-1 else ""
                     print(f"  [{label}]  {kbps:,} kbps  ({kbps//1000:.1f} Mbps){marker}")
-                print(f"\n  Note: highQualityVideo=true selects the highest tier")
+                print("\n  Note: highQualityVideo=true selects the highest tier")
             else:
-                print(f"  Bitrate: (not available)")
+                print("  Bitrate: (not available)")
 
         print()
 
@@ -5303,9 +5305,9 @@ def cmd_token(cfg: dict, args) -> None:
             from get_token import get_token_auto
             new_token = get_token_auto(cfg, force_browser=force_browser)
             if new_token:
-                print(f"\n  ✅  Token renewed successfully.")
+                print("\n  ✅  Token renewed successfully.")
             else:
-                print(f"\n  ❌  Token renewal failed.")
+                print("\n  ❌  Token renewal failed.")
         except ImportError:
             print("  ❌  get_token.py not found in the same folder.")
     elif expired:
@@ -5665,7 +5667,7 @@ def cmd_autofollow(cfg: dict, args) -> None:
 
         print(f"\n── Auto-Follow: {name} ─────────────────────────────────────")
         if not pan_limit:
-            print(f"  ℹ️   This camera does not support auto-follow (panLimit=0).")
+            print("  ℹ️   This camera does not support auto-follow (panLimit=0).")
             continue
 
         r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/autofollow", timeout=10)
@@ -5677,7 +5679,7 @@ def cmd_autofollow(cfg: dict, args) -> None:
         print(f"  {icon}  Auto-follow:  {'ENABLED' if current else 'DISABLED'}")
 
         if action is None:
-            print(f"\n  Run with 'on' or 'off' to toggle. E.g.:")
+            print("\n  Run with 'on' or 'off' to toggle. E.g.:")
             print(f"    python3 bosch_camera.py autofollow {name.lower()} on")
             continue
 
@@ -5738,15 +5740,15 @@ def cmd_siren(cfg: dict, args) -> None:
 
     if model != "HOME_Eyes_Indoor":
         print(f"  ⚠️  Siren not supported on model '{model or 'unknown'}'.")
-        print(f"      Only HOME_Eyes_Indoor (Gen2 Indoor II) is currently supported.")
-        print(f"      Gen1 /acoustic_alarm endpoint returns HTTP 404 — needs investigation.")
+        print("      Only HOME_Eyes_Indoor (Gen2 Indoor II) is currently supported.")
+        print("      Gen1 /acoustic_alarm endpoint returns HTTP 404 — needs investigation.")
         return
 
     # Optional: update alarm duration via alarm_settings before triggering
     if set_duration is not None:
         duration_secs = int(set_duration)
         if not 10 <= duration_secs <= 300:
-            print(f"  ❌  Duration must be between 10 and 300 seconds.")
+            print("  ❌  Duration must be between 10 and 300 seconds.")
             return
         # Fetch current alarm_settings to preserve other fields
         rs = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/alarm_settings", timeout=10)
@@ -5763,11 +5765,11 @@ def cmd_siren(cfg: dict, args) -> None:
         if rp.status_code in (200, 201, 204):
             print(f"  ✅  Siren duration set to {duration_secs}s")
         elif rp.status_code == 443:
-            print(f"  ❌  Camera is in privacy mode — disable privacy first")
+            print("  ❌  Camera is in privacy mode — disable privacy first")
             return
         else:
             print(f"  ⚠️  Could not set duration: HTTP {rp.status_code}  {rp.text[:200]}")
-            print(f"      Continuing to trigger alarm with existing duration...")
+            print("      Continuing to trigger alarm with existing duration...")
 
     action = "Stopping" if stop else "Triggering"
     print(f"  🔔  {action} panic alarm (Gen2 Indoor II)...")
@@ -5780,9 +5782,9 @@ def cmd_siren(cfg: dict, args) -> None:
     if r.status_code in (200, 201, 204):
         print(f"  ✅  Siren {'stopped' if stop else 'activated'}!")
     elif r.status_code == 443:
-        print(f"  ❌  Camera is in privacy mode — disable privacy first")
+        print("  ❌  Camera is in privacy mode — disable privacy first")
     elif r.status_code == 442:
-        print(f"  ⚠️  Siren not supported on this camera model (HTTP 442)")
+        print("  ⚠️  Siren not supported on this camera model (HTTP 442)")
     else:
         print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
 
@@ -5803,7 +5805,7 @@ def cmd_unread(cfg: dict, args) -> None:
     cameras = get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
 
-    print(f"\n── Unread Events ──────────────────────────────────────")
+    print("\n── Unread Events ──────────────────────────────────────")
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
         r = session.get(
@@ -5815,7 +5817,7 @@ def cmd_unread(cfg: dict, args) -> None:
             count = data.get("numberOfUnreadEvents", 0)
             print(f"  📬  {name}: {count} unread event(s)")
         elif r.status_code == 401:
-            print(f"  ❌  Token expired.")
+            print("  ❌  Token expired.")
             return
         else:
             print(f"  ❌  {name}: HTTP {r.status_code}")
@@ -5855,10 +5857,10 @@ def cmd_privacy_sound(cfg: dict, args) -> None:
             print("  ❌  Token expired.")
             return
         if r.status_code == 442:
-            print(f"  ⚠️   Privacy sound not supported on this camera model (HTTP 442)")
+            print("  ⚠️   Privacy sound not supported on this camera model (HTTP 442)")
             continue
         if r.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable for this operation")
+            print("  ⚠️   Camera offline or unavailable for this operation")
             try:
                 print(f"       {r.json()}")
             except Exception:
@@ -5873,7 +5875,7 @@ def cmd_privacy_sound(cfg: dict, args) -> None:
         print(f"  {icon}  Privacy sound:  {'ENABLED' if current else 'DISABLED'}")
 
         if action is None:
-            print(f"\n  Run with 'on' or 'off' to toggle. E.g.:")
+            print("\n  Run with 'on' or 'off' to toggle. E.g.:")
             print(f"    python3 bosch_camera.py privacy-sound {name.lower()} on")
             continue
 
@@ -5893,7 +5895,7 @@ def cmd_privacy_sound(cfg: dict, args) -> None:
             icon_new = "🔊" if new_state else "🔇"
             print(f"  {icon_new}  Privacy sound {'ENABLED' if new_state else 'DISABLED'}.")
         elif pr.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable for this operation")
+            print("  ⚠️   Camera offline or unavailable for this operation")
             try:
                 print(f"       {pr.json()}")
             except Exception:
@@ -5960,7 +5962,7 @@ def cmd_rules(cfg: dict, args) -> None:
                 rule_id = data.get("id", "(unknown)")
                 print(f"  ✅  Rule created: id={rule_id}")
             elif r.status_code == 444:
-                print(f"  ⚠️   Camera offline or unavailable for this operation")
+                print("  ⚠️   Camera offline or unavailable for this operation")
                 try:
                     print(f"       {r.json()}")
                 except Exception:
@@ -6020,7 +6022,7 @@ def cmd_rules(cfg: dict, args) -> None:
             if pr.status_code in (200, 201, 204):
                 print(f"  ✅  Rule updated: isActive={target_rule.get('isActive')}")
             elif pr.status_code == 444:
-                print(f"  ⚠️   Camera offline or unavailable for this operation")
+                print("  ⚠️   Camera offline or unavailable for this operation")
                 try:
                     print(f"       {pr.json()}")
                 except Exception:
@@ -6040,9 +6042,9 @@ def cmd_rules(cfg: dict, args) -> None:
                 timeout=10,
             )
             if r.status_code in (200, 204):
-                print(f"  ✅  Rule deleted.")
+                print("  ✅  Rule deleted.")
             elif r.status_code == 444:
-                print(f"  ⚠️   Camera offline or unavailable for this operation")
+                print("  ⚠️   Camera offline or unavailable for this operation")
                 try:
                     print(f"       {r.json()}")
                 except Exception:
@@ -6057,7 +6059,7 @@ def cmd_rules(cfg: dict, args) -> None:
             print("  ❌  Token expired.")
             return
         if r.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable for this operation")
+            print("  ⚠️   Camera offline or unavailable for this operation")
             try:
                 print(f"       {r.json()}")
             except Exception:
@@ -6068,8 +6070,8 @@ def cmd_rules(cfg: dict, args) -> None:
             continue
         rules = r.json()
         if not rules:
-            print(f"  (no rules configured)")
-            print(f"\n  Create a rule with:")
+            print("  (no rules configured)")
+            print("\n  Create a rule with:")
             print(f"    python3 bosch_camera.py rules {name.lower()} add --name 'Night Mode' --start 22:00 --end 06:00 --days 0,1,2,3,4,5,6")
             continue
         print(f"  {len(rules)} rule(s):\n")
@@ -6110,7 +6112,7 @@ def cmd_friends(cfg: dict, args) -> None:
     sub     = getattr(args, "sub", None)
     sub_arg = getattr(args, "sub_arg", None)
 
-    print(f"\n── Friends / Camera Sharing ─────────────────────────────────────")
+    print("\n── Friends / Camera Sharing ─────────────────────────────────────")
 
     if sub == "invite":
         email = sub_arg
@@ -6130,7 +6132,7 @@ def cmd_friends(cfg: dict, args) -> None:
             print(f"  ✅  Invitation sent! Friend ID: {data.get('id', '(see response)')}")
             print(f"      {json.dumps(data, indent=2)}")
         elif r.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable for this operation")
+            print("  ⚠️   Camera offline or unavailable for this operation")
             try:
                 print(f"       {r.json()}")
             except Exception:
@@ -6169,9 +6171,9 @@ def cmd_friends(cfg: dict, args) -> None:
             timeout=10,
         )
         if r.status_code in (200, 201, 204):
-            print(f"  ✅  Camera(s) shared!")
+            print("  ✅  Camera(s) shared!")
         elif r.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable for this operation")
+            print("  ⚠️   Camera offline or unavailable for this operation")
             try:
                 print(f"       {r.json()}")
             except Exception:
@@ -6193,9 +6195,9 @@ def cmd_friends(cfg: dict, args) -> None:
             timeout=10,
         )
         if r.status_code in (200, 201, 204):
-            print(f"  ✅  All cameras unshared.")
+            print("  ✅  All cameras unshared.")
         elif r.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable for this operation")
+            print("  ⚠️   Camera offline or unavailable for this operation")
             try:
                 print(f"       {r.json()}")
             except Exception:
@@ -6217,9 +6219,9 @@ def cmd_friends(cfg: dict, args) -> None:
             timeout=10,
         )
         if r.status_code in (200, 201, 204):
-            print(f"  ✅  Invitation re-sent!")
+            print("  ✅  Invitation re-sent!")
         elif r.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable for this operation")
+            print("  ⚠️   Camera offline or unavailable for this operation")
             try:
                 print(f"       {r.json()}")
             except Exception:
@@ -6236,9 +6238,9 @@ def cmd_friends(cfg: dict, args) -> None:
         print(f"  🗑️   Removing friend {friend_id}...")
         r = session.delete(f"{CLOUD_API}/v11/friends/{friend_id}", timeout=10)
         if r.status_code in (200, 204):
-            print(f"  ✅  Friend removed.")
+            print("  ✅  Friend removed.")
         elif r.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable for this operation")
+            print("  ⚠️   Camera offline or unavailable for this operation")
             try:
                 print(f"       {r.json()}")
             except Exception:
@@ -6253,7 +6255,7 @@ def cmd_friends(cfg: dict, args) -> None:
         print("  ❌  Token expired.")
         return
     if r.status_code == 444:
-        print(f"  ⚠️   Camera offline or unavailable for this operation")
+        print("  ⚠️   Camera offline or unavailable for this operation")
         try:
             print(f"       {r.json()}")
         except Exception:
@@ -6264,9 +6266,9 @@ def cmd_friends(cfg: dict, args) -> None:
         return
     friends = r.json()
     if not friends:
-        print(f"  (no friends / camera shares)")
-        print(f"\n  Invite a friend with:")
-        print(f"    python3 bosch_camera.py friends invite user@example.com")
+        print("  (no friends / camera shares)")
+        print("\n  Invite a friend with:")
+        print("    python3 bosch_camera.py friends invite user@example.com")
         return
     print(f"  {len(friends)} friend(s):\n")
     for friend in friends:
@@ -6303,8 +6305,8 @@ def cmd_accept_invite(cfg: dict, args) -> None:
         print("  ❌  Invitation token is required. Usage: accept-invite TOKEN")
         return
 
-    print(f"\n── Accept Friend Invitation ───────────────────────────────────")
-    print(f"  📨  Accepting invitation...")
+    print("\n── Accept Friend Invitation ───────────────────────────────────")
+    print("  📨  Accepting invitation...")
 
     r = session.post(
         f"{CLOUD_API}/v11/friends/accept",
@@ -6313,14 +6315,14 @@ def cmd_accept_invite(cfg: dict, args) -> None:
         timeout=10,
     )
     if r.status_code in (200, 201, 204):
-        print(f"  ✅  Invitation accepted!")
+        print("  ✅  Invitation accepted!")
         try:
             data = r.json()
             print(f"      {json.dumps(data, indent=2)}")
         except Exception:
             pass
     elif r.status_code == 444:
-        print(f"  ⚠️   Camera offline or unavailable for this operation")
+        print("  ⚠️   Camera offline or unavailable for this operation")
         try:
             print(f"       {r.json()}")
         except Exception:
@@ -6342,7 +6344,7 @@ def cmd_shared_with_friends(cfg: dict, args) -> None:
     cameras = get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
 
-    print(f"\n── Shared With Friends ────────────────────────────────────────")
+    print("\n── Shared With Friends ────────────────────────────────────────")
 
     for cam_name, cam_info in cams.items():
         cam_id = cam_info["id"]
@@ -6366,7 +6368,7 @@ def cmd_shared_with_friends(cfg: dict, args) -> None:
         if r.status_code == 200:
             friends = r.json()
             if not friends:
-                print(f"      (not shared with anyone)")
+                print("      (not shared with anyone)")
                 continue
             if isinstance(friends, list):
                 print(f"      Shared with {len(friends)} friend(s):")
@@ -6386,7 +6388,7 @@ def cmd_shared_with_friends(cfg: dict, args) -> None:
             else:
                 print(f"      {json.dumps(friends, indent=2)}")
         elif r.status_code == 444:
-            print(f"      ⚠️   Camera offline or unavailable")
+            print("      ⚠️   Camera offline or unavailable")
         else:
             print(f"      ❌  HTTP {r.status_code}  {r.text[:200]}")
 
@@ -6452,13 +6454,13 @@ def cmd_zones(cfg: dict, args) -> None:
             if r.status_code in (200, 204):
                 print(f"  ✅  {len(zones)} zone(s) set.")
             elif r.status_code == 443:
-                print(f"  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+                print("  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
             else:
                 print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
             continue
 
         if sub == "clear":
-            print(f"  🗑️   Clearing all zones...")
+            print("  🗑️   Clearing all zones...")
             r = session.post(
                 f"{CLOUD_API}/v11/video_inputs/{cam_id}/motion_sensitive_areas",
                 json=[],
@@ -6466,9 +6468,9 @@ def cmd_zones(cfg: dict, args) -> None:
                 timeout=10,
             )
             if r.status_code in (200, 204):
-                print(f"  ✅  All zones cleared.")
+                print("  ✅  All zones cleared.")
             elif r.status_code == 443:
-                print(f"  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+                print("  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
             else:
                 print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
             continue
@@ -6479,14 +6481,14 @@ def cmd_zones(cfg: dict, args) -> None:
             print("  ❌  Token expired.")
             return
         if r.status_code == 443:
-            print(f"  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+            print("  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
             continue
         if r.status_code != 200:
             print(f"  ❌  Could not fetch zones: HTTP {r.status_code}")
             continue
         zones = r.json()
         if not zones:
-            print(f"  (no motion zones configured)")
+            print("  (no motion zones configured)")
             continue
         print(f"  {len(zones)} zone(s):\n")
         for i, z in enumerate(zones):
@@ -6548,13 +6550,13 @@ def cmd_privacy_masks(cfg: dict, args) -> None:
             if r.status_code in (200, 204):
                 print(f"  ✅  {len(masks)} mask(s) set.")
             elif r.status_code == 443:
-                print(f"  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+                print("  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
             else:
                 print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
             continue
 
         if sub == "clear":
-            print(f"  🗑️   Clearing all masks...")
+            print("  🗑️   Clearing all masks...")
             r = session.post(
                 f"{CLOUD_API}/v11/video_inputs/{cam_id}/privacy_masks",
                 json=[],
@@ -6562,9 +6564,9 @@ def cmd_privacy_masks(cfg: dict, args) -> None:
                 timeout=10,
             )
             if r.status_code in (200, 204):
-                print(f"  ✅  All masks cleared.")
+                print("  ✅  All masks cleared.")
             elif r.status_code == 443:
-                print(f"  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+                print("  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
             else:
                 print(f"  ❌  Failed: HTTP {r.status_code}  {r.text[:200]}")
             continue
@@ -6575,14 +6577,14 @@ def cmd_privacy_masks(cfg: dict, args) -> None:
             print("  ❌  Token expired.")
             return
         if r.status_code == 443:
-            print(f"  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+            print("  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
             continue
         if r.status_code != 200:
             print(f"  ❌  Could not fetch masks: HTTP {r.status_code}")
             continue
         masks = r.json()
         if not masks:
-            print(f"  (no privacy masks configured)")
+            print("  (no privacy masks configured)")
             continue
         print(f"  {len(masks)} mask(s):\n")
         for i, m in enumerate(masks):
@@ -6637,7 +6639,7 @@ def cmd_lighting_schedule(cfg: dict, args) -> None:
             if threshold is not None:
                 data["darknessThreshold"] = float(threshold)
             data["scheduleStatus"] = "FOLLOW_SCHEDULE"
-            print(f"  ✏️   Updating schedule...")
+            print("  ✏️   Updating schedule...")
             pr = session.put(
                 f"{CLOUD_API}/v11/video_inputs/{cam_id}/lighting_options",
                 json=data,
@@ -6647,7 +6649,7 @@ def cmd_lighting_schedule(cfg: dict, args) -> None:
             if pr.status_code in (200, 204):
                 print(f"  ✅  Schedule updated: {data.get('generalLightOnTime')} → {data.get('generalLightOffTime')}")
             elif pr.status_code == 444:
-                print(f"  ⚠️   Camera offline.")
+                print("  ⚠️   Camera offline.")
             else:
                 print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
             continue
@@ -6658,10 +6660,10 @@ def cmd_lighting_schedule(cfg: dict, args) -> None:
             print("  ❌  Token expired.")
             return
         if r.status_code == 444:
-            print(f"  ⚠️   Camera offline.")
+            print("  ⚠️   Camera offline.")
             continue
         if r.status_code == 442:
-            print(f"  ⚠️   Not supported on this camera model.")
+            print("  ⚠️   Not supported on this camera model.")
             continue
         if r.status_code != 200:
             print(f"  ❌  HTTP {r.status_code}")
@@ -6702,7 +6704,7 @@ def cmd_rename(cfg: dict, args) -> None:
     name, cam_info = next(iter(cams.items()))
     cam_id = cam_info["id"]
 
-    print(f"\n── Rename Camera ──────────────────────────────────────────────")
+    print("\n── Rename Camera ──────────────────────────────────────────────")
     print(f"  📷  Camera:    {name}")
     print(f"  ✏️   New name:  {new_name}")
 
@@ -6726,9 +6728,9 @@ def cmd_rename(cfg: dict, args) -> None:
         if old_name != new_name and old_name in cfg["cameras"]:
             del cfg["cameras"][old_name]
         save_config(cfg)
-        print(f"  💾  Config updated.")
+        print("  💾  Config updated.")
     elif r.status_code == 444:
-        print(f"  ⚠️   Camera offline or unavailable for this operation")
+        print("  ⚠️   Camera offline or unavailable for this operation")
         try:
             print(f"       {r.json()}")
         except Exception:
@@ -6758,7 +6760,7 @@ def cmd_profile(cfg: dict, args) -> None:
     elif edit:
         edit = None
 
-    print(f"\n── User Profile ───────────────────────────────────────────────")
+    print("\n── User Profile ───────────────────────────────────────────────")
 
     # Fetch current profile
     r = session.get(f"{CLOUD_API}/v11/registration/check", timeout=10)
@@ -6766,7 +6768,7 @@ def cmd_profile(cfg: dict, args) -> None:
         print("  ❌  Token expired.")
         return
     if r.status_code == 444:
-        print(f"  ⚠️   Camera offline or unavailable for this operation")
+        print("  ⚠️   Camera offline or unavailable for this operation")
         try:
             print(f"       {r.json()}")
         except Exception:
@@ -6813,7 +6815,7 @@ def cmd_profile(cfg: dict, args) -> None:
             print(f"  ℹ️   {key}: {val}")
 
     if edit != "edit":
-        print(f"\n  Edit with: python3 bosch_camera.py profile edit --display-name 'Name' --marketing on|off")
+        print("\n  Edit with: python3 bosch_camera.py profile edit --display-name 'Name' --marketing on|off")
         return
 
     # Edit profile — build body from current profile + changes
@@ -6846,9 +6848,9 @@ def cmd_profile(cfg: dict, args) -> None:
         timeout=10,
     )
     if pr.status_code in (200, 201, 204):
-        print(f"  ✅  Profile updated.")
+        print("  ✅  Profile updated.")
     elif pr.status_code == 444:
-        print(f"  ⚠️   Camera offline or unavailable for this operation")
+        print("  ⚠️   Camera offline or unavailable for this operation")
         try:
             print(f"       {pr.json()}")
         except Exception:
@@ -6868,10 +6870,10 @@ def cmd_account(cfg: dict, args) -> None:
     token   = get_token(cfg)
     session = make_session(token)
 
-    print(f"\n── Account Info ───────────────────────────────────────────────")
+    print("\n── Account Info ───────────────────────────────────────────────")
 
     # Feature flags
-    print(f"\n  ── Feature Flags ──────────────────────────────────────────────")
+    print("\n  ── Feature Flags ──────────────────────────────────────────────")
     r = session.get(f"{CLOUD_API}/v11/feature_flags", timeout=10)
     if r.status_code == 200:
         flags = r.json()
@@ -6891,12 +6893,12 @@ def cmd_account(cfg: dict, args) -> None:
         else:
             print(f"  {json.dumps(flags, indent=2)}")
     elif r.status_code == 444:
-        print(f"  ⚠️   Camera offline or unavailable for this operation")
+        print("  ⚠️   Camera offline or unavailable for this operation")
     else:
         print(f"  ⚠️   Feature flags: HTTP {r.status_code}")
 
     # Contracts (T&C versions)
-    print(f"\n  ── Contracts / Terms ──────────────────────────────────────────")
+    print("\n  ── Contracts / Terms ──────────────────────────────────────────")
     r = session.get(f"{CLOUD_API}/v11/contracts", params={"locale": "de_DE"}, timeout=10)
     if r.status_code == 200:
         contracts = r.json()
@@ -6915,18 +6917,18 @@ def cmd_account(cfg: dict, args) -> None:
         else:
             print(f"  {contracts}")
     elif r.status_code == 444:
-        print(f"  ⚠️   Camera offline or unavailable for this operation")
+        print("  ⚠️   Camera offline or unavailable for this operation")
     else:
         print(f"  ⚠️   Contracts: HTTP {r.status_code}")
 
     # Purchases / subscription
-    print(f"\n  ── Purchases / Subscriptions ──────────────────────────────────")
+    print("\n  ── Purchases / Subscriptions ──────────────────────────────────")
     r = session.get(f"{CLOUD_API}/v11/purchases", timeout=10)
     if r.status_code == 200:
         purchases = r.json()
         if isinstance(purchases, list):
             if not purchases:
-                print(f"  (no active purchases/subscriptions)")
+                print("  (no active purchases/subscriptions)")
             for p in purchases:
                 pname   = p.get("name", p.get("productId", "?"))
                 pstatus = p.get("status", p.get("state", "?"))
@@ -6941,7 +6943,7 @@ def cmd_account(cfg: dict, args) -> None:
         else:
             print(f"  {purchases}")
     elif r.status_code == 444:
-        print(f"  ⚠️   Camera offline or unavailable for this operation")
+        print("  ⚠️   Camera offline or unavailable for this operation")
     else:
         print(f"  ⚠️   Purchases: HTTP {r.status_code}")
 
@@ -7097,7 +7099,7 @@ def cmd_snapshot_mjpeg(cfg: dict, args: argparse.Namespace) -> None:
             dest = os.path.join(BASE_DIR, f"mjpeg_snapshot_{safe_name}_{ts}.jpg")
 
         # FFmpeg subprocess — capture stdout as JPEG bytes
-        print(f"  🎞️   Running FFmpeg...")
+        print("  🎞️   Running FFmpeg...")
         t0 = time.monotonic()
         try:
             proc = subprocess.run(
@@ -7218,7 +7220,6 @@ def cmd_rcp_version(cfg: dict, args: argparse.Namespace) -> None:
     Usage:
       python3 bosch_camera.py rcp-version [<cam>]
     """
-    import struct as _struct
 
     token   = get_token(cfg)
     session = make_session(token)
@@ -7261,7 +7262,7 @@ def cmd_rcp_version(cfg: dict, args: argparse.Namespace) -> None:
         if ver_primary != "(not available)":
             print(f"\n  ✅  {model} FW {fw}: RCP v{ver_primary}")
         else:
-            print(f"\n  ⚠️   RCP version opcodes not available on this camera.")
+            print("\n  ⚠️   RCP version opcodes not available on this camera.")
 
 
 def cmd_feature_flags(cfg: dict, args: argparse.Namespace) -> None:
@@ -7330,7 +7331,7 @@ def cmd_feature_flags(cfg: dict, args: argparse.Namespace) -> None:
             for k in sorted(disabled):
                 print(f"    ❌  {k}")
         if other:
-            print(f"\n  Other:")
+            print("\n  Other:")
             for k, v in sorted(other):
                 print(f"    ℹ️   {k}: {v}")
         if not flags_dict:
@@ -7370,7 +7371,7 @@ def cmd_timestamp(cfg: dict, args) -> None:
             print("  ❌  Token expired.")
             return
         if r.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable")
+            print("  ⚠️   Camera offline or unavailable")
             continue
         if r.status_code != 200:
             print(f"  ❌  Could not fetch timestamp state: HTTP {r.status_code}")
@@ -7381,7 +7382,7 @@ def cmd_timestamp(cfg: dict, args) -> None:
         print(f"  {icon}  Timestamp overlay:  {'ENABLED' if current else 'DISABLED'}")
 
         if action is None:
-            print(f"\n  Run with 'on' or 'off' to toggle. E.g.:")
+            print("\n  Run with 'on' or 'off' to toggle. E.g.:")
             print(f"    python3 bosch_camera.py timestamp {name.lower()} on")
             continue
 
@@ -7400,7 +7401,7 @@ def cmd_timestamp(cfg: dict, args) -> None:
         if pr.status_code in (200, 201, 204):
             print(f"  ✅  Timestamp overlay {'ENABLED' if new_state else 'DISABLED'}.")
         elif pr.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable")
+            print("  ⚠️   Camera offline or unavailable")
         else:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
@@ -7431,7 +7432,7 @@ def cmd_notification_types(cfg: dict, args) -> None:
             print("  ❌  Token expired.")
             return
         if r.status_code == 444:
-            print(f"  ⚠️   Camera offline or unavailable")
+            print("  ⚠️   Camera offline or unavailable")
             continue
         if r.status_code != 200:
             print(f"  ❌  Could not fetch notification types: HTTP {r.status_code}")
@@ -7442,7 +7443,7 @@ def cmd_notification_types(cfg: dict, args) -> None:
             print(f"  {icon}  {key}: {'ON' if val else 'OFF'}")
 
         if not sets:
-            print(f"\n  Toggle with: --set movement=on person=off audio=on")
+            print("\n  Toggle with: --set movement=on person=off audio=on")
             continue
 
         # Parse --set pairs
@@ -7456,7 +7457,7 @@ def cmd_notification_types(cfg: dict, args) -> None:
                 print(f"  ⚠️   Invalid value for {key}: {val_str} (use on/off)")
                 continue
 
-        print(f"\n  🔄  Updating notification types...")
+        print("\n  🔄  Updating notification types...")
         pr = session.put(
             f"{CLOUD_API}/v11/video_inputs/{cam_id}/notifications",
             json=data,
@@ -7464,7 +7465,7 @@ def cmd_notification_types(cfg: dict, args) -> None:
             timeout=10,
         )
         if pr.status_code in (200, 201, 204):
-            print(f"  ✅  Notification types updated.")
+            print("  ✅  Notification types updated.")
             for key, val in sorted(data.items()):
                 icon = "✅" if val else "❌"
                 print(f"  {icon}  {key}: {'ON' if val else 'OFF'}")
@@ -7597,7 +7598,7 @@ def main():
     for _alias in ("liveshot", "livesnap", "live-snapshot"):
         p_alias = subparsers.add_parser(
             _alias,
-            help=f"Alias for 'snapshot --live'",
+            help="Alias for 'snapshot --live'",
             description=f"📸  {_alias} — Alias for: snapshot --live\n\nSee 'snapshot --help' for full details.",
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )

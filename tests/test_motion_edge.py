@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -153,7 +153,6 @@ class TestWatchFlagParsing:
     def _parse(self, extra_args: list[str]) -> argparse.Namespace:
         """Run the real argparse main() parser in isolation and return parsed args."""
         import sys
-        from io import StringIO
         # Build a minimal parser that mirrors the watch sub-command wiring
         # by importing bosch_camera and invoking its real parser.
         old_argv = sys.argv

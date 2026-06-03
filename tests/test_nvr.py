@@ -19,17 +19,14 @@ import argparse
 import os
 import subprocess
 import time
-from typing import Any
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 import bosch_camera
 from bosch_camera import (
     _nvr_clip_path,
     _nvr_all_clips,
     _nvr_prune,
-    _nvr_disk_mb,
     _nvr_is_recording,
     _nvr_recording_duration,
     _nvr_active,
@@ -37,8 +34,6 @@ from bosch_camera import (
     _start_motion_recording,
     _nvr_smb_upload,
     _cmd_nvr_status,
-    _cmd_nvr_list,
-    _cmd_nvr_prune,
     _cmd_nvr_upload,
     cmd_nvr,
     _NVR_DEFAULT_MAX_CLIPS,
@@ -95,7 +90,6 @@ def _make_args(**kwargs) -> argparse.Namespace:
 
 def _create_clips(cam_name: str, n: int, tmp_path, suffix_start: int = 0) -> list[str]:
     """Create n dummy .mp4 files in the NVR directory and return their paths."""
-    import datetime as dt
     date_str = "2026-05-17"
     clip_dir = tmp_path / "captures" / cam_name / "nvr" / date_str
     clip_dir.mkdir(parents=True, exist_ok=True)

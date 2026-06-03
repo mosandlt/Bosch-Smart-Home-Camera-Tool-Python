@@ -10,12 +10,10 @@ Source: bosch_camera.py _post_event_webhook()
 
 from __future__ import annotations
 
-import sys
 from typing import Any
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
-import responses as responses_lib
 
 import bosch_camera
 
