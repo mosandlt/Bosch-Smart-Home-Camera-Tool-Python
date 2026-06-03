@@ -83,7 +83,7 @@ def _make_cfg_two_cams() -> dict[str, Any]:
         "name": CAM_NAME2,
         "model": "HOME_Eyes_Indoor",
         "firmware": "9.40.102",
-        "mac": "bb:cc:dd:ee:ff:00",
+        "mac": "aa:bb:cc:dd:ee:ff",
         "has_light": False,
         "pan_limit": 0,
         "local_ip": "192.0.2.20",
