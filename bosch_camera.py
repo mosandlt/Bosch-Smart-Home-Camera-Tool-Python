@@ -998,7 +998,7 @@ def cmd_snapshot(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
     live    = getattr(args, "live", False)
     quality = getattr(args, "quality", None)
@@ -1256,10 +1256,14 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
                 except Exception:
                     pass
                 finally:
-                    try: src.close()
-                    except Exception: pass
-                    try: dst.close()
-                    except Exception: pass
+                    try:
+                        src.close()
+                    except Exception:
+                        pass
+                    try:
+                        dst.close()
+                    except Exception:
+                        pass
 
             t1 = threading.Thread(target=_pipe, args=(client, tls, False), daemon=True)
             t2 = threading.Thread(target=_pipe, args=(tls, client, True), daemon=True)
@@ -1293,23 +1297,11 @@ def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "
 
     if use_vlc and os.path.exists(vlc):
         # VLC can't skip TLS verification for rtsps://, so proxy via ffmpeg:
-        # ffmpeg pulls rtsps:// and re-muxes to MPEG-TS over HTTP on localhost
+        # ffmpeg pulls rtsps:// and re-muxes to MPEG-TS piped into VLC's stdin
         ffmpeg = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
         if not ffmpeg or not os.path.exists(ffmpeg):
             print("  ⚠️   ffmpeg not found — needed to proxy stream for VLC. Install: brew install ffmpeg")
             return
-        import socket as _socket
-        with _socket.socket() as _s:
-            _s.bind(("127.0.0.1", 0))
-            http_port = _s.getsockname()[1]
-        local_url = f"http://127.0.0.1:{http_port}/live"
-        ffmpeg_cmd = [
-            ffmpeg, "-loglevel", "warning",
-            "-rtsp_transport", "tcp", "-tls_verify", "0",
-            "-i", rtsps_url,
-            "-c", "copy", "-f", "mpegts",
-            f"http://127.0.0.1:{http_port}/live",
-        ]
         # ffmpeg can't serve HTTP — use pipe to VLC's stdin instead
         # Pipe: ffmpeg → stdout (mpegts) → VLC stdin
         ffmpeg_pipe = [
@@ -1736,7 +1728,7 @@ def cmd_live(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
 
     use_sub: bool = getattr(args, "sub", False)
@@ -3600,7 +3592,6 @@ def _nvr_smb_upload(clip_path: str, cfg: dict) -> tuple[bool, str]:
 
     try:
         import smbclient  # type: ignore[import-unresolved]
-        import smbclient.shutil as smb_shutil  # type: ignore[import-unresolved]
     except ImportError:
         return False, t("err.smb.library_missing")
 
@@ -3776,7 +3767,7 @@ def cmd_watch(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
     interval  = getattr(args, "interval", 30) or 30
     duration  = getattr(args, "duration", 0) or 0
@@ -4084,7 +4075,7 @@ def cmd_intercom(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
     duration = getattr(args, "duration", 60) or 60
     speaker_level = getattr(args, "speaker_level", 50) or 50
@@ -4266,7 +4257,7 @@ def cmd_motion(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
     enable  = getattr(args, "enable", False)
     disable = getattr(args, "disable", False)
@@ -4338,7 +4329,7 @@ def cmd_recording(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
     sound_on  = getattr(args, "sound_on",  False)
     sound_off = getattr(args, "sound_off", False)
@@ -4567,7 +4558,6 @@ def cmd_intrusion(cfg: dict, args: argparse.Namespace) -> None:
             continue
 
         # Validate
-        valid_modes = ("indoor", "outdoor", "ALL_MOTIONS", "ZONES")
         if mode is not None and mode.lower() not in ("indoor", "outdoor"):
             # also accept raw API values
             if mode not in ("ALL_MOTIONS", "ZONES"):
@@ -4960,7 +4950,7 @@ def cmd_rcp(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     sub     = (getattr(args, "sub", None) or "").lower()
 
@@ -4985,8 +4975,6 @@ def cmd_rcp(cfg: dict, args) -> None:
         except RuntimeError as e:
             print(f"  ❌  RCP setup failed: {e}")
             continue
-
-        run_all = (sub == "all")
 
         # ── info ──────────────────────────────────────────────────────────────
         if sub in ("info", "all"):
@@ -5539,8 +5527,10 @@ def cmd_menu(cfg: dict) -> None:
     except ValueError:
         return  # empty Enter or invalid → just redraw menu
 
-    if c == 1:          cmd_status(cfg, a)
-    elif c == 2:        cmd_info(cfg, a)
+    if c == 1:
+        cmd_status(cfg, a)
+    elif c == 2:
+        cmd_info(cfg, a)
     elif 3 <= c < 3 + len(cam_names):
         a.cam = cam_names[c - 3]
         a.live = False
@@ -5651,7 +5641,7 @@ def cmd_autofollow(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     action  = getattr(args, "action", None)
 
@@ -5723,7 +5713,7 @@ def cmd_siren(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
 
     if len(cams) != 1:
@@ -5802,7 +5792,7 @@ def cmd_unread(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
 
     print("\n── Unread Events ──────────────────────────────────────")
@@ -5838,7 +5828,7 @@ def cmd_privacy_sound(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     action  = getattr(args, "action", None)
 
@@ -5917,7 +5907,7 @@ def cmd_rules(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     sub     = getattr(args, "sub", None)
 
@@ -6108,7 +6098,7 @@ def cmd_friends(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     sub     = getattr(args, "sub", None)
     sub_arg = getattr(args, "sub_arg", None)
 
@@ -6341,7 +6331,7 @@ def cmd_shared_with_friends(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cams    = resolve_cam(cfg, getattr(args, "cam", None))
 
     print("\n── Shared With Friends ────────────────────────────────────────")
@@ -6410,7 +6400,7 @@ def cmd_zones(cfg: dict, args) -> None:
     import json as _json
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     sub     = getattr(args, "sub", None)
 
@@ -6511,7 +6501,7 @@ def cmd_privacy_masks(cfg: dict, args) -> None:
     import json as _json
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     sub     = getattr(args, "sub", None)
 
@@ -6604,7 +6594,7 @@ def cmd_lighting_schedule(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     sub     = getattr(args, "sub", None)
 
@@ -6688,7 +6678,7 @@ def cmd_rename(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     new_name = getattr(args, "new_name", None)
 
@@ -7352,7 +7342,7 @@ def cmd_timestamp(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     action  = getattr(args, "action", None)
 
@@ -7417,7 +7407,7 @@ def cmd_notification_types(cfg: dict, args) -> None:
     """
     token   = get_token(cfg)
     session = make_session(token)
-    cameras = get_cameras(cfg, session)
+    get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     sets    = getattr(args, "set", None)
 

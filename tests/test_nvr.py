@@ -284,7 +284,7 @@ class TestFifoPrune:
         """After prune, surviving clips must be the lexicographically newest."""
         cam = "TestCam"
         # create 30 clips with sortable names 000000..000029
-        all_clips = _create_clips(cam, 30, tmp_path)
+        _create_clips(cam, 30, tmp_path)
         with patch.object(bosch_camera, "BASE_DIR", str(tmp_path)):
             _nvr_prune(cam, keep=10)
             remaining = _nvr_all_clips(cam, str(tmp_path))

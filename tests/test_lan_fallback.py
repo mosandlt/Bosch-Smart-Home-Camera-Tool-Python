@@ -555,8 +555,6 @@ class TestLanHelpers:
         mock_resp.content = b"<rcp><result>ok</result></rcp>"
         with patch("requests.get", return_value=mock_resp) as mock_get:
             bosch_camera._lan_rcp_write("192.0.2.1", "0x0d00", "00010000")
-        _, kwargs = mock_get.call_args
-        params = kwargs.get("params") or mock_get.call_args[0][1] if len(mock_get.call_args[0]) > 1 else {}
         # Either positional or keyword — just check the call was made
         assert mock_get.called
 

@@ -140,7 +140,6 @@ class TestStartGo2rtcErrors:
         monkeypatch.setattr("shutil.which", lambda _: "/usr/local/bin/go2rtc")
 
         # Mock socket.socket to raise EADDRINUSE on bind
-        orig_socket = socket.socket
 
         class _FakeSocket:
             def __init__(self, *a, **kw):
@@ -165,9 +164,6 @@ class TestStartGo2rtcErrors:
         monkeypatch.setattr("shutil.which", lambda _: "/usr/local/bin/go2rtc")
 
         # Allow port check to pass
-        bind_calls = [0]
-        orig_socket_cls = socket.socket
-
         class _FakeSocketAllowBind:
             def __init__(self, *a, **kw):
                 pass
