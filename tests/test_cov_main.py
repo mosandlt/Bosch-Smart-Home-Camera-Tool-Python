@@ -817,30 +817,56 @@ def test_dispatch_shared_with_cam() -> None:
 
 # NOTE: "zones", "privacy-masks", "lighting-schedule" are present in the dispatch
 # dict (bosch_camera.py lines 8961-8963) but have NO add_parser() call in main().
-# Argparse rejects them with SystemExit(2) before dispatch is reached.
-# REAL BUG: bosch_camera.py:8934 dispatch dict — zones/privacy-masks/lighting-schedule
-# are unreachable: no subparsers.add_parser() registered for these three commands.
+# zones/privacy-masks/lighting-schedule were wired into the dispatch dict but had
+# no subparsers.add_parser() — making them CLI-unreachable. Now registered; these
+# tests pin that each one parses and routes to its handler with the right args.
 
 
-def test_zones_not_in_argparse() -> None:
-    """zones is in dispatch dict but not registered as argparse subcommand — exits 2."""
-    with pytest.raises(SystemExit) as exc:
-        _run(["zones"])
-    assert exc.value.code == 2
+def test_dispatch_zones_clear() -> None:
+    """zones <cam> clear → cmd_zones with cam + sub parsed."""
+    with _patch_cmd("cmd_zones") as m:
+        _run(["zones", "Garten", "clear"])
+    m.assert_called_once()
+    _, args = m.call_args[0]
+    assert args.cam == "Garten"
+    assert args.sub == "clear"
 
 
-def test_privacy_masks_not_in_argparse() -> None:
-    """privacy-masks is in dispatch dict but not registered — exits 2."""
-    with pytest.raises(SystemExit) as exc:
-        _run(["privacy-masks"])
-    assert exc.value.code == 2
+def test_dispatch_privacy_masks_set() -> None:
+    """privacy-masks <cam> set --json → cmd_privacy_masks with json parsed."""
+    with _patch_cmd("cmd_privacy_masks") as m:
+        _run(["privacy-masks", "Garten", "set", "--json", "[]"])
+    m.assert_called_once()
+    _, args = m.call_args[0]
+    assert args.cam == "Garten"
+    assert args.sub == "set"
+    assert args.json == "[]"
 
 
-def test_lighting_schedule_not_in_argparse() -> None:
-    """lighting-schedule is in dispatch dict but not registered — exits 2."""
-    with pytest.raises(SystemExit) as exc:
-        _run(["lighting-schedule"])
-    assert exc.value.code == 2
+def test_dispatch_lighting_schedule_set() -> None:
+    """lighting-schedule <cam> set --on/--off/--motion/--threshold all parse."""
+    with _patch_cmd("cmd_lighting_schedule") as m:
+        _run([
+            "lighting-schedule", "Garten", "set",
+            "--on", "18:00", "--off", "23:00", "--motion", "--threshold", "0.4",
+        ])
+    m.assert_called_once()
+    _, args = m.call_args[0]
+    assert args.cam == "Garten"
+    assert args.sub == "set"
+    assert args.on == "18:00"
+    assert args.off == "23:00"
+    assert args.motion is True
+    assert args.threshold == 0.4
+
+
+def test_lighting_schedule_motion_defaults_none() -> None:
+    """Without --motion the flag stays None (tri-state the handler relies on)."""
+    with _patch_cmd("cmd_lighting_schedule") as m:
+        _run(["lighting-schedule", "Garten"])
+    _, args = m.call_args[0]
+    assert args.motion is None
+    assert args.threshold is None
 
 
 def test_dispatch_rename() -> None:

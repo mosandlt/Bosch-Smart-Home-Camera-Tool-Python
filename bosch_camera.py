@@ -8662,6 +8662,98 @@ def main() -> None:
     p_shared.add_argument("cam", nargs="?", metavar="<camera>",
                           help="Camera name (optional, default: all cameras)")
 
+    # ── zones ─────────────────────────────────────────────────────────────
+    p_zones = subparsers.add_parser(
+        "zones",
+        help="Manage motion detection zones (cloud API)",
+        description=(
+            "🎯  zones — Manage motion detection zones\n"
+            "\n"
+            "  Normalized 0.0–1.0 rectangles stored on the camera.\n"
+            "  API: GET/POST /v11/video_inputs/{id}/motion_sensitive_areas\n"
+            "\n"
+            "  Subcommands:\n"
+            "    (none)  → list current zones\n"
+            "    set     → replace zones from a JSON array (--json)\n"
+            "    clear   → remove all zones"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py zones Garten\n"
+            "    python3 bosch_camera.py zones Garten set --json '[{\"x\":0.0,\"y\":0.3,\"w\":0.67,\"h\":0.7}]'\n"
+            "    python3 bosch_camera.py zones Garten clear"
+        ),
+    )
+    p_zones.add_argument("cam", nargs="?", metavar="<camera>",
+                         help="Camera name or partial match (omit = all cameras)")
+    p_zones.add_argument("sub", nargs="?", metavar="set|clear",
+                         help="Subcommand: set or clear zones")
+    p_zones.add_argument("--json", metavar="JSON",
+                         help="Zones as a JSON array of {x,y,w,h} (for set)")
+
+    # ── privacy-masks ─────────────────────────────────────────────────────
+    p_pmasks = subparsers.add_parser(
+        "privacy-masks",
+        help="Manage privacy mask zones (cloud API)",
+        description=(
+            "🛡️  privacy-masks — Manage privacy mask zones\n"
+            "\n"
+            "  Normalized 0.0–1.0 rectangles blacked out in the video.\n"
+            "  API: GET/POST /v11/video_inputs/{id}/privacy_masks\n"
+            "\n"
+            "  Subcommands:\n"
+            "    (none)  → list current masks\n"
+            "    set     → replace masks from a JSON array (--json)\n"
+            "    clear   → remove all masks"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py privacy-masks Garten\n"
+            "    python3 bosch_camera.py privacy-masks Garten set --json '[{\"x\":0.0,\"y\":0.0,\"w\":0.3,\"h\":0.3}]'\n"
+            "    python3 bosch_camera.py privacy-masks Garten clear"
+        ),
+    )
+    p_pmasks.add_argument("cam", nargs="?", metavar="<camera>",
+                          help="Camera name or partial match (omit = all cameras)")
+    p_pmasks.add_argument("sub", nargs="?", metavar="set|clear",
+                          help="Subcommand: set or clear masks")
+    p_pmasks.add_argument("--json", metavar="JSON",
+                          help="Masks as a JSON array of {x,y,w,h} (for set)")
+
+    # ── lighting-schedule ─────────────────────────────────────────────────
+    p_lsched = subparsers.add_parser(
+        "lighting-schedule",
+        help="View or modify the LED lighting schedule (outdoor cameras)",
+        description=(
+            "💡  lighting-schedule — LED light schedule\n"
+            "\n"
+            "  Only available for outdoor cameras (Eyes) with an LED light.\n"
+            "  API: GET/PUT /v11/video_inputs/{id}/lighting_options\n"
+            "\n"
+            "  Subcommands:\n"
+            "    (none)  → show current schedule\n"
+            "    set     → update on/off time, motion, darkness threshold"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py lighting-schedule Garten\n"
+            "    python3 bosch_camera.py lighting-schedule Garten set --on 18:00 --off 23:00 --motion --threshold 0.4"
+        ),
+    )
+    p_lsched.add_argument("cam", nargs="?", metavar="<camera>",
+                          help="Camera name or partial match (omit = all cameras)")
+    p_lsched.add_argument("sub", nargs="?", metavar="set",
+                          help="Subcommand: set the schedule")
+    p_lsched.add_argument("--on", metavar="HH:MM", help="Light-on time (for set)")
+    p_lsched.add_argument("--off", metavar="HH:MM", help="Light-off time (for set)")
+    p_lsched.add_argument("--motion", action="store_true", default=None,
+                          help="Turn on light when motion is detected (for set)")
+    p_lsched.add_argument("--threshold", type=float, metavar="0.0-1.0",
+                          help="Darkness threshold 0.0–1.0 (for set)")
+
     # ── rename ────────────────────────────────────────────────────────────
     p_rename = subparsers.add_parser(
         "rename",
