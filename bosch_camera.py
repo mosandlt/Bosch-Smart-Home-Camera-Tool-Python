@@ -5932,9 +5932,9 @@ def cmd_rules(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
         if sub == "add":
             rule_name = getattr(args, "rule_name", None) or "New Rule"
-            start     = getattr(args, "start", "00:00")
-            end       = getattr(args, "end", "23:59")
-            days_str  = getattr(args, "days", "0,1,2,3,4,5,6")
+            start     = getattr(args, "start", None) or "00:00"
+            end       = getattr(args, "end", None) or "23:59"
+            days_str  = getattr(args, "days", None) or "0,1,2,3,4,5,6"
             weekdays  = [int(d.strip()) for d in days_str.split(",") if d.strip().isdigit()]
 
             body = {
