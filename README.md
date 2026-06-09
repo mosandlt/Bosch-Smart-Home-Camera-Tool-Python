@@ -37,6 +37,7 @@ Standalone Python CLI for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innen
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
+  - [Network Connectivity](#network-connectivity) — required ports, VLAN/subnet pitfalls
 - [Features](#features)
 - [CLI Reference](#cli-reference)
   - [Status & Info](#status--info)
@@ -296,6 +297,34 @@ sequenceDiagram
     Note over CLI,Cam: cloud never contacted — Gen2 only
     Note over CLI: 5xx cloud error on other cmds → hint: try --local
 ```
+
+### Network Connectivity
+
+The CLI host must be able to reach each camera's IP on the LAN. The Bosch cloud auto-discovers the camera IP, but stream/snapshot/RCP traffic flows directly from the CLI host to the camera. If a firewall, VLAN boundary, or guest network blocks that path, `--local` snapshots fail and live streams stay on the cloud relay.
+
+#### Required ports
+
+| Direction | Protocol / Port | Purpose | Required |
+|---|---|---|---|
+| CLI host → camera IP | **TCP/443** | Snapshots (`--local`), camera REST API, RTSPS live stream | **Yes for `--local`** |
+| CLI host → `*.boschsecurity.com` | TCP/443 | OAuth, REMOTE/cloud stream, FCM push registration | Yes |
+| CLI host → `fcm.googleapis.com` / `mtalk.google.com` | TCP/5228 | FCM push (`watch --push`); falls back to polling if blocked | Optional |
+
+#### Common pitfalls
+
+- **Camera in a different subnet/VLAN than the CLI host** — router/firewall must allow CLI-host outbound to the camera's IP on TCP/443.
+- **IoT/guest network isolation** (FRITZ!Box "Gastzugang", Unifi guest network) blocks LAN-to-LAN by default.
+- **Camera reachable from the Bosch app but not from the CLI** — the app talks via cloud, so this proves nothing about LAN reachability.
+
+#### Quick check
+
+```bash
+nc -vz 192.168.x.y 443
+# or
+curl -k -v --connect-timeout 5 https://192.168.x.y/
+```
+
+If both time out, the issue is between your host and the camera (network/firewall), not the CLI. Use `bosch ping --local` to confirm — it returns `LOCAL: unreachable` with the same root cause.
 
 ### `bosch ping` flow
 
