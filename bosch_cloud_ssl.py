@@ -135,7 +135,7 @@ class _BoschCloudAdapter(HTTPAdapter):
             **connection_pool_kw,
         )
 
-    def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:  # type: ignore[override]
+    def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:
         proxy_kwargs["ssl_context"] = self._ssl_context
         return super().proxy_manager_for(proxy, **proxy_kwargs)
 
