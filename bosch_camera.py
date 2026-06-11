@@ -1064,17 +1064,19 @@ def cmd_snapshot(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             if not cam_info.get("local_ip"):
                 print(t("cmd.snapshot.live_no_local"))
                 print(t("cmd.snapshot.live_no_local_hint", path=CONFIG_FILE))
-            print(t("cmd.snapshot.fallback"))
-
-        # ── Method 3 (or default): Latest event snapshot ──────────────────────
-        data, ts = snap_from_events(session, cam_info)
-        if data:
-            _save_and_open(data, name, ts, "event")
-            if not live:
+        # ── Method 3 (non-live mode only): Latest event snapshot ──────────────
+        # Do NOT fall through to a (possibly days-old) event image when the user
+        # explicitly requested --live — mirrors the HA stale-event fix: a transient
+        # live failure must not silently save/serve a stale event snapshot. In live
+        # mode the messages above already explain that live is unavailable.
+        if not live:
+            data, ts = snap_from_events(session, cam_info)
+            if data:
+                _save_and_open(data, name, ts, "event")
                 print(t("cmd.snapshot.event_hint", date=ts[:10]))
                 print(t("cmd.snapshot.event_hint2"))
-        else:
-            print(t("cmd.snapshot.none_available"))
+            else:
+                print(t("cmd.snapshot.none_available"))
 
 
 def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None:

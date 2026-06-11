@@ -374,10 +374,12 @@ class TestCmdSnapshot:
         _, _, _, method = mock_save.call_args[0]
         assert method == "local_live"
 
-    def test_live_all_methods_fail_then_event_fallback(
+    def test_live_failure_does_not_save_stale_event(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--live, proxy + local fail → falls back to event snapshot."""
+        """Regression: --live with proxy + local both failing must NOT fall back
+        to a (possibly days-old) event snapshot — neither fetched nor saved
+        (mirrors the HA stale-event fix; the user asked for live, not an event)."""
         cfg = _make_cfg()
         sess = MagicMock()
         ts = "2024-06-01T09:00:00.000Z"
@@ -388,13 +390,14 @@ class TestCmdSnapshot:
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(bosch_camera, "snap_from_proxy", return_value=None),
             patch.object(bosch_camera, "snap_from_local", return_value=None),
-            patch.object(bosch_camera, "snap_from_events", return_value=(FAKE_SNAP_BYTES, ts)),
+            patch.object(
+                bosch_camera, "snap_from_events", return_value=(FAKE_SNAP_BYTES, ts)
+            ) as mock_events,
             patch.object(bosch_camera, "_save_and_open") as mock_save,
         ):
             cmd_snapshot(cfg, _args(live=True))
-        mock_save.assert_called_once()
-        _, _, saved_ts, method = mock_save.call_args[0]
-        assert method == "event"
+        mock_events.assert_not_called()
+        mock_save.assert_not_called()
 
     def test_live_all_methods_fail_no_save(self, capsys: pytest.CaptureFixture[str]) -> None:
         """--live, all methods fail including event → _save_and_open never called."""
