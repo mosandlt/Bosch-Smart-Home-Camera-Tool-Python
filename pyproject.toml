@@ -1,6 +1,6 @@
 [project]
 name = "bosch-smart-home-camera-tool"
-version = "10.10.1"
+version = "10.10.2"
 requires-python = ">=3.10"
 dependencies = [
     "requests",

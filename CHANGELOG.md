@@ -1,5 +1,9 @@
 # Changelog
 
+## [v10.10.2] - 2026-06-11
+
+**Security: verify TLS for Bosch cloud and proxy calls (CWE-295, GHSA-6qh5-x5m5-vj6v).** The cloud REST API (`bosch_cloud_ssl.py`) and the live video TLS proxy (`bosch_tls.py`) now validate the Bosch private CA instead of accepting any certificate (`verify=False`). This closes an adjacent-network MITM vector that could expose OAuth tokens and stream URLs to an attacker who can intercept TLS on the local network. Local camera LAN endpoints are unchanged — they remain TOFU-pinned via `CertPinningError` as before.
+
 ## [v10.10.1] - 2026-05-29
 
 **Fix: intrusion distance + intercom audio levels (cross-port with HA / ioBroker).** `intrusion --distance` now clamps to 1–8 m — the camera rejects values above 8 with HTTP 400, so the previous 1–10 range made the write fail. `intercom --speaker-level` now reads the current `/audio` config and PUTs the full `{audioEnabled, microphoneLevel, speakerLevel}` body, so setting the speaker level no longer wipes the microphone level (and the `speakerLevel` field casing is corrected). New regression tests in `tests/test_audio_intrusion_wifi.py` pin both fixes; the `--distance 1-8` range is reflected in the usage/help text and README.
