@@ -115,7 +115,8 @@ class TestRcpSession:
     def test_success_via_sessionid_element(self) -> None:
         """Normal path: HELLO returns <sessionid>, SESSION_INIT succeeds."""
         with patch.object(
-            bosch_camera.requests, "get", side_effect=[self._hello_resp(), self._init_resp()]
+            bosch_camera, "requests_get_bosch_cloud",
+            side_effect=[self._hello_resp(), self._init_resp()],
         ):
             result = rcp_session(PROXY_BASE)
         assert result == SESSION_ID
@@ -126,8 +127,7 @@ class TestRcpSession:
         inner = "0x1a2b3c4d".encode()
         hex_val = inner.hex()
         with patch.object(
-            bosch_camera.requests,
-            "get",
+            bosch_camera, "requests_get_bosch_cloud",
             side_effect=[self._hello_resp_str_field(hex_val), self._init_resp()],
         ):
             result = rcp_session(PROXY_BASE)
@@ -136,7 +136,8 @@ class TestRcpSession:
     def test_hello_http_error_raises(self) -> None:
         """Non-200 HELLO response → RuntimeError raised."""
         with patch.object(
-            bosch_camera.requests, "get", return_value=MagicMock(status_code=503, text="err")
+            bosch_camera, "requests_get_bosch_cloud",
+            return_value=MagicMock(status_code=503, text="err"),
         ):
             with pytest.raises(RuntimeError, match="RCP HELLO returned HTTP 503"):
                 rcp_session(PROXY_BASE)
@@ -144,7 +145,7 @@ class TestRcpSession:
     def test_hello_no_sessionid_no_str_raises(self) -> None:
         """HELLO response has neither <sessionid> nor <str> → RuntimeError."""
         bad = MagicMock(status_code=200, text="<reply><err>1</err></reply>")
-        with patch.object(bosch_camera.requests, "get", return_value=bad):
+        with patch.object(bosch_camera, "requests_get_bosch_cloud", return_value=bad):
             with pytest.raises(RuntimeError, match="No sessionid in HELLO response"):
                 rcp_session(PROXY_BASE)
 
@@ -154,7 +155,7 @@ class TestRcpSession:
         inner = b"justgarbage"
         hex_val = inner.hex()
         bad = MagicMock(status_code=200, text=f"<reply><str>{hex_val}</str></reply>")
-        with patch.object(bosch_camera.requests, "get", return_value=bad):
+        with patch.object(bosch_camera, "requests_get_bosch_cloud", return_value=bad):
             with pytest.raises(RuntimeError, match="Cannot parse sessionid"):
                 rcp_session(PROXY_BASE)
 
@@ -162,7 +163,8 @@ class TestRcpSession:
         """SESSION_INIT (0xff0d) returns non-200 → RuntimeError raised."""
         bad_init = MagicMock(status_code=401, text="Unauthorized")
         with patch.object(
-            bosch_camera.requests, "get", side_effect=[self._hello_resp(), bad_init]
+            bosch_camera, "requests_get_bosch_cloud",
+            side_effect=[self._hello_resp(), bad_init],
         ):
             with pytest.raises(RuntimeError, match="RCP SESSION_INIT returned HTTP 401"):
                 rcp_session(PROXY_BASE)
@@ -220,21 +222,24 @@ class TestRcpRead:
 
     def test_success_returns_bytes(self) -> None:
         """Valid <str>HEXHEX</str> → bytes returned."""
-        with patch.object(bosch_camera.requests, "get", return_value=self._ok("deadbeef")):
+        with patch.object(
+            bosch_camera, "requests_get_bosch_cloud", return_value=self._ok("deadbeef")
+        ):
             result = rcp_read(RCP_URL, "0x0a0f", SESSION_ID)
         assert result == b"\xde\xad\xbe\xef"
 
     def test_http_error_returns_none(self) -> None:
         """Non-200 status → None returned."""
         bad = MagicMock(status_code=403, text="Forbidden")
-        with patch.object(bosch_camera.requests, "get", return_value=bad):
+        with patch.object(bosch_camera, "requests_get_bosch_cloud", return_value=bad):
             result = rcp_read(RCP_URL, "0x0a0f", SESSION_ID)
         assert result is None
 
     def test_network_exception_returns_none(self) -> None:
         """Connection error → None returned (no exception propagated)."""
         with patch.object(
-            bosch_camera.requests, "get", side_effect=ConnectionError("timeout")
+            bosch_camera, "requests_get_bosch_cloud",
+            side_effect=ConnectionError("timeout"),
         ):
             result = rcp_read(RCP_URL, "0x0a0f", SESSION_ID)
         assert result is None
@@ -242,28 +247,30 @@ class TestRcpRead:
     def test_no_str_tag_returns_none(self) -> None:
         """Response without <str> tag → None."""
         bad = MagicMock(status_code=200, text="<reply><err>1</err></reply>")
-        with patch.object(bosch_camera.requests, "get", return_value=bad):
+        with patch.object(bosch_camera, "requests_get_bosch_cloud", return_value=bad):
             result = rcp_read(RCP_URL, "0x0a0f", SESSION_ID)
         assert result is None
 
     def test_empty_str_tag_returns_none(self) -> None:
         """<str></str> (empty payload) → None (len=0)."""
         empty = MagicMock(status_code=200, text="<reply><str></str></reply>")
-        with patch.object(bosch_camera.requests, "get", return_value=empty):
+        with patch.object(bosch_camera, "requests_get_bosch_cloud", return_value=empty):
             result = rcp_read(RCP_URL, "0x0a0f", SESSION_ID)
         assert result is None
 
     def test_malformed_hex_in_str_returns_none(self) -> None:
         """<str> contains invalid hex (odd length or non-hex chars) → None."""
         bad_hex = MagicMock(status_code=200, text="<reply><str>GGGG</str></reply>")
-        with patch.object(bosch_camera.requests, "get", return_value=bad_hex):
+        with patch.object(bosch_camera, "requests_get_bosch_cloud", return_value=bad_hex):
             result = rcp_read(RCP_URL, "0x0a0f", SESSION_ID)
         assert result is None
 
     def test_type_and_num_forwarded(self) -> None:
         """type_ and num parameters are passed in the request params."""
         ok = self._ok("aabb")
-        with patch.object(bosch_camera.requests, "get", return_value=ok) as mock_get:
+        with patch.object(
+            bosch_camera, "requests_get_bosch_cloud", return_value=ok
+        ) as mock_get:
             rcp_read(RCP_URL, "0x0c22", SESSION_ID, type_="T_WORD", num=2)
         call_params = mock_get.call_args[1]["params"]
         assert call_params["type"] == "T_WORD"
