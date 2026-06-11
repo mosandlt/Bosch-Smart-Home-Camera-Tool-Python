@@ -82,9 +82,17 @@ from urllib.parse import urlparse
 from bosch_i18n import t, set_lang, detect_lang
 from bosch_maintenance import MaintenanceWindow, fetch_maintenance
 from bosch_tls import bosch_get  # TOFU fingerprint pinning for LAN cameras
+from bosch_cloud_ssl import (  # CWE-295: verified TLS for Bosch cloud/proxy hosts
+    _BoschCloudAdapter,
+    get_bosch_cloud_ssl_context,
+    requests_get_bosch_cloud,
+    requests_put_bosch_cloud,
+    requests_post_bosch_cloud,
+)
 
 # Suppress InsecureRequestWarning — bosch_tls handles LAN camera TLS security via
 # TOFU fingerprint pinning (verify=False + SHA-256 pin comparison).
+# Cloud endpoints now use proper certificate verification via bosch_cloud_ssl.
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -429,10 +437,17 @@ def make_session(token: str) -> requests.Session:
     global _HTTP_SESSION
     if _HTTP_SESSION is None:
         s = requests.Session()
-        adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0)
-        s.mount("https://", adapter)
-        s.mount("http://", adapter)
-        s.verify = False
+        # Mount the Bosch cloud SSL adapter on https:// — trusts system roots
+        # AND the Bosch private CA (Video CA 2A), replacing verify=False (CWE-295).
+        cloud_adapter = _BoschCloudAdapter(
+            ssl_context=get_bosch_cloud_ssl_context(),
+            pool_connections=10,
+            pool_maxsize=20,
+            max_retries=0,
+        )
+        s.mount("https://", cloud_adapter)
+        s.mount("http://", HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=0))
+        # Do NOT set s.verify = False — the adapter handles TLS for cloud hosts.
         _HTTP_SESSION = s
     # Accept must stay binary-safe (*/*): Bosch nginx returns
     # HTTP 500 sh:internal.error on /v11/events/{id}/snap.jpg and /clip.mp4
@@ -852,13 +867,21 @@ def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
             return None
         snap_url = scheme.replace("{url}", urls[0])
         snap_timeout = 5 if conn_type == "LOCAL" else 15
-        # snap.jpg may come from local camera (self-signed cert) — verify=False required
+        # LOCAL: camera self-signed cert → verify=False (TOFU-pinned by bosch_tls)
+        # REMOTE: Bosch cloud proxy → Bosch cloud SSL context (CWE-295 fix)
+        _snap_get = requests.get if conn_type == "LOCAL" else requests_get_bosch_cloud
         if api_user and api_pass:
             from requests.auth import HTTPDigestAuth
-            snap_r = requests.get(snap_url, auth=HTTPDigestAuth(api_user, api_pass),
-                                  verify=False, timeout=snap_timeout)
+            _snap_kwargs: dict[str, Any] = {"auth": HTTPDigestAuth(api_user, api_pass),
+                                            "timeout": snap_timeout}
+            if conn_type == "LOCAL":
+                _snap_kwargs["verify"] = False
+            snap_r = _snap_get(snap_url, **_snap_kwargs)
         else:
-            snap_r = requests.get(snap_url, verify=False, timeout=snap_timeout)
+            _snap_kwargs2: dict[str, Any] = {"timeout": snap_timeout}
+            if conn_type == "LOCAL":
+                _snap_kwargs2["verify"] = False
+            snap_r = _snap_get(snap_url, **_snap_kwargs2)
         if snap_r.status_code == 200 and snap_r.headers.get("Content-Type", "").startswith("image"):
             print(t("cmd.live.snap_ok", label=label, bytes=f"{len(snap_r.content):,}"))
             return snap_r.content
@@ -877,10 +900,18 @@ def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
                     snap_url2 = scheme2.replace("{url}", urls2[0])
                     if api_user2 and api_pass2:
                         from requests.auth import HTTPDigestAuth
-                        snap_r2 = requests.get(snap_url2, auth=HTTPDigestAuth(api_user2, api_pass2),
-                                               verify=False, timeout=snap_timeout)
+                        _retry_kwargs: dict[str, Any] = {
+                            "auth": HTTPDigestAuth(api_user2, api_pass2),
+                            "timeout": snap_timeout,
+                        }
+                        if conn_type == "LOCAL":
+                            _retry_kwargs["verify"] = False
+                        snap_r2 = _snap_get(snap_url2, **_retry_kwargs)
                     else:
-                        snap_r2 = requests.get(snap_url2, verify=False, timeout=snap_timeout)
+                        _retry_kwargs2: dict[str, Any] = {"timeout": snap_timeout}
+                        if conn_type == "LOCAL":
+                            _retry_kwargs2["verify"] = False
+                        snap_r2 = _snap_get(snap_url2, **_retry_kwargs2)
                     if snap_r2.status_code == 200 and snap_r2.headers.get("Content-Type", "").startswith("image"):
                         print(t("cmd.live.snap_retry_ok", label=label, bytes=f"{len(snap_r2.content):,}"))
                         return snap_r2.content
@@ -1073,12 +1104,14 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
     current_frame: list[bytes | None] = [None]  # [bytes | None]
 
     # ── Fetcher thread: polls snap.jpg ────────────────────────────────────────
+    # snap_url here is always the cloud proxy URL (proxy-*.live.cbs.boschsecurity.com)
+    # → use Bosch cloud SSL context instead of verify=False (CWE-295 fix).
     def fetcher() -> None:
         count = 0
         while not stop_event.is_set():
             t0 = time.time()
             try:
-                r = requests.get(snap_url, verify=False, timeout=10)
+                r = requests_get_bosch_cloud(snap_url, timeout=10)
                 if r.status_code == 200 and r.headers.get("Content-Type", "").startswith("image"):
                     with frame_lock:
                         current_frame[0] = r.content
@@ -1409,13 +1442,20 @@ def cmd_test_local(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             snap_url = scheme.replace("{url}", urls_list[0])
             print(f"\n  snap.jpg: {snap_url}")
             t1 = time.time()
+            # LOCAL: self-signed cert → verify=False; REMOTE: Bosch proxy → Bosch CA (CWE-295)
+            _tl_snap_get = requests.get if conn_type == "LOCAL" else requests_get_bosch_cloud
             try:
                 if user and password:
                     from requests.auth import HTTPDigestAuth
-                    sr = requests.get(snap_url, auth=HTTPDigestAuth(user, password),
-                                      verify=False, timeout=15)
+                    _tl_kw: dict[str, Any] = {"auth": HTTPDigestAuth(user, password), "timeout": 15}
+                    if conn_type == "LOCAL":
+                        _tl_kw["verify"] = False
+                    sr = _tl_snap_get(snap_url, **_tl_kw)
                 else:
-                    sr = requests.get(snap_url, verify=False, timeout=15)
+                    _tl_kw2: dict[str, Any] = {"timeout": 15}
+                    if conn_type == "LOCAL":
+                        _tl_kw2["verify"] = False
+                    sr = _tl_snap_get(snap_url, **_tl_kw2)
                 snap_elapsed = time.time() - t1
                 ct = sr.headers.get("Content-Type", "")
                 print(f"  snap.jpg → HTTP {sr.status_code}  ({snap_elapsed:.2f}s)  {ct}")
@@ -3260,7 +3300,7 @@ def _watch_fcm_push(cfg: dict[str, Any], token: str, cams: dict[str, Any], durat
         device_type = "ANDROID"
         print(f"  🔗  Registering with Bosch CBS (deviceType={device_type})...")
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        r = requests.post(
+        r = requests_post_bosch_cloud(
             f"{CLOUD_API}/v11/devices",
             headers=headers,
             json={"deviceType": device_type, "deviceToken": fcm_token},
@@ -4700,12 +4740,11 @@ def rcp_open_connection(cam_id: str, token: str) -> tuple[str, str]:
     Raises RuntimeError on failure.
     """
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    r = requests.put(
+    r = requests_put_bosch_cloud(
         f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
         headers=headers,
         json={"type": "REMOTE", "highQualityVideo": False},
         timeout=15,
-        verify=False,  # Bosch cloud uses a private CA — same convention as make_session()
     )
     if r.status_code != 200:
         raise RuntimeError(f"PUT /connection returned HTTP {r.status_code}")
@@ -4738,8 +4777,8 @@ def rcp_session(proxy_base: str) -> str:
         "type": "P_OCTET",
         "payload": _RCP_HELLO_PAYLOAD,
     }
-    r1 = requests.get(rcp_url, params=params_hello,
-                      auth=("", ""), timeout=10, verify=False)
+    r1 = requests_get_bosch_cloud(rcp_url, params=params_hello,
+                                  auth=("", ""), timeout=10)
     if r1.status_code != 200:
         raise RuntimeError(f"RCP HELLO returned HTTP {r1.status_code}")
 
@@ -4767,8 +4806,8 @@ def rcp_session(proxy_base: str) -> str:
         "sessionid": sessionid,
         "payload": _RCP_HELLO_PAYLOAD,
     }
-    r2 = requests.get(rcp_url, params=params_init,
-                      auth=("", ""), timeout=10, verify=False)
+    r2 = requests_get_bosch_cloud(rcp_url, params=params_init,
+                                  auth=("", ""), timeout=10)
     if r2.status_code != 200:
         raise RuntimeError(f"RCP SESSION_INIT returned HTTP {r2.status_code}")
 
@@ -4816,8 +4855,8 @@ def rcp_read(rcp_url: str, command: str, sessionid: str,
         "sessionid": sessionid,
     }
     try:
-        r = requests.get(rcp_url, params=params,
-                         auth=("", ""), timeout=10, verify=False)
+        r = requests_get_bosch_cloud(rcp_url, params=params,
+                                     auth=("", ""), timeout=10)
     except Exception:
         return None
 
