@@ -932,6 +932,95 @@ def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
     return None
 
 
+def get_stream_url(
+    cam_info: dict[str, Any],
+    token: str,
+    hq: bool = False,
+    cfg: Optional[dict[str, Any]] = None,
+    conn_type: Optional[str] = None,
+) -> dict[str, Any] | None:
+    """Resolve a live RTSP(S) stream URL for a camera via PUT /connection.
+
+    This is the shared accessor behind the CLI ``live`` command and the NiceGUI
+    frontend's WebRTC player (a go2rtc source — see the frontend's
+    ``docs/live-webrtc-plan.md``). Browsers cannot play rtsp(s):// directly; the
+    consumer feeds this URL to go2rtc which transcodes to WebRTC/HLS.
+
+    Tries LOCAL first then REMOTE (LOCAL_OVER_REMOTE) unless ``conn_type`` pins one.
+    One-shot token refresh on 401 when ``cfg`` is given.
+
+    Returns ``{"url", "type", "user", "password"}`` (url = ``rtsp://user:pass@host``
+    for LOCAL, ``rtsps://proxy:443/<hash>`` for REMOTE) or ``None`` if no
+    connection could be opened. NOTE: Gen2 cameras ROTATE the Digest credentials on
+    each PUT /connection, so callers must treat the URL as short-lived and
+    re-resolve on stream failure (the frontend plan covers the refresh loop).
+    """
+    cam_id = cam_info.get("id", "")
+    if not cam_id:
+        return None
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    # inst=1 → main (HQ) stream, inst=2 → sub-stream (lighter). Mirror the `hq`
+    # flag into the stream selector so callers actually get the quality they ask
+    # for (matches _build_stream_urls' inst=1-for-main convention).
+    inst = 1 if hq else 2
+    params = f"inst={inst}&enableaudio=1&fmtp=1&maxSessionDuration=3600"
+    candidates = [conn_type] if conn_type else list(LIVE_TYPE_CANDIDATES)
+
+    def _put(ctype: str) -> requests.Response:
+        r = requests.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
+            headers=headers,
+            json={"type": ctype, "highQualityVideo": hq},
+            timeout=15,
+        )
+        if r.status_code == 401 and cfg is not None:
+            try:
+                new_token = get_token(cfg)
+            except Exception:
+                return r
+            headers["Authorization"] = f"Bearer {new_token}"
+            make_session(new_token)
+            r = requests.put(
+                f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
+                headers=headers,
+                json={"type": ctype, "highQualityVideo": hq},
+                timeout=15,
+            )
+        return r
+
+    for ctype in candidates:
+        try:
+            r = _put(ctype)
+            if r.status_code not in (200, 201):
+                continue
+            data = r.json()
+            urls = data.get("urls", [])
+            user = data.get("user", "") or ""
+            password = data.get("password", "") or ""
+            if not urls:
+                continue
+            u = urls[0]
+            if "/" in u:
+                # REMOTE: "proxy-NN…:42090/{hash}" → rtsps over TLS on 443
+                host_port, hash_path = u.split("/", 1)
+                proxy_host = host_port.split(":")[0]
+                url = f"rtsps://{proxy_host}:443/{hash_path}/rtsp_tunnel?{params}"
+            else:
+                # LOCAL: "192.168.x.x:443" → rtsp:// with URL-encoded Digest creds
+                from urllib.parse import quote as _q
+
+                auth = (
+                    f"{_q(user, safe='')}:{_q(password, safe='')}@"
+                    if user and password
+                    else ""
+                )
+                url = f"rtsp://{auth}{u}/rtsp_tunnel?{params}"
+            return {"url": url, "type": ctype, "user": user, "password": password}
+        except Exception:
+            continue
+    return None
+
+
 def snap_from_local(
     cam_info: dict[str, Any], cfg: Optional[dict[str, Any]] = None
 ) -> bytes | None:
