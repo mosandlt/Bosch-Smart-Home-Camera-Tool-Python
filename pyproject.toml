@@ -1,6 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "bosch-smart-home-camera-tool"
 version = "10.10.2"
+description = "Standalone command-line tool for Bosch Smart Home cameras (snapshots, livestream proxy, events, light/privacy control)."
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
     "requests",
@@ -8,8 +15,45 @@ dependencies = [
     "defusedxml>=0.7.1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python"
+Repository = "https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python"
+
 [project.scripts]
 bosch-camera = "bosch_camera:main"
+
+# Flat single-file-module layout (no package dir): list the runtime modules and
+# the translations data dir explicitly so the wheel ships exactly these and
+# never the local bosch_config.json secret (which is gitignored anyway).
+[tool.hatch.build.targets.wheel]
+include = [
+    "bosch_camera.py",
+    "bosch_cloud_ssl.py",
+    "bosch_i18n.py",
+    "bosch_maintenance.py",
+    "bosch_tls.py",
+    "get_token.py",
+    "start_proxy.py",
+    "translations/*.json",
+]
+
+# only-include is an exclusive allowlist — guarantees the sdist ships exactly
+# these paths and never local venvs/caches/secrets (.venv-test, bosch_config.json).
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "bosch_camera.py",
+    "bosch_cloud_ssl.py",
+    "bosch_i18n.py",
+    "bosch_maintenance.py",
+    "bosch_tls.py",
+    "get_token.py",
+    "start_proxy.py",
+    "translations",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "pyproject.toml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
