@@ -1689,7 +1689,7 @@ tool/
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history or [GitHub Releases](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python/releases) for release notes and downloads.
 
-**Current version: v10.10.2**
+**Current version: v10.10.3**
 
 ---
 

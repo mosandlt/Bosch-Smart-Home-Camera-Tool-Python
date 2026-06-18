@@ -77,7 +77,7 @@ import urllib3
 import requests
 from requests.adapters import HTTPAdapter
 from typing import Any, Optional, cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from bosch_i18n import t, set_lang, detect_lang
 from bosch_maintenance import MaintenanceWindow, fetch_maintenance
@@ -96,10 +96,10 @@ from bosch_cloud_ssl import (  # CWE-295: verified TLS for Bosch cloud/proxy hos
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ─────────────────────────────────────────────────────────────────────────────
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
-CLOUD_API   = "https://residential.cbs.boschsecurity.com"
-VERSION     = "10.10.2"
+CLOUD_API = "https://residential.cbs.boschsecurity.com"
+VERSION = "10.10.2"
 
 # SSRF guard: event snapshot/clip URLs come from the cloud API response, so they
 # must be validated against a Bosch-domain allowlist before we fetch them with
@@ -119,7 +119,36 @@ def _is_safe_bosch_url(url: str) -> bool:
         and parsed.hostname.endswith(_SAFE_BOSCH_DOMAINS)
     )
 
-DELAY = 0.5   # seconds between download requests (rate-limit protection)
+
+def redact_rtsp_creds(url: str) -> str:
+    """Replace userinfo credentials in an RTSP(S) URL with ``***:***``.
+
+    Applied to log/status output only — never to the explicit stream-URL
+    command result that the user requests as machine-readable output.
+
+    Mirrors HA's ``_redact_rtsp_creds()`` (switch.py, CWE-312).
+
+    Examples::
+
+        redact_rtsp_creds("rtsps://user:pass@cam.example:443/rtsp_tunnel?inst=2")
+        # → "rtsps://***:***@cam.example:443/rtsp_tunnel?inst=2"
+
+        redact_rtsp_creds("rtsps://cam.example/live")   # no userinfo → unchanged
+        # → "rtsps://cam.example/live"
+    """
+    if not url:
+        return url
+    parsed = urlsplit(url)
+    if "@" not in parsed.netloc:
+        return url
+    host_part = parsed.netloc.rsplit("@", 1)[1]
+    redacted = urlunsplit(
+        (parsed.scheme, f"***:***@{host_part}", parsed.path, parsed.query, parsed.fragment)
+    )
+    return redacted
+
+
+DELAY = 0.5  # seconds between download requests (rate-limit protection)
 
 # Human-readable display names for camera hardware versions
 HW_DISPLAY_NAMES = {
@@ -138,15 +167,15 @@ HW_DISPLAY_NAMES = {
 # LOCAL  = direct LAN snap.jpg (slow ~15s Digest auth, same quality)
 # Use REMOTE first for all operations — it is faster than LOCAL despite going via cloud.
 LIVE_TYPE_CANDIDATES = [
-    "REMOTE",   # ✅ cloud proxy — faster (1.5s vs 15s for LOCAL)
-    "LOCAL",    # ✅ LAN direct — fallback if cloud unavailable
+    "REMOTE",  # ✅ cloud proxy — faster (1.5s vs 15s for LOCAL)
+    "LOCAL",  # ✅ LAN direct — fallback if cloud unavailable
 ]
 
 DEFAULT_CONFIG = {
     "account": {
-        "username":      "",
-        "password":      "",
-        "bearer_token":  "",
+        "username": "",
+        "password": "",
+        "bearer_token": "",
         "refresh_token": "",
         "_note": (
             "Set username (your Bosch SingleKey ID email). "
@@ -170,7 +199,7 @@ DEFAULT_CONFIG = {
         # }
     },
     "settings": {
-        "download_base_path":    "",
+        "download_base_path": "",
         "scan_interval_seconds": 30,
         "request_delay_seconds": 0.5,
         "_note": (
@@ -189,14 +218,14 @@ DEFAULT_CONFIG = {
         #   "AABBCCDD-0000-1111-2222-333344445555": "192.168.1.100"
     },
     "nvr": {
-        "max_clips":      50,
-        "max_duration":   60,
+        "max_clips": 50,
+        "max_duration": 60,
         "smb": {
-            "host":                "",
-            "share":               "",
-            "username":            "",
-            "password":            "",
-            "path":                "",
+            "host": "",
+            "share": "",
+            "username": "",
+            "password": "",
+            "path": "",
             "delete_after_upload": False,
         },
         "_note": (
@@ -211,6 +240,7 @@ DEFAULT_CONFIG = {
 
 
 # ══════════════════════════ CONFIG MANAGEMENT ═════════════════════════════════
+
 
 def load_config() -> dict[str, Any]:
     """Load config from file. Creates default config if it doesn't exist."""
@@ -267,6 +297,7 @@ def _merge_defaults(cfg: dict[str, Any], defaults: dict[str, Any]) -> None:
 
 # ══════════════════════════ TOKEN MANAGEMENT ══════════════════════════════════
 
+
 def _is_token_expired(token: str) -> bool:
     """Return True if the JWT bearer token is expired or expiring within 60s.
 
@@ -276,10 +307,11 @@ def _is_token_expired(token: str) -> bool:
     """
     import base64 as _b64
     import json as _json
+
     try:
         parts = token.split(".")
         if len(parts) >= 2:
-            pad  = len(parts[1]) % 4
+            pad = len(parts[1]) % 4
             body = _b64.urlsafe_b64decode(parts[1] + "=" * pad)
             exp: int = int(_json.loads(body).get("exp", 0))
             return exp == 0 or (exp - time.time()) < 60
@@ -296,10 +328,11 @@ def _is_token_near_expiry(token_str: str, buffer_secs: int = 60) -> bool:
     """
     import base64 as _b64
     import json as _json
+
     try:
         parts = token_str.split(".")
         if len(parts) >= 2:
-            pad  = len(parts[1]) % 4
+            pad = len(parts[1]) % 4
             body = _b64.urlsafe_b64decode(parts[1] + "=" * pad)
             exp: int = int(_json.loads(body).get("exp", 0))
             return exp == 0 or (exp - time.time()) < buffer_secs
@@ -325,13 +358,14 @@ def get_token(cfg: dict[str, Any]) -> str:
     if refresh:
         try:
             from get_token import _do_refresh
+
             if token:  # only print if we had a token (i.e. it expired)
                 print(t("cli.token.renewing"))
             tokens = _do_refresh(refresh)
             if tokens:
-                new_token: str   = tokens.get("access_token", "")
+                new_token: str = tokens.get("access_token", "")
                 new_refresh: str = tokens.get("refresh_token", refresh)
-                cfg["account"]["bearer_token"]  = new_token
+                cfg["account"]["bearer_token"] = new_token
                 cfg["account"]["refresh_token"] = new_refresh
                 save_config(cfg)
                 print(t("cli.token.renewed"))
@@ -347,6 +381,7 @@ def get_token(cfg: dict[str, Any]) -> str:
     # Try get_token.py auto-flow (refresh + browser login)
     try:
         from get_token import get_token_auto
+
         print(t("cli.token.no_token"))
         auto_token: Optional[str] = get_token_auto(cfg)
         if auto_token:
@@ -377,20 +412,21 @@ def check_token_age(cfg: dict[str, Any]) -> str:
     """Return human-readable token expiry decoded from JWT claims."""
     import base64 as _b64
     import json as _json
+
     token = cfg["account"].get("bearer_token", "").strip()
     if not token:
         return "no token"
     try:
         parts = token.split(".")
         if len(parts) >= 2:
-            pad  = len(parts[1]) % 4
+            pad = len(parts[1]) % 4
             body = _b64.urlsafe_b64decode(parts[1] + "=" * pad)
             info = _json.loads(body)
-            exp  = info.get("exp", 0)
+            exp = info.get("exp", 0)
             if exp:
                 exp_dt = datetime.datetime.fromtimestamp(exp)
-                diff   = exp_dt - datetime.datetime.now()
-                mins   = int(diff.total_seconds() / 60)
+                diff = exp_dt - datetime.datetime.now()
+                mins = int(diff.total_seconds() / 60)
                 if mins > 5:
                     return f"valid, expires in ~{mins}m ✅"
                 elif mins > 0:
@@ -401,8 +437,8 @@ def check_token_age(cfg: dict[str, Any]) -> str:
         pass
     # Fallback to file mtime
     mtime = os.path.getmtime(CONFIG_FILE)
-    age   = datetime.datetime.now() - datetime.datetime.fromtimestamp(mtime)
-    mins  = int(age.total_seconds() / 60)
+    age = datetime.datetime.now() - datetime.datetime.fromtimestamp(mtime)
+    mins = int(age.total_seconds() / 60)
     if mins < 60:
         return f"~{mins} min old ✅"
     elif mins < 120:
@@ -452,10 +488,12 @@ def make_session(token: str) -> requests.Session:
     # Accept must stay binary-safe (*/*): Bosch nginx returns
     # HTTP 500 sh:internal.error on /v11/events/{id}/snap.jpg and /clip.mp4
     # when Accept is application/json. JSON endpoints accept */* fine.
-    _HTTP_SESSION.headers.update({
-        "Authorization": f"Bearer {token}",
-        "Accept": "*/*",
-    })
+    _HTTP_SESSION.headers.update(
+        {
+            "Authorization": f"Bearer {token}",
+            "Accept": "*/*",
+        }
+    )
     return _HTTP_SESSION
 
 
@@ -498,8 +536,10 @@ def _install_stop_handlers() -> None:
     """
     if threading.current_thread() is not threading.main_thread():
         return
+
     def _handler(signum: int, frame: Any) -> None:
         _STOP_REQUESTED.set()
+
     try:
         signal.signal(signal.SIGINT, _handler)
         signal.signal(signal.SIGTERM, _handler)
@@ -508,8 +548,9 @@ def _install_stop_handlers() -> None:
         pass
 
 
-def _request_with_retry(session: requests.Session, method: str, url: str,
-                         max_attempts: int = 3, **kwargs: Any) -> requests.Response:
+def _request_with_retry(
+    session: requests.Session, method: str, url: str, max_attempts: int = 3, **kwargs: Any
+) -> requests.Response:
     """Issue an HTTP request with exponential backoff on transient failures.
 
     Retries only on HTTP 5xx responses and on requests.exceptions.Timeout /
@@ -526,11 +567,11 @@ def _request_with_retry(session: requests.Session, method: str, url: str,
             last_exc = e
             if attempt == max_attempts - 1:
                 raise
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
             continue
         # Retry only on server-side errors.
         if 500 <= r.status_code < 600 and attempt < max_attempts - 1:
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
             continue
         # All retries exhausted with a persistent 5xx — show maintenance hint.
         if 500 <= r.status_code < 600:
@@ -543,6 +584,7 @@ def _request_with_retry(session: requests.Session, method: str, url: str,
 
 
 # ══════════════════════════ CAMERA DISCOVERY ══════════════════════════════════
+
 
 def discover_cameras(cfg: dict[str, Any], session: requests.Session) -> dict[str, Any]:
     """
@@ -561,24 +603,24 @@ def discover_cameras(cfg: dict[str, Any], session: requests.Session) -> dict[str
     r.raise_for_status()
 
     cam_list = r.json()
-    cameras  = {}
+    cameras = {}
     for cam in cam_list:
         name = cam.get("title", cam.get("id", "unknown"))
         # Keep existing local config if camera already known
         existing = cfg.get("cameras", {}).get(name, {})
         feat = cam.get("featureSupport", {})
         cameras[name] = {
-            "id":              cam.get("id", ""),
-            "name":            name,
-            "model":           cam.get("hardwareVersion", "CAMERA"),
-            "firmware":        cam.get("firmwareVersion", ""),
-            "mac":             cam.get("macAddress", ""),
+            "id": cam.get("id", ""),
+            "name": name,
+            "model": cam.get("hardwareVersion", "CAMERA"),
+            "firmware": cam.get("firmwareVersion", ""),
+            "mac": cam.get("macAddress", ""),
             "download_folder": name,
-            "local_ip":        existing.get("local_ip", ""),
-            "local_username":  existing.get("local_username", ""),
-            "local_password":  existing.get("local_password", ""),
-            "has_light":       feat.get("light", False),
-            "pan_limit":       feat.get("panLimit", 0),
+            "local_ip": existing.get("local_ip", ""),
+            "local_username": existing.get("local_username", ""),
+            "local_password": existing.get("local_password", ""),
+            "has_light": feat.get("light", False),
+            "pan_limit": feat.get("panLimit", 0),
         }
         # Ask for local IP if not already set (skip prompt in non-interactive mode)
         if not cameras[name]["local_ip"]:
@@ -588,7 +630,9 @@ def discover_cameras(cfg: dict[str, Any], session: requests.Session) -> dict[str
             except EOFError:
                 # Non-interactive (CI, cron, piped) — leave blank, user can edit
                 # bosch_config.json later. Without this guard `rescan` crashes.
-                print("    (non-interactive — skipping local_ip prompt; edit bosch_config.json later)")
+                print(
+                    "    (non-interactive — skipping local_ip prompt; edit bosch_config.json later)"
+                )
                 ip = ""
             if ip:
                 cameras[name]["local_ip"] = ip
@@ -634,6 +678,7 @@ def resolve_cam(cfg: dict[str, Any], key: str | None) -> dict[str, Any]:
 
 # ══════════════════════════ API HELPERS ═══════════════════════════════════════
 
+
 def api_ping(session: requests.Session, cam_id: str) -> str:
     try:
         r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/ping", timeout=10)
@@ -646,7 +691,8 @@ def api_ping(session: requests.Session, cam_id: str) -> str:
 
 def api_get_events(session: requests.Session, cam_id: str, limit: int = 400) -> list[Any]:
     r = _request_with_retry(
-        session, "GET",
+        session,
+        "GET",
         f"{CLOUD_API}/v11/events?videoInputId={cam_id}&limit={limit}",
         timeout=30,
     )
@@ -695,6 +741,7 @@ def api_get_camera(session: requests.Session, cam_id: str) -> dict[str, Any] | N
 
 
 # ══════════════════════════ OPEN FILE / VLC ═══════════════════════════════════
+
 
 def open_file(path: str) -> None:
     if sys.platform == "darwin":
@@ -747,7 +794,8 @@ def open_vlc(url: str, user: str = "", password: str = "", token: str = "") -> N
         open_url = url
         if user and password and url.startswith("rtsp://"):
             from urllib.parse import quote
-            host_part = url[len("rtsp://"):]
+
+            host_part = url[len("rtsp://") :]
             open_url = f"rtsp://{quote(user, safe='')}:{quote(password, safe='')}@{host_part}"
         cmd = [player, open_url]
         if token and "vlc" in name:
@@ -760,9 +808,10 @@ def open_vlc(url: str, user: str = "", password: str = "", token: str = "") -> N
 
 # ══════════════════════════ COMMANDS ══════════════════════════════════════════
 
+
 def cmd_status(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Show all cameras with ONLINE/OFFLINE status."""
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     cameras = get_cameras(cfg, session)
 
@@ -773,7 +822,9 @@ def cmd_status(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             live_titles = {c.get("title", c.get("id", "")) for c in live_r.json()}
             new_cams = sorted(live_titles - set(cameras.keys()))
             if new_cams:
-                print(f"  ℹ️  {len(new_cams)} new camera(s) detected — run `rescan` to add them to config: {', '.join(new_cams)}")
+                print(
+                    f"  ℹ️  {len(new_cams)} new camera(s) detected — run `rescan` to add them to config: {', '.join(new_cams)}"
+                )
     except Exception:
         pass
 
@@ -790,9 +841,9 @@ def cmd_status(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         else:
             icon = "🔴"
         print(t("cmd.status.cam_name", icon=icon, name=name))
-        print(t("cmd.status.cam_id", id=cam_info['id']))
-        print(t("cmd.status.cam_model", model=cam_info['model'], fw=cam_info['firmware']))
-        print(t("cmd.status.cam_mac", mac=cam_info['mac']))
+        print(t("cmd.status.cam_id", id=cam_info["id"]))
+        print(t("cmd.status.cam_model", model=cam_info["model"], fw=cam_info["firmware"]))
+        print(t("cmd.status.cam_mac", mac=cam_info["mac"]))
         print(t("cmd.status.cam_status", status=status))
         print()
 
@@ -803,11 +854,12 @@ def cmd_events(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     return
 
 
-
 # ══════════════════════════ LIVE SNAPSHOT METHODS ═══════════════════════════
 
-def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
-                     cfg: Optional[dict[str, Any]] = None) -> bytes | None:
+
+def snap_from_proxy(
+    cam_info: dict[str, Any], token: str, hq: bool = False, cfg: Optional[dict[str, Any]] = None
+) -> bytes | None:
     """
     Live snapshot via PUT /connection.
     Tries LOCAL first (faster on home network), then REMOTE (cloud proxy).
@@ -818,7 +870,7 @@ def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
     token once and retry. On second 401 we fail hard with a clear message.
     Returns JPEG bytes or None.
     """
-    cam_id  = cam_info.get("id", "")
+    cam_id = cam_info.get("id", "")
     # Mutable list so the inner closure can update the header after a token refresh.
     headers_box = [{"Authorization": f"Bearer {token}", "Content-Type": "application/json"}]
 
@@ -838,8 +890,10 @@ def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
                 print(t("cmd.token.refresh_failed", error=e))
                 print(t("cmd.token.refresh_failed_hint"))
                 return r
-            headers_box[0] = {"Authorization": f"Bearer {new_token}",
-                              "Content-Type": "application/json"}
+            headers_box[0] = {
+                "Authorization": f"Bearer {new_token}",
+                "Content-Type": "application/json",
+            }
             # Also update the cached session so subsequent calls use the new token.
             make_session(new_token)
             r = requests.put(
@@ -858,9 +912,9 @@ def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
         r = _put_connection(conn_type)
         if r.status_code != 200:
             return None
-        data     = r.json()
-        urls     = data.get("urls", [])
-        scheme   = data.get("imageUrlScheme", "https://{url}/snap.jpg")
+        data = r.json()
+        urls = data.get("urls", [])
+        scheme = data.get("imageUrlScheme", "https://{url}/snap.jpg")
         api_user = data.get("user") or ""
         api_pass = data.get("password") or ""
         if not urls:
@@ -872,8 +926,11 @@ def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
         _snap_get = requests.get if conn_type == "LOCAL" else requests_get_bosch_cloud
         if api_user and api_pass:
             from requests.auth import HTTPDigestAuth
-            _snap_kwargs: dict[str, Any] = {"auth": HTTPDigestAuth(api_user, api_pass),
-                                            "timeout": snap_timeout}
+
+            _snap_kwargs: dict[str, Any] = {
+                "auth": HTTPDigestAuth(api_user, api_pass),
+                "timeout": snap_timeout,
+            }
             if conn_type == "LOCAL":
                 _snap_kwargs["verify"] = False
             snap_r = _snap_get(snap_url, **_snap_kwargs)
@@ -891,15 +948,16 @@ def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
             # the first PUT already triggered a token renewal).
             r2 = _put_connection(conn_type)
             if r2.status_code == 200:
-                data2     = r2.json()
-                urls2     = data2.get("urls", [])
-                scheme2   = data2.get("imageUrlScheme", "https://{url}/snap.jpg")
+                data2 = r2.json()
+                urls2 = data2.get("urls", [])
+                scheme2 = data2.get("imageUrlScheme", "https://{url}/snap.jpg")
                 api_user2 = data2.get("user") or ""
                 api_pass2 = data2.get("password") or ""
                 if urls2:
                     snap_url2 = scheme2.replace("{url}", urls2[0])
                     if api_user2 and api_pass2:
                         from requests.auth import HTTPDigestAuth
+
                         _retry_kwargs: dict[str, Any] = {
                             "auth": HTTPDigestAuth(api_user2, api_pass2),
                             "timeout": snap_timeout,
@@ -912,8 +970,16 @@ def snap_from_proxy(cam_info: dict[str, Any], token: str, hq: bool = False,
                         if conn_type == "LOCAL":
                             _retry_kwargs2["verify"] = False
                         snap_r2 = _snap_get(snap_url2, **_retry_kwargs2)
-                    if snap_r2.status_code == 200 and snap_r2.headers.get("Content-Type", "").startswith("image"):
-                        print(t("cmd.live.snap_retry_ok", label=label, bytes=f"{len(snap_r2.content):,}"))
+                    if snap_r2.status_code == 200 and snap_r2.headers.get(
+                        "Content-Type", ""
+                    ).startswith("image"):
+                        print(
+                            t(
+                                "cmd.live.snap_retry_ok",
+                                label=label,
+                                bytes=f"{len(snap_r2.content):,}",
+                            )
+                        )
                         return snap_r2.content
             print(t("cmd.live.snap_retry_fail", label=label))
             return None
@@ -1009,11 +1075,7 @@ def get_stream_url(
                 # LOCAL: "192.168.x.x:443" → rtsp:// with URL-encoded Digest creds
                 from urllib.parse import quote as _q
 
-                auth = (
-                    f"{_q(user, safe='')}:{_q(password, safe='')}@"
-                    if user and password
-                    else ""
-                )
+                auth = f"{_q(user, safe='')}:{_q(password, safe='')}@" if user and password else ""
                 url = f"rtsp://{auth}{u}/rtsp_tunnel?{params}"
             return {"url": url, "type": ctype, "user": user, "password": password}
         except Exception:
@@ -1021,9 +1083,7 @@ def get_stream_url(
     return None
 
 
-def snap_from_local(
-    cam_info: dict[str, Any], cfg: Optional[dict[str, Any]] = None
-) -> bytes | None:
+def snap_from_local(cam_info: dict[str, Any], cfg: Optional[dict[str, Any]] = None) -> bytes | None:
     """
     Method 2 — Local camera snap.jpg via HTTP Digest authentication.
     Direct access to the camera at https://<local_ip>/snap.jpg
@@ -1039,9 +1099,9 @@ def snap_from_local(
     WARNING: Excessive requests to the local camera IP can break the connection,
     causing the SHC to regenerate random credentials. Use sparingly.
     """
-    local_ip   = cam_info.get("local_ip", "")
-    username   = cam_info.get("local_username", "")
-    password   = cam_info.get("local_password", "")
+    local_ip = cam_info.get("local_ip", "")
+    username = cam_info.get("local_username", "")
+    password = cam_info.get("local_password", "")
 
     if not local_ip or not username or not password:
         return None
@@ -1053,6 +1113,7 @@ def snap_from_local(
     print(t("cmd.local_snap.trying", url=url))
     try:
         from requests.auth import HTTPDigestAuth
+
         r = bosch_get(
             url,
             cfg=cfg,
@@ -1069,7 +1130,9 @@ def snap_from_local(
     return None
 
 
-def snap_from_events(session: requests.Session, cam_info: dict[str, Any]) -> tuple[bytes | None, str]:
+def snap_from_events(
+    session: requests.Session, cam_info: dict[str, Any]
+) -> tuple[bytes | None, str]:
     """
     Method 3 — Latest event snapshot (cloud API, motion-triggered).
     Returns (jpeg_bytes, timestamp_str) or (None, "").
@@ -1093,9 +1156,12 @@ def snap_from_events(session: requests.Session, cam_info: dict[str, Any]) -> tup
 def _save_and_open(data: bytes, name: str, ts: str, method: str) -> str:
     """Save image bytes to file and open in Preview. Returns file path."""
     safe_name = name.replace(" ", "_")
-    ts_safe   = ts.replace(":", "-").replace("T", "_") if ts else \
-                datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    fn   = f"snapshot_{safe_name}_{ts_safe}_{method}.jpg"
+    ts_safe = (
+        ts.replace(":", "-").replace("T", "_")
+        if ts
+        else datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    )
+    fn = f"snapshot_{safe_name}_{ts_safe}_{method}.jpg"
     path = os.path.join(BASE_DIR, fn)
     with open(path, "wb") as f:
         f.write(data)
@@ -1116,11 +1182,11 @@ def cmd_snapshot(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                       3. Latest event snapshot (fallback)
     --hq: request highQualityVideo=true in PUT /connection (higher resolution).
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
-    live    = getattr(args, "live", False)
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
+    live = getattr(args, "live", False)
     quality = getattr(args, "quality", None)
     if quality == "high":
         hq = True
@@ -1191,7 +1257,7 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
         port = s.getsockname()[1]
 
     stop_event = threading.Event()
-    frame_lock  = threading.Lock()
+    frame_lock = threading.Lock()
     current_frame: list[bytes | None] = [None]  # [bytes | None]
 
     # ── Fetcher thread: polls snap.jpg ────────────────────────────────────────
@@ -1221,7 +1287,8 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
 
     # ── MJPEG HTTP server ─────────────────────────────────────────────────────
     class MJPEGHandler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *args: Any) -> None: pass  # silence request logs
+        def log_message(self, *args: Any) -> None:
+            pass  # silence request logs
 
         def do_GET(self) -> None:
             self.send_response(200)
@@ -1287,13 +1354,24 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
             # ffplay via open — write a tiny shell script and open it
             script = os.path.join(BASE_DIR, "_live_ffplay.sh")
             with open(script, "w") as f:
-                f.write(f"#!/bin/sh\n{ffplay} -loglevel warning -f mjpeg -window_title 'Live: {cam_name}' '{mjpeg_url}'\n")
+                f.write(
+                    f"#!/bin/sh\n{ffplay} -loglevel warning -f mjpeg -window_title 'Live: {cam_name}' '{mjpeg_url}'\n"
+                )
             os.chmod(script, 0o755)
             cmd = ["open", "-W", "-a", "Terminal", script]
             print(f"  ▶️   Launching ffplay via Terminal: {mjpeg_url}")
             proc = subprocess.Popen(cmd)
     else:
-        cmd = [ffplay, "-loglevel", "warning", "-f", "mjpeg", "-window_title", f"Live: {cam_name}", mjpeg_url]
+        cmd = [
+            ffplay,
+            "-loglevel",
+            "warning",
+            "-f",
+            "mjpeg",
+            "-window_title",
+            f"Live: {cam_name}",
+            mjpeg_url,
+        ]
         print(f"  ▶️   Launching: {' '.join(cmd)}")
         proc = subprocess.Popen(cmd, stderr=subprocess.PIPE)
 
@@ -1394,11 +1472,13 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
             t2 = threading.Thread(target=_pipe, args=(tls, client, True), daemon=True)
             t1.start()
             t2.start()
+
             # Reset failure counter after the connection stays up 30s+.
             def _reset_on_stable(start: float, counter: list[int]) -> None:
                 t1.join(timeout=30)
                 if time.time() - start >= 30:
                     counter[0] = 0
+
             threading.Thread(
                 target=_reset_on_stable,
                 args=(conn_start, _reconnect_attempts),
@@ -1410,39 +1490,54 @@ def _start_tls_proxy_sync(cam_host: str, cam_port: int) -> int:
     return port
 
 
-def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "", use_vlc: bool = False) -> None:
+def _open_rtsps_stream(
+    rtsps_url: str, cam_name: str, fallback_snap_url: str = "", use_vlc: bool = False
+) -> None:
     """
     Open live audio+video stream via rtsps:// (RTSP over TLS on port 443).
     use_vlc=True opens in VLC (macOS only, uses osascript to bring window to front).
     Default uses ffplay. Falls back to snap.jpg MJPEG loop if no player available.
     """
     ffplay = shutil.which("ffplay") or "/opt/homebrew/bin/ffplay"
-    mpv    = shutil.which("mpv")
-    vlc    = "/Applications/VLC.app/Contents/MacOS/VLC"
+    mpv = shutil.which("mpv")
+    vlc = "/Applications/VLC.app/Contents/MacOS/VLC"
 
     if use_vlc and os.path.exists(vlc):
         # VLC can't skip TLS verification for rtsps://, so proxy via ffmpeg:
         # ffmpeg pulls rtsps:// and re-muxes to MPEG-TS piped into VLC's stdin
         ffmpeg = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
         if not ffmpeg or not os.path.exists(ffmpeg):
-            print("  ⚠️   ffmpeg not found — needed to proxy stream for VLC. Install: brew install ffmpeg")
+            print(
+                "  ⚠️   ffmpeg not found — needed to proxy stream for VLC. Install: brew install ffmpeg"
+            )
             return
         # ffmpeg can't serve HTTP — use pipe to VLC's stdin instead
         # Pipe: ffmpeg → stdout (mpegts) → VLC stdin
         ffmpeg_pipe = [
-            ffmpeg, "-loglevel", "warning",
-            "-rtsp_transport", "tcp", "-tls_verify", "0",
-            "-i", rtsps_url,
-            "-c", "copy", "-f", "mpegts", "pipe:1",
+            ffmpeg,
+            "-loglevel",
+            "warning",
+            "-rtsp_transport",
+            "tcp",
+            "-tls_verify",
+            "0",
+            "-i",
+            rtsps_url,
+            "-c",
+            "copy",
+            "-f",
+            "mpegts",
+            "pipe:1",
         ]
         print("  ▶️   Launching VLC via ffmpeg pipe (audio+video)...")
         proxy = subprocess.Popen(ffmpeg_pipe, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        proc  = subprocess.Popen([vlc, "-"], stdin=proxy.stdout, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen([vlc, "-"], stdin=proxy.stdout, stderr=subprocess.DEVNULL)
         if proxy.stdout is not None:
             proxy.stdout.close()
         time.sleep(1.5)
-        subprocess.Popen(["osascript", "-e", 'tell application "VLC" to activate'],
-                         stderr=subprocess.DEVNULL)
+        subprocess.Popen(
+            ["osascript", "-e", 'tell application "VLC" to activate'], stderr=subprocess.DEVNULL
+        )
         try:
             proc.wait()
         except KeyboardInterrupt:
@@ -1452,18 +1547,30 @@ def _open_rtsps_stream(rtsps_url: str, cam_name: str, fallback_snap_url: str = "
             print("\n  ⏹️   Live view stopped.")
         return
     elif ffplay and os.path.exists(ffplay):
-        cmd = [ffplay,
-               "-rtsp_transport", "tcp",
-               "-tls_verify", "0",
-               "-loglevel", "warning",
-               "-window_title", f"Live: {cam_name}",
-               rtsps_url]
-        print(f"  ▶️   Launching ffplay (audio+video): {rtsps_url}")
+        cmd = [
+            ffplay,
+            "-rtsp_transport",
+            "tcp",
+            "-tls_verify",
+            "0",
+            "-loglevel",
+            "warning",
+            "-window_title",
+            f"Live: {cam_name}",
+            rtsps_url,
+        ]
+        print(f"  ▶️   Launching ffplay (audio+video): {redact_rtsp_creds(rtsps_url)}")
         proc = subprocess.Popen(cmd)
     elif mpv:
-        cmd = [mpv, "--no-terminal", "--title", f"Live: {cam_name}",
-               "--rtsp-tls-verification=no", rtsps_url]
-        print(f"  ▶️   Launching mpv (audio+video): {rtsps_url}")
+        cmd = [
+            mpv,
+            "--no-terminal",
+            "--title",
+            f"Live: {cam_name}",
+            "--rtsp-tls-verification=no",
+            rtsps_url,
+        ]
+        print(f"  ▶️   Launching mpv (audio+video): {redact_rtsp_creds(rtsps_url)}")
         proc = subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
     else:
         print("  ⚠️   No player found (ffplay/mpv) — falling back to snap.jpg MJPEG (video only).")
@@ -1490,16 +1597,16 @@ def cmd_test_local(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     Use this to verify LOCAL streaming works and measure the 15-second startup issue.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
 
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
-        print(f"\n{'─'*60}")
+        print(f"\n{'─' * 60}")
         print(f"  TEST LOCAL CONNECTION: {name}")
         print(f"  Camera ID: {cam_id}")
-        print(f"{'─'*60}")
+        print(f"{'─' * 60}")
         url = f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection"
 
         for conn_type in ["LOCAL", "REMOTE"]:
@@ -1522,9 +1629,9 @@ def cmd_test_local(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             print(f"  Full response:\n{json.dumps(data, indent=4)}")
 
             urls_list = data.get("urls", [])
-            user      = data.get("user", "")
-            password  = data.get("password", "")
-            scheme    = data.get("imageUrlScheme", "https://{url}/snap.jpg")
+            user = data.get("user", "")
+            password = data.get("password", "")
+            scheme = data.get("imageUrlScheme", "https://{url}/snap.jpg")
 
             if not urls_list:
                 print("  ⚠️   No URLs in response.")
@@ -1538,6 +1645,7 @@ def cmd_test_local(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             try:
                 if user and password:
                     from requests.auth import HTTPDigestAuth
+
                     _tl_kw: dict[str, Any] = {"auth": HTTPDigestAuth(user, password), "timeout": 15}
                     if conn_type == "LOCAL":
                         _tl_kw["verify"] = False
@@ -1551,7 +1659,7 @@ def cmd_test_local(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 ct = sr.headers.get("Content-Type", "")
                 print(f"  snap.jpg → HTTP {sr.status_code}  ({snap_elapsed:.2f}s)  {ct}")
                 if sr.status_code == 200 and "image" in ct:
-                    fn   = f"test_{conn_type.lower()}_{name}.jpg"
+                    fn = f"test_{conn_type.lower()}_{name}.jpg"
                     path = os.path.join(BASE_DIR, fn)
                     with open(path, "wb") as f:
                         f.write(sr.content)
@@ -1574,11 +1682,16 @@ def cmd_test_local(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             else:
                 # LOCAL: "192.168.x.x:443" — plain rtsp://, credentials URL-encoded
                 from urllib.parse import quote as _q
-                auth_prefix = f"{_q(user, safe='')}:{_q(password, safe='')}@" if user and password else ""
+
+                auth_prefix = (
+                    f"{_q(user, safe='')}:{_q(password, safe='')}@" if user and password else ""
+                )
                 rtsp_url = (
                     f"rtsp://{auth_prefix}{u}"
                     f"/rtsp_tunnel?inst=2&enableaudio=1&fmtp=1&maxSessionDuration=3600"
                 )
+            # NOTE: `test-local` is a diagnostic command whose deliverable IS the
+            # copyable RTSP URL (for VLC/ffplay) — kept UNREDACTED on purpose.
             print(f"\n  RTSP URL:  {rtsp_url}")
             if video_scheme:
                 full_url = video_scheme.replace("{url}", u)
@@ -1633,13 +1746,16 @@ def _build_stream_urls(
         return ("", "")
 
     u = urls[0]
-    user: str    = conn_result.get("user") or ""
+    user: str = conn_result.get("user") or ""
     password: str = conn_result.get("password") or ""
 
     def _make_url(chosen_inst: int) -> str:
         if use_tls_proxy:
             from urllib.parse import quote as _q
-            auth_prefix = f"{_q(user, safe='')}:{_q(password, safe='')}@" if user and password else ""
+
+            auth_prefix = (
+                f"{_q(user, safe='')}:{_q(password, safe='')}@" if user and password else ""
+            )
             return (
                 f"rtsp://{auth_prefix}127.0.0.1:{proxy_port}"
                 f"/rtsp_tunnel?inst={chosen_inst}&enableaudio=1&fmtp=1&maxSessionDuration=3600"
@@ -1654,7 +1770,7 @@ def _build_stream_urls(
             )
 
     main_url: str = _make_url(inst)
-    sub_url: str  = _make_url(2)
+    sub_url: str = _make_url(2)
     return (main_url, sub_url)
 
 
@@ -1680,6 +1796,7 @@ def _build_stream_urls(
 #       in this implementation. go2rtc defaults to Google STUN servers. Add
 #       --webrtc-ice-server flag if needed in a future iteration.
 
+
 def _build_go2rtc_config(rtsps_url: str, stream_name: str = "bosch_cam", port: int = 1984) -> str:
     """Build a minimal go2rtc YAML config string for a single RTSPS source.
 
@@ -1693,11 +1810,11 @@ def _build_go2rtc_config(rtsps_url: str, stream_name: str = "bosch_cam", port: i
     """
     return (
         f"api:\n"
-        f"  listen: \":{port}\"\n"
+        f'  listen: ":{port}"\n'
         f"webrtc:\n"
-        f"  listen: \":8555\"\n"
+        f'  listen: ":8555"\n'
         f"streams:\n"
-        f"  {stream_name}: \"{rtsps_url}\"\n"
+        f'  {stream_name}: "{rtsps_url}"\n'
     )
 
 
@@ -1859,26 +1976,26 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     --sub:   use the sub-stream (inst=2, ~7.5 Mbps) instead of the main stream.
     --webrtc: start go2rtc + open WebRTC viewer in browser instead of ffplay/VLC.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
 
     use_sub: bool = getattr(args, "sub", False)
 
     # Quality preset overrides --hq/--inst.  --sub maps to the inst=2 sub-stream.
     quality = getattr(args, "quality", None)
     if use_sub:
-        hq   = False
-        inst = 2   # sub-stream is always inst=2
+        hq = False
+        inst = 2  # sub-stream is always inst=2
     elif quality == "high":
-        hq   = True
+        hq = True
         inst = getattr(args, "inst", 2) if getattr(args, "inst", 2) != 2 else 1
     elif quality == "low":
-        hq   = False
+        hq = False
         inst = getattr(args, "inst", 2) if getattr(args, "inst", 2) != 2 else 4
     else:
-        hq   = getattr(args, "hq", False)
+        hq = getattr(args, "hq", False)
         inst = getattr(args, "inst", 2)
 
     for name, cam_info in cams.items():
@@ -1899,7 +2016,7 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             continue
 
         print("  🔄  Opening live connection...")
-        conn_url    = f"{CLOUD_API}/v11/video_inputs/{cam_info['id']}/connection"
+        conn_url = f"{CLOUD_API}/v11/video_inputs/{cam_info['id']}/connection"
         result: Optional[dict[str, Any]] = None
         result_type = ""
 
@@ -1935,7 +2052,7 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                     timeout=15,
                 )
             if r.status_code in (200, 201):
-                result      = r.json()
+                result = r.json()
                 result_type = type_val
                 print(f"  ✅  ConnectionType '{type_val}' worked!")
                 break
@@ -1944,10 +2061,10 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 break
 
         if result:
-            urls: list[str]  = result.get("urls", [])
-            img_scheme: str  = result.get("imageUrlScheme", "https://{url}/snap.jpg")
-            user: str        = result.get("user") or ""
-            password: str    = result.get("password") or ""
+            urls: list[str] = result.get("urls", [])
+            img_scheme: str = result.get("imageUrlScheme", "https://{url}/snap.jpg")
+            user: str = result.get("user") or ""
+            password: str = result.get("password") or ""
 
             proxy_url = img_scheme.replace("{url}", urls[0]) if urls else ""
             print(f"  🌐  Snap URL:  {proxy_url or '(none)'}")
@@ -1955,10 +2072,10 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 print(f"  🔑  Creds: {user} / {password}")
 
             cfg["cameras"][name]["last_live"] = {
-                "type":      result_type,
+                "type": result_type,
                 "proxy_url": proxy_url,
-                "user":      user,
-                "password":  password,
+                "user": user,
+                "password": password,
                 "timestamp": datetime.datetime.now().isoformat()[:19],
             }
             save_config(cfg)
@@ -1981,12 +2098,15 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                     cam_host, cam_port_str = u.split(":")
                     tls_port = _start_tls_proxy_sync(cam_host, int(cam_port_str))
                     main_url, sub_url = _build_stream_urls(
-                        cam_info, result, inst=inst,
-                        use_tls_proxy=True, proxy_port=tls_port,
+                        cam_info,
+                        result,
+                        inst=inst,
+                        use_tls_proxy=True,
+                        proxy_port=tls_port,
                     )
                     rtsps_url = sub_url if use_sub else main_url
                     print(f"  🏠  Local stream ({u}) via TLS proxy :{tls_port}")
-                print(f"  📡  RTSPS URL: {rtsps_url}")
+                print(f"  📡  RTSPS URL: {redact_rtsp_creds(rtsps_url)}")
                 if use_webrtc:
                     _open_webrtc_stream(
                         rtsps_url,
@@ -1995,7 +2115,9 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                         go2rtc_bin=go2rtc_binary,
                     )
                 else:
-                    _open_rtsps_stream(rtsps_url, name, proxy_url, use_vlc=getattr(args, "vlc", False))
+                    _open_rtsps_stream(
+                        rtsps_url, name, proxy_url, use_vlc=getattr(args, "vlc", False)
+                    )
             else:
                 print("  ⚠️   No URLs in response.")
         else:
@@ -2009,8 +2131,8 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 if img_url and _is_safe_bosch_url(img_url):
                     r = session.get(img_url, timeout=20)
                     if r.status_code == 200:
-                        ts   = ev.get("timestamp", "")[:19].replace(":", "-").replace("T", "_")
-                        fn   = f"snapshot_{name}_{ts}.jpg"
+                        ts = ev.get("timestamp", "")[:19].replace(":", "-").replace("T", "_")
+                        fn = f"snapshot_{name}_{ts}.jpg"
                         path = os.path.join(BASE_DIR, fn)
                         with open(path, "wb") as f:
                             f.write(r.content)
@@ -2025,21 +2147,31 @@ def cmd_config(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     # Mask every secret-shaped field, not just bearer/refresh — access_token,
     # firebase keys, FCM tokens, local camera passwords are all credentials.
     SECRET_KEYS = (
-        "bearer_token", "refresh_token", "access_token",
-        "local_password", "password",
-        "private", "secret", "token", "security_token",
+        "bearer_token",
+        "refresh_token",
+        "access_token",
+        "local_password",
+        "password",
+        "private",
+        "secret",
+        "token",
+        "security_token",
     )
+
     def _mask(obj: Any) -> Any:
         if isinstance(obj, dict):
             return {
-                k: (f"{str(v)[:20]}...({len(str(v))} chars)"
+                k: (
+                    f"{str(v)[:20]}...({len(str(v))} chars)"
                     if isinstance(v, str) and v and any(s in k.lower() for s in SECRET_KEYS)
-                    else _mask(v))
+                    else _mask(v)
+                )
                 for k, v in obj.items()
             }
         if isinstance(obj, list):
             return [_mask(x) for x in obj]
         return obj
+
     display = _mask(display)
     print(f"\n── Config: {CONFIG_FILE} ──────────────────────────────────")
     print(json.dumps(display, indent=2))
@@ -2054,9 +2186,9 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
       python3 bosch_camera.py info --full    → also fetch 8 extra endpoints
                                                (firmware, motion, audio, light, WiFi, etc.)
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
-    full    = getattr(args, "full", False)
+    full = getattr(args, "full", False)
 
     r = session.get(f"{CLOUD_API}/v11/video_inputs", timeout=15)
     if r.status_code == 401:
@@ -2090,7 +2222,7 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     print()
 
     for cam in cameras:
-        name   = cam.get("title", cam.get("id"))
+        name = cam.get("title", cam.get("id"))
         cam_id = cam.get("id", "")
         status = cam.get("connectionStatus", "?")
         if status == "ONLINE":
@@ -2099,15 +2231,15 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             icon = "🔄"
         else:
             icon = "🔴"
-        model  = cam.get("hardwareVersion", "?")
-        fw     = cam.get("firmwareVersion", "?")
-        mac    = cam.get("macAddress", "?")
-        priv   = cam.get("privacyMode", "?")
-        rec    = "✅ ON" if cam.get("recordingOn") else "❌ OFF"
+        model = cam.get("hardwareVersion", "?")
+        fw = cam.get("firmwareVersion", "?")
+        mac = cam.get("macAddress", "?")
+        priv = cam.get("privacyMode", "?")
+        rec = "✅ ON" if cam.get("recordingOn") else "❌ OFF"
         unread = cam.get("numberOfUnreadEvents", 0)
-        tz     = cam.get("timeZone", "?")
-        alarm  = cam.get("alarmType") or "NONE"
-        notif  = cam.get("notificationsEnabledStatus", "?")
+        tz = cam.get("timeZone", "?")
+        alarm = cam.get("alarmType") or "NONE"
+        notif = cam.get("notificationsEnabledStatus", "?")
 
         print(f"  {icon}  {name}")
         print(f"      ID:            {cam_id}")
@@ -2128,14 +2260,20 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             print(f"      Notif. types:  {', '.join(notif_parts)}")
 
         fs = cam.get("featureSupport", {})
-        print(f"      Features:      light={fs.get('light')}, sound={fs.get('sound')}, "
-              f"viewAngle={fs.get('viewingAngle')}°, panLimit={fs.get('panLimit')}°")
+        print(
+            f"      Features:      light={fs.get('light')}, sound={fs.get('sound')}, "
+            f"viewAngle={fs.get('viewingAngle')}°, panLimit={fs.get('panLimit')}°"
+        )
 
         fst = cam.get("featureStatus", {})
-        print(f"      Light sched.:  {fst.get('scheduleStatus')}  "
-              f"on={fst.get('generalLightOnTime')} off={fst.get('generalLightOffTime')}")
-        print(f"      Light on motion: {fst.get('lightOnMotion')}  "
-              f"follow-up={fst.get('lightOnMotionFollowUpTimeSeconds')}s")
+        print(
+            f"      Light sched.:  {fst.get('scheduleStatus')}  "
+            f"on={fst.get('generalLightOnTime')} off={fst.get('generalLightOffTime')}"
+        )
+        print(
+            f"      Light on motion: {fst.get('lightOnMotion')}  "
+            f"follow-up={fst.get('lightOnMotionFollowUpTimeSeconds')}s"
+        )
         print(f"      Sound recording: {cam.get('soundIsOnForRecording')}")
 
         # ── WiFi info (always shown if available) ─────────────────────────
@@ -2143,10 +2281,10 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             wr = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/wifiinfo", timeout=10)
             if wr.status_code == 200:
                 wd = wr.json()
-                ssid   = wd.get("ssid", "?")
+                ssid = wd.get("ssid", "?")
                 signal = wd.get("signalStrength", wd.get("signal", "?"))
-                ip     = wd.get("ipAddress", wd.get("ip", "?"))
-                mac_w  = wd.get("macAddress", wd.get("mac", "?"))
+                ip = wd.get("ipAddress", wd.get("ip", "?"))
+                mac_w = wd.get("macAddress", wd.get("mac", "?"))
                 signal_str = f"{signal}%" if isinstance(signal, int) else str(signal)
                 print(f"      WiFi:          {ssid}  signal={signal_str}  IP={ip}  MAC={mac_w}")
         except Exception:
@@ -2168,11 +2306,15 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 conn_urls: list[str] = sd.get("urls", [])
                 if conn_urls:
                     u = conn_urls[0]
-                    snap_url  = sd.get("imageUrlScheme", "https://{url}/snap.jpg").replace("{url}", u)
+                    snap_url = sd.get("imageUrlScheme", "https://{url}/snap.jpg").replace(
+                        "{url}", u
+                    )
                     main_url, sub_url = _build_stream_urls(cam, sd, inst=1)
                     print(f"      Snap URL:      {snap_url}")
+                    # `info` deliberately surfaces the copyable stream URLs — it is
+                    # the only CLI path that outputs them, so keep creds UNREDACTED.
                     print(t("cmd.info.stream_url_main", url=main_url))
-                    print(t("cmd.info.stream_url_sub",  url=sub_url))
+                    print(t("cmd.info.stream_url_sub", url=sub_url))
                     print("      Stream:        H.264 1920×1080 30fps + AAC 16kHz (session ~60s)")
             else:
                 print(f"      Stream URLs:   unavailable (HTTP {sr.status_code})")
@@ -2197,7 +2339,7 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 fwr = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/firmware", timeout=10)
                 if fwr.status_code == 200:
                     fwd = fwr.json()
-                    ver     = fwd.get("version", fwd.get("firmwareVersion", "?"))
+                    ver = fwd.get("version", fwd.get("firmwareVersion", "?"))
                     up2date = fwd.get("upToDate", fwd.get("isUpToDate", "?"))
                     print(f"      Firmware:      version={ver}  upToDate={up2date}")
             except Exception:
@@ -2205,11 +2347,13 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
             # /lighting_override
             try:
-                lor = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/lighting_override", timeout=10)
+                lor = session.get(
+                    f"{CLOUD_API}/v11/video_inputs/{cam_id}/lighting_override", timeout=10
+                )
                 if lor.status_code == 200:
                     lod = lor.json()
                     front = lod.get("frontLightOn", "?")
-                    wall  = lod.get("wallwasherOn", "?")
+                    wall = lod.get("wallwasherOn", "?")
                     print(f"      Light override: frontLightOn={front}  wallwasherOn={wall}")
             except Exception:
                 pass
@@ -2219,15 +2363,17 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 mr = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/motion", timeout=10)
                 if mr.status_code == 200:
                     md = mr.json()
-                    enabled  = md.get("enabled", md.get("motionEnabled", "?"))
-                    sens     = md.get("sensitivity", "?")
+                    enabled = md.get("enabled", md.get("motionEnabled", "?"))
+                    sens = md.get("sensitivity", "?")
                     print(f"      Motion:        enabled={enabled}  sensitivity={sens}")
             except Exception:
                 pass
 
             # /recording_options
             try:
-                ror = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/recording_options", timeout=10)
+                ror = session.get(
+                    f"{CLOUD_API}/v11/video_inputs/{cam_id}/recording_options", timeout=10
+                )
                 if ror.status_code == 200:
                     rod = ror.json()
                     rec_sound = rod.get("recordSound", rod.get("soundIsOnForRecording", "?"))
@@ -2237,21 +2383,31 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
             # /ambient_light_sensor_level
             try:
-                alr = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/ambient_light_sensor_level", timeout=10)
+                alr = session.get(
+                    f"{CLOUD_API}/v11/video_inputs/{cam_id}/ambient_light_sensor_level", timeout=10
+                )
                 if alr.status_code == 200:
                     ald = alr.json()
                     level = ald.get("ambientLightSensorLevel", ald.get("level", json.dumps(ald)))
-                    pct = f" ({round(float(level)*100)}%)" if isinstance(level, (int, float)) else ""
+                    pct = (
+                        f" ({round(float(level) * 100)}%)"
+                        if isinstance(level, (int, float))
+                        else ""
+                    )
                     print(f"      Ambient light: {level}{pct}")
             except Exception:
                 pass
 
             # /intrusionDetectionConfig (Gen2 only)
             try:
-                idr = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/intrusionDetectionConfig", timeout=10)
+                idr = session.get(
+                    f"{CLOUD_API}/v11/video_inputs/{cam_id}/intrusionDetectionConfig", timeout=10
+                )
                 if idr.status_code == 200:
                     idd = idr.json()
-                    print(f"      Intrusion:     enabled={idd.get('enabled')}, mode={idd.get('detectionMode')}, sensitivity={idd.get('sensitivity')}, distance={idd.get('distance')}m")
+                    print(
+                        f"      Intrusion:     enabled={idd.get('enabled')}, mode={idd.get('detectionMode')}, sensitivity={idd.get('sensitivity')}, distance={idd.get('distance')}m"
+                    )
             except Exception:
                 pass
 
@@ -2284,7 +2440,9 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
             # /privacy_sound_override
             try:
-                psr = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/privacy_sound_override", timeout=10)
+                psr = session.get(
+                    f"{CLOUD_API}/v11/video_inputs/{cam_id}/privacy_sound_override", timeout=10
+                )
                 if psr.status_code == 200:
                     psd = psr.json()
                     print(f"      Privacy sound: {psd.get('result', '?')}")
@@ -2299,8 +2457,8 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 # We already opened a REMOTE connection above for stream URLs.
                 # Re-use it by opening a new RCP session on the same proxy hash.
                 _rcp_proxy_base, _ = rcp_open_connection(cam_id, token)
-                _rcp_sessionid     = rcp_session(_rcp_proxy_base)
-                _rcp_url           = f"{_rcp_proxy_base}/rcp.xml"
+                _rcp_sessionid = rcp_session(_rcp_proxy_base)
+                _rcp_url = f"{_rcp_proxy_base}/rcp.xml"
 
                 # Product name (0x0aea)
                 d = rcp_read(_rcp_url, "0x0aea", _rcp_sessionid)
@@ -2351,7 +2509,7 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                     for flag in flags:
                         if isinstance(flag, dict):
                             fname = flag.get("name", flag.get("key", "?"))
-                            fval  = flag.get("value", flag.get("enabled", "?"))
+                            fval = flag.get("value", flag.get("enabled", "?"))
                             parts.append(f"{fname}={fval}")
                         else:
                             parts.append(str(flag))
@@ -2372,8 +2530,10 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 # Gen1 cameras return 401 — these functions return False gracefully.
 # Uses synchronous `requests` (same as the rest of the CLI).
 
-def _lan_rcp_write(cam_ip: str, command: str, payload_hex: str,
-                   type_: str = "P_OCTET", num: int = 0) -> bool:
+
+def _lan_rcp_write(
+    cam_ip: str, command: str, payload_hex: str, type_: str = "P_OCTET", num: int = 0
+) -> bool:
     """Write an RCP value directly via the camera's LAN HTTP endpoint.
 
     Returns True on success.  payload_hex may or may not start with "0x".
@@ -2383,10 +2543,10 @@ def _lan_rcp_write(cam_ip: str, command: str, payload_hex: str,
     if not payload_hex.lower().startswith("0x"):
         payload_hex = "0x" + payload_hex
     params: dict[str, str] = {
-        "command":   command,
+        "command": command,
         "direction": "WRITE",
-        "type":      type_,
-        "payload":   payload_hex,
+        "type": type_,
+        "payload": payload_hex,
     }
     if num:
         params["num"] = str(num)
@@ -2424,6 +2584,7 @@ def _lan_rcp_write_front_light(cam_ip: str, brightness: int) -> bool:
 def _lan_tcp_ping(host: str, port: int = 443, timeout: float = 3.0) -> tuple[bool, float]:
     """TCP-connect probe to (host, port).  Returns (reachable, rtt_ms)."""
     import socket as _socket
+
     t0 = time.monotonic()
     try:
         with _socket.create_connection((host, port), timeout=timeout):
@@ -2475,26 +2636,37 @@ def cmd_ping(cfg: dict[str, Any], args: argparse.Namespace) -> None:
       python3 bosch_camera.py ping --json           # machine-readable output
     """
     import json as _json_mod
-    cam_arg  = getattr(args, "cam", None)
-    as_json  = getattr(args, "json", False)
-    cams     = resolve_cam(cfg, cam_arg)
+
+    cam_arg = getattr(args, "cam", None)
+    as_json = getattr(args, "json", False)
+    cams = resolve_cam(cfg, cam_arg)
     results: list[dict[str, Any]] = []
 
     for name, cam_info in cams.items():
         cam_id = cam_info.get("id", "")
-        ip     = _resolve_lan_ip(cfg, cam_id, cam_info)
+        ip = _resolve_lan_ip(cfg, cam_id, cam_info)
         if not ip:
-            entry = {"cam": name, "cam_id": cam_id, "ip": None,
-                     "reachable": False, "rtt_ms": None,
-                     "error": "no LAN IP configured — set local_ip in config or run 'bosch lan-ips set'"}
+            entry = {
+                "cam": name,
+                "cam_id": cam_id,
+                "ip": None,
+                "reachable": False,
+                "rtt_ms": None,
+                "error": "no LAN IP configured — set local_ip in config or run 'bosch lan-ips set'",
+            }
             results.append(entry)
             if not as_json:
                 print(f"  {name}: no LAN IP configured")
             continue
 
         ok, rtt = _lan_tcp_ping(ip, port=443)
-        entry = {"cam": name, "cam_id": cam_id, "ip": ip,
-                 "reachable": ok, "rtt_ms": round(rtt, 1) if ok else None}
+        entry = {
+            "cam": name,
+            "cam_id": cam_id,
+            "ip": ip,
+            "reachable": ok,
+            "rtt_ms": round(rtt, 1) if ok else None,
+        }
         results.append(entry)
         if not as_json:
             icon = "✅" if ok else "❌"
@@ -2514,9 +2686,9 @@ def cmd_lan_ips(cfg: dict[str, Any], args: argparse.Namespace) -> None:
       python3 bosch_camera.py lan-ips unset <cam-name>            # remove IP
       python3 bosch_camera.py lan-ips sync                        # copy local_ip fields → lan_ips
     """
-    sub    = getattr(args, "lan_sub", None) or ""
+    sub = getattr(args, "lan_sub", None) or ""
     cam_arg = getattr(args, "lan_cam", None)
-    ip_arg  = getattr(args, "lan_ip", None)
+    ip_arg = getattr(args, "lan_ip", None)
 
     lan_ips: dict[str, str] = cfg.setdefault("lan_ips", {})
     cameras: dict[str, dict[str, Any]] = cfg.get("cameras", {})
@@ -2590,14 +2762,14 @@ def cmd_privacy(cfg: dict[str, Any], args: argparse.Namespace) -> None:
          Response: HTTP 204 on success.
     No SHC local API needed — uses cloud API directly.
     """
-    cam_arg    = getattr(args, "cam", None)
-    action     = getattr(args, "action", None)  # "on" / "off" / None
-    use_local  = getattr(args, "local", False)
+    cam_arg = getattr(args, "cam", None)
+    action = getattr(args, "action", None)  # "on" / "off" / None
+    use_local = getattr(args, "local", False)
 
     # If action was parsed as cam and cam_arg looks like an action, swap them
     # (e.g. "privacy on" → cam=None, action="on")
     if cam_arg and cam_arg.lower() in ("on", "off") and action is None:
-        action  = cam_arg.lower()
+        action = cam_arg.lower()
         cam_arg = None
 
     cams = resolve_cam(cfg, cam_arg)
@@ -2608,10 +2780,10 @@ def cmd_privacy(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             print("  ℹ️   --local requires an action: on or off")
             return
         new_state = action.upper()
-        enabled   = new_state == "ON"
+        enabled = new_state == "ON"
         for name, cam_info in cams.items():
             cam_id = cam_info.get("id", "")
-            ip     = _resolve_lan_ip(cfg, cam_id, cam_info)
+            ip = _resolve_lan_ip(cfg, cam_id, cam_info)
             print(f"\n── Privacy Mode (LOCAL RCP): {name} ──────────────────────")
             if not ip:
                 print(f"  ❌  No LAN IP for {name}. Run: bosch lan-ips set {name.lower()} <ip>")
@@ -2627,9 +2799,9 @@ def cmd_privacy(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         return
 
     # ── cloud path (default) ───────────────────────────────────────────────────
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
-    _      = get_cameras(cfg, session)  # ensure discovery if needed
+    _ = get_cameras(cfg, session)  # ensure discovery if needed
 
     # Fetch current state from /v11/video_inputs
     r = session.get(f"{CLOUD_API}/v11/video_inputs", timeout=15)
@@ -2637,18 +2809,20 @@ def cmd_privacy(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         print("  ❌  Token expired.")
         return
     if 500 <= r.status_code <= 599:
-        _hint_local_on_5xx(r.status_code,
-                           f"bosch privacy{' ' + cam_arg if cam_arg else ''}"
-                           f"{' ' + action if action else ''} --local")
+        _hint_local_on_5xx(
+            r.status_code,
+            f"bosch privacy{' ' + cam_arg if cam_arg else ''}"
+            f"{' ' + action if action else ''} --local",
+        )
         r.raise_for_status()
     r.raise_for_status()
     cam_list = {cam.get("id"): cam for cam in r.json()}
 
     for name, cam_info in cams.items():
-        cam_id  = cam_info["id"]
+        cam_id = cam_info["id"]
         cam_raw = cam_list.get(cam_id, {})
         current = cam_raw.get("privacyMode", "UNKNOWN")
-        icon    = "🔒" if current.upper() == "ON" else "👁️"
+        icon = "🔒" if current.upper() == "ON" else "👁️"
 
         print(f"\n── Privacy Mode: {name} ─────────────────────────────────────")
         print(f"  {icon}  Current state:  {current}")
@@ -2700,8 +2874,7 @@ def cmd_privacy(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             else:
                 print("     Camera is now active — live images available.")
         else:
-            _hint_local_on_5xx(pr.status_code,
-                               f"bosch privacy {name.lower()} {action} --local")
+            _hint_local_on_5xx(pr.status_code, f"bosch privacy {name.lower()} {action} --local")
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
@@ -2731,13 +2904,13 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
       lightOnMotionFollowUpTimeSeconds  — how long after motion
       generalLightOnTime / generalLightOffTime  — schedule window
     """
-    cam_arg    = getattr(args, "cam", None)
-    action     = getattr(args, "action", None)
-    use_local  = getattr(args, "local", False)
+    cam_arg = getattr(args, "cam", None)
+    action = getattr(args, "action", None)
+    use_local = getattr(args, "local", False)
 
     # Allow "light on" / "light off" without camera name
     if cam_arg and cam_arg.lower() in ("on", "off") and action is None:
-        action  = cam_arg.lower()
+        action = cam_arg.lower()
         cam_arg = None
     # Allow "light front on" / "light wall off" / "light intensity 50"
     if cam_arg and cam_arg.lower() in ("front", "wall", "intensity"):
@@ -2774,11 +2947,13 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             desc = "ON (brightness=100%)"
         else:
             # wall / wallwasher — local RCP not supported
-            print("  ℹ️   --local only supports front light and intensity. Wallwasher is cloud-only.")
+            print(
+                "  ℹ️   --local only supports front light and intensity. Wallwasher is cloud-only."
+            )
             return
         for name, cam_info in cams.items():
             cam_id = cam_info.get("id", "")
-            ip     = _resolve_lan_ip(cfg, cam_id, cam_info)
+            ip = _resolve_lan_ip(cfg, cam_id, cam_info)
             print(f"\n── Camera Light (LOCAL RCP): {name} ─────────────────────")
             if not ip:
                 print(f"  ❌  No LAN IP for {name}. Run: bosch lan-ips set {name.lower()} <ip>")
@@ -2795,52 +2970,57 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         return
 
     # ── cloud path (default) ───────────────────────────────────────────────────
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
-    _      = get_cameras(cfg, session)  # ensure discovery if needed
+    _ = get_cameras(cfg, session)  # ensure discovery if needed
 
     r = session.get(f"{CLOUD_API}/v11/video_inputs", timeout=15)
     if r.status_code == 401:
         print("  ❌  Token expired.")
         return
     if 500 <= r.status_code <= 599:
-        _hint_local_on_5xx(r.status_code,
-                           f"bosch light{' ' + cam_arg if cam_arg else ''}"
-                           f"{' ' + action if action else ''} --local")
+        _hint_local_on_5xx(
+            r.status_code,
+            f"bosch light{' ' + cam_arg if cam_arg else ''}"
+            f"{' ' + action if action else ''} --local",
+        )
         r.raise_for_status()
     r.raise_for_status()
     cam_list = {cam.get("id"): cam for cam in r.json()}
 
     for name, cam_info in cams.items():
-        cam_id  = cam_info["id"]
+        cam_id = cam_info["id"]
         cam_raw = cam_list.get(cam_id, {})
         feat_support = cam_raw.get("featureSupport", {})
-        has_light    = feat_support.get("light", False)
-        feat_status  = cam_raw.get("featureStatus", {})
+        has_light = feat_support.get("light", False)
+        feat_status = cam_raw.get("featureStatus", {})
 
         print(f"\n── Camera Light: {name} ─────────────────────────────────────")
         if not has_light:
             print("  ℹ️   This camera does not support a built-in light.")
             continue
 
-        sched     = feat_status.get("scheduleStatus", "UNKNOWN")
-        front_on  = feat_status.get("frontIlluminatorInGeneralLightOn", False)
+        sched = feat_status.get("scheduleStatus", "UNKNOWN")
+        front_on = feat_status.get("frontIlluminatorInGeneralLightOn", False)
         intensity = feat_status.get("frontIlluminatorGeneralLightIntensity", 0)
-        wall_on   = feat_status.get("wallwasherInGeneralLightOn", False)
-        on_time   = feat_status.get("generalLightOnTime", "?")
-        off_time  = feat_status.get("generalLightOffTime", "?")
+        wall_on = feat_status.get("wallwasherInGeneralLightOn", False)
+        on_time = feat_status.get("generalLightOnTime", "?")
+        off_time = feat_status.get("generalLightOffTime", "?")
         on_motion = feat_status.get("lightOnMotion", False)
         follow_up = feat_status.get("lightOnMotionFollowUpTimeSeconds", 0)
 
         mode_icon = {"ALWAYS_ON": "💡", "ALWAYS_OFF": "🌑", "SCHEDULE": "📅"}.get(sched, "❓")
         print(f"  {mode_icon}  Schedule mode:       {sched}")
-        print(f"  {'💡' if front_on else '🌑'}  General light mode:  {'ON' if front_on else 'OFF'}  "
-              f"(intensity: {intensity:.0%})")
+        print(
+            f"  {'💡' if front_on else '🌑'}  General light mode:  {'ON' if front_on else 'OFF'}  "
+            f"(intensity: {intensity:.0%})"
+        )
         if wall_on:
             print("  💡  Wallwasher:          ON")
         print(f"  🕐  Schedule window:     {on_time} → {off_time}")
-        print(f"  🏃  Light on motion:     {'YES' if on_motion else 'NO'}  "
-              f"(follow-up: {follow_up}s)")
+        print(
+            f"  🏃  Light on motion:     {'YES' if on_motion else 'NO'}  (follow-up: {follow_up}s)"
+        )
 
         # Also show current override state
         try:
@@ -2849,12 +3029,16 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 timeout=10,
             ).json()
             ovr_front = ovr.get("frontLightOn", False)
-            ovr_wall  = ovr.get("wallwasherOn", False)
-            ovr_int   = ovr.get("frontLightIntensity")
+            ovr_wall = ovr.get("wallwasherOn", False)
+            ovr_int = ovr.get("frontLightIntensity")
             print("  ── Override (instant) ──")
-            print(f"  {'💡' if ovr_front else '🌑'}  Front light:         {'ON' if ovr_front else 'OFF'}"
-                  + (f"  (intensity: {ovr_int:.0%})" if ovr_int is not None else ""))
-            print(f"  {'💡' if ovr_wall else '🌑'}  Wallwasher:          {'ON' if ovr_wall else 'OFF'}")
+            print(
+                f"  {'💡' if ovr_front else '🌑'}  Front light:         {'ON' if ovr_front else 'OFF'}"
+                + (f"  (intensity: {ovr_int:.0%})" if ovr_int is not None else "")
+            )
+            print(
+                f"  {'💡' if ovr_wall else '🌑'}  Wallwasher:          {'ON' if ovr_wall else 'OFF'}"
+            )
         except Exception:
             pass
 
@@ -2877,8 +3061,8 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         except Exception:
             cur = {}
         cur_front = cur.get("frontLightOn", False)
-        cur_wall  = cur.get("wallwasherOn", False)
-        cur_int   = cur.get("frontLightIntensity") or 1.0
+        cur_wall = cur.get("wallwasherOn", False)
+        cur_int = cur.get("frontLightIntensity") or 1.0
 
         # Parse action: "on", "off", "front on", "wall off", "intensity 50"
         parts = action.split()
@@ -2919,12 +3103,13 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             timeout=10,
         )
         if pr.status_code in (200, 201, 204):
-            print(f"  💡  Done. Front={'ON' if cur_front else 'OFF'}  "
-                  f"Wall={'ON' if cur_wall else 'OFF'}  "
-                  f"Intensity={int(cur_int * 100)}%")
+            print(
+                f"  💡  Done. Front={'ON' if cur_front else 'OFF'}  "
+                f"Wall={'ON' if cur_wall else 'OFF'}  "
+                f"Intensity={int(cur_int * 100)}%"
+            )
         else:
-            _hint_local_on_5xx(pr.status_code,
-                               f"bosch light {name.lower()} {action} --local")
+            _hint_local_on_5xx(pr.status_code, f"bosch light {name.lower()} {action} --local")
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
@@ -2962,10 +3147,10 @@ def cmd_pan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     Only available for cameras with featureSupport.panLimit > 0 (indoor 360 camera).
     Discovered 2026-03-21 via mitmproxy capture.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     cam_arg = getattr(args, "cam", None)
-    action  = getattr(args, "action", None)
+    action = getattr(args, "action", None)
 
     # --preset flag takes priority and sets action
     preset_flag = getattr(args, "preset", None)
@@ -2977,7 +3162,7 @@ def cmd_pan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     if cam_arg and action is None:
         try:
             int(cam_arg)
-            action, cam_arg = cam_arg, None   # "pan 45" → action=45, cam=None
+            action, cam_arg = cam_arg, None  # "pan 45" → action=45, cam=None
         except ValueError:
             cam_arg_str: str = str(cam_arg)
             if cam_arg_str.lower() in PRESETS:
@@ -2993,9 +3178,9 @@ def cmd_pan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     cam_list = {cam.get("id"): cam for cam in r.json()}
 
     for name, cam_info in cams.items():
-        cam_id      = cam_info["id"]
-        cam_raw     = cam_list.get(cam_id, {})
-        pan_limit   = cam_raw.get("featureSupport", {}).get("panLimit", 0)
+        cam_id = cam_info["id"]
+        cam_raw = cam_list.get(cam_id, {})
+        pan_limit = cam_raw.get("featureSupport", {}).get("panLimit", 0)
 
         print(f"\n── Pan Control: {name} ──────────────────────────────────────")
         if not pan_limit:
@@ -3015,14 +3200,14 @@ def cmd_pan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 print(hint)
             continue
         pan_data = pr.json()
-        current  = pan_data.get("currentAbsolutePosition", 0)
-        limit    = pan_data.get("panLimit", pan_limit)
+        current = pan_data.get("currentAbsolutePosition", 0)
+        limit = pan_data.get("panLimit", pan_limit)
 
         # Visual position bar
-        pct   = (current + limit) / (2 * limit)  # 0.0 = full left, 1.0 = full right
+        pct = (current + limit) / (2 * limit)  # 0.0 = full left, 1.0 = full right
         width = 30
-        pos   = int(pct * width)
-        bar   = "─" * pos + "●" + "─" * (width - pos)
+        pos = int(pct * width)
+        bar = "─" * pos + "●" + "─" * (width - pos)
         direction = "CENTER" if abs(current) < 5 else ("RIGHT ▶" if current > 0 else "◀ LEFT")
         print(f"  📍  Position:  {current:+4d}°  {direction}")
         print(f"      Range:    -{limit}° ◀ [{bar}] ▶ +{limit}°")
@@ -3070,7 +3255,7 @@ def cmd_pan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if resp.status_code == 200:
             data = resp.json()
             new_pos = data.get("currentAbsolutePosition", target)
-            eta_ms  = data.get("estimatedTimeToCompletion", 0)
+            eta_ms = data.get("estimatedTimeToCompletion", 0)
             at_limit = data.get("cameraStoppedAtLimit", False)
             print(f"  ✅  Moving to {new_pos:+d}°  (ETA: {eta_ms}ms)")
             if at_limit:
@@ -3092,13 +3277,13 @@ def cmd_notifications(cfg: dict[str, Any], args: argparse.Namespace) -> None:
          Response: HTTP 204 on success.
     State is visible in GET /v11/video_inputs as notificationsEnabledStatus.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     cam_arg = getattr(args, "cam", None)
-    action  = getattr(args, "action", None)
+    action = getattr(args, "action", None)
 
     if cam_arg and cam_arg.lower() in ("on", "off") and action is None:
-        action  = cam_arg.lower()
+        action = cam_arg.lower()
         cam_arg = None
 
     cams = resolve_cam(cfg, cam_arg)
@@ -3111,17 +3296,17 @@ def cmd_notifications(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     cam_list = {cam.get("id"): cam for cam in r.json()}
 
     for name, cam_info in cams.items():
-        cam_id  = cam_info["id"]
+        cam_id = cam_info["id"]
         cam_raw = cam_list.get(cam_id, {})
         current = cam_raw.get("notificationsEnabledStatus", "UNKNOWN")
         notif_on = current != "ALWAYS_OFF"
-        icon     = "🔔" if notif_on else "🔕"
+        icon = "🔔" if notif_on else "🔕"
 
         # Friendly display for all known states
         STATE_LABELS = {
-            "ALWAYS_OFF":             "OFF",
+            "ALWAYS_OFF": "OFF",
             "FOLLOW_CAMERA_SCHEDULE": "ON (follows schedule)",
-            "ON_CAMERA_SCHEDULE":     "ON (explicit schedule)",
+            "ON_CAMERA_SCHEDULE": "ON (explicit schedule)",
         }
         state_label = STATE_LABELS.get(current, current)
 
@@ -3135,7 +3320,7 @@ def cmd_notifications(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
         new_status = "FOLLOW_CAMERA_SCHEDULE" if action == "on" else "ALWAYS_OFF"
         # ON_CAMERA_SCHEDULE also counts as "on" — don't overwrite with FOLLOW_CAMERA_SCHEDULE
-        already_on  = action == "on"  and current in ("FOLLOW_CAMERA_SCHEDULE", "ON_CAMERA_SCHEDULE")
+        already_on = action == "on" and current in ("FOLLOW_CAMERA_SCHEDULE", "ON_CAMERA_SCHEDULE")
         already_off = action == "off" and current == "ALWAYS_OFF"
         if already_on or already_off:
             print(f"  ✅  Already {current} — no change needed.")
@@ -3156,9 +3341,10 @@ def cmd_notifications(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
 
 # ── FCM Push constants (from APK analysis) ───────────────────────────────────
-FCM_PROJECT_ID    = "bosch-smart-cameras"
-FCM_APP_ID        = "1:404630424405:android:9e5b6b58e4c70075"
-FCM_SENDER_ID     = "404630424405"
+FCM_PROJECT_ID = "bosch-smart-cameras"
+FCM_APP_ID = "1:404630424405:android:9e5b6b58e4c70075"
+FCM_SENDER_ID = "404630424405"
+
 
 def _get_fcm_api_key() -> str:
     """Return the Google API key for FCM registration.
@@ -3167,14 +3353,22 @@ def _get_fcm_api_key() -> str:
     Firebase Installations + FCM registration permissions confirmed working.
     """
     import base64
+
     return base64.b64decode("QUl6YVN5Q0toaGZ4ZlRzMUc3V3Z6VERBaU8wQWlzN0VIMjVEYk9z").decode()
-FCM_CRED_KEY      = "_fcm_credentials"  # key in bosch_config.json settings
+
+
+FCM_CRED_KEY = "_fcm_credentials"  # key in bosch_config.json settings
 
 
 def _send_signal_alert(
-    signal_url: str, sender: str, recipients: list[str],
-    cam_name: str, event_type: str, ts: str,
-    image_url: str = "", token: str = "",
+    signal_url: str,
+    sender: str,
+    recipients: list[str],
+    cam_name: str,
+    event_type: str,
+    ts: str,
+    image_url: str = "",
+    token: str = "",
 ) -> None:
     """Send an alert message (with optional snapshot) via signal-cli-rest-api.
 
@@ -3204,7 +3398,8 @@ def _send_signal_alert(
     try:
         r = requests.post(
             f"{signal_url.rstrip('/')}/v2/send",
-            json=body, timeout=15,
+            json=body,
+            timeout=15,
         )
         if r.status_code in (200, 201):
             print(f"             📨 Signal alert sent to {', '.join(recipients)}")
@@ -3240,13 +3435,13 @@ def _post_event_webhook(
         }
     """
     payload: dict[str, Any] = {
-        "camera":     cam_name,
-        "camera_id":  cam_id,
+        "camera": cam_name,
+        "camera_id": cam_id,
         "event_type": event_type,
-        "timestamp":  timestamp,
-        "event_id":   event.get("id", ""),
-        "image_url":  event.get("imageUrl", ""),
-        "clip_url":   event.get("videoClipUrl", ""),
+        "timestamp": timestamp,
+        "event_id": event.get("id", ""),
+        "image_url": event.get("imageUrl", ""),
+        "clip_url": event.get("videoClipUrl", ""),
     }
     try:
         resp = requests.post(url, json=payload, timeout=10)
@@ -3261,9 +3456,19 @@ def _post_event_webhook(
         print(f"             ⚠️  Webhook POST error: {err}", file=sys.stderr)
 
 
-def _watch_fcm_push(cfg: dict[str, Any], token: str, cams: dict[str, Any], duration: int, auto_snap: bool,
-                    signal_url: str = "", signal_sender: str = "", signal_recipients: list[str] | None = None,
-                    fcm_app_id: str = "", fcm_api_key: str = "", mode_label: str = "Android") -> None:
+def _watch_fcm_push(
+    cfg: dict[str, Any],
+    token: str,
+    cams: dict[str, Any],
+    duration: int,
+    auto_snap: bool,
+    signal_url: str = "",
+    signal_sender: str = "",
+    signal_recipients: list[str] | None = None,
+    fcm_app_id: str = "",
+    fcm_api_key: str = "",
+    mode_label: str = "Android",
+) -> None:
     """Watch for events using FCM push notifications instead of polling.
 
     Near-instant event detection (~2-3s) via Firebase Cloud Messaging.
@@ -3320,11 +3525,11 @@ def _watch_fcm_push(cfg: dict[str, Any], token: str, cams: dict[str, Any], durat
                 new_events.append(ev)
 
             for ev in reversed(new_events):
-                etype   = ev.get("eventType", "EVENT")
-                ts      = ev.get("timestamp", "")[:19]
+                etype = ev.get("eventType", "EVENT")
+                ts = ev.get("timestamp", "")[:19]
                 img_url = ev.get("imageUrl", "")
                 clip_url = ev.get("videoClipUrl", "")
-                icon    = "🔊" if "AUDIO" in etype else ("👤" if etype == "PERSON" else "🚨")
+                icon = "🔊" if "AUDIO" in etype else ("👤" if etype == "PERSON" else "🚨")
                 print(f"\n  [{now_str}] {icon} {etype:<15s}  cam={name:<12s}  {ts}  (via FCM push)")
                 if img_url:
                     print(f"             📸 {img_url}")
@@ -3335,8 +3540,14 @@ def _watch_fcm_push(cfg: dict[str, Any], token: str, cams: dict[str, Any], durat
                 # Signal alert
                 if signal_url and signal_sender and signal_recipients:
                     _send_signal_alert(
-                        signal_url, signal_sender, signal_recipients,
-                        name, etype, ts, img_url, tok,
+                        signal_url,
+                        signal_sender,
+                        signal_recipients,
+                        name,
+                        etype,
+                        ts,
+                        img_url,
+                        tok,
                     )
 
                 if auto_snap and img_url and _is_safe_bosch_url(img_url):
@@ -3432,6 +3643,7 @@ def _watch_fcm_push(cfg: dict[str, Any], token: str, cams: dict[str, Any], durat
 
     try:
         import asyncio
+
         asyncio.run(_run())
     except KeyboardInterrupt:
         elapsed = int(time.time() - start_time[0])
@@ -3524,7 +3736,7 @@ class MotionEdgeTracker:
 
 # ── Motion snapshot helpers ────────────────────────────────────────────────────
 
-_MOTION_SNAPSHOT_KEEP = 100   # max snapshots per camera in captures/<cam>/
+_MOTION_SNAPSHOT_KEEP = 100  # max snapshots per camera in captures/<cam>/
 
 
 def _motion_snapshot_dir(cam_name: str) -> str:
@@ -3537,9 +3749,7 @@ def _motion_snapshot_dir(cam_name: str) -> str:
 def _motion_snapshot_cleanup(cam_name: str, keep: int = _MOTION_SNAPSHOT_KEEP) -> None:
     """Delete oldest motion_*.jpg files if count exceeds *keep*."""
     d = _motion_snapshot_dir(cam_name)
-    snaps = sorted(
-        [f for f in os.listdir(d) if f.startswith("motion_") and f.endswith(".jpg")]
-    )
+    snaps = sorted([f for f in os.listdir(d) if f.startswith("motion_") and f.endswith(".jpg")])
     excess = len(snaps) - keep
     if excess > 0:
         for fname in snaps[:excess]:
@@ -3569,7 +3779,7 @@ def _motion_snapshot_cleanup(cam_name: str, keep: int = _MOTION_SNAPSHOT_KEEP) -
 #     (TODO: add sub-second suffix if needed).
 
 _NVR_DEFAULT_MAX_CLIPS = 50
-_NVR_DEFAULT_MAX_DURATION = 60   # seconds per clip
+_NVR_DEFAULT_MAX_DURATION = 60  # seconds per clip
 
 
 def _nvr_clip_dir(cam_name: str, base_dir: Optional[str] = None) -> str:
@@ -3605,8 +3815,9 @@ def _nvr_all_clips(cam_name: str, base_dir: Optional[str] = None) -> list[str]:
     return clips
 
 
-def _nvr_prune(cam_name: str, keep: int = _NVR_DEFAULT_MAX_CLIPS,
-               base_dir: Optional[str] = None) -> tuple[int, int]:
+def _nvr_prune(
+    cam_name: str, keep: int = _NVR_DEFAULT_MAX_CLIPS, base_dir: Optional[str] = None
+) -> tuple[int, int]:
     """FIFO: delete oldest clips so at most *keep* remain.
 
     Returns (removed_count, kept_count).
@@ -3682,12 +3893,18 @@ def _start_motion_recording(
     out_path = _nvr_clip_path(cam_name, base_dir)
 
     ffmpeg_cmd = [
-        "ffmpeg", "-y",
-        "-rtsp_transport", "tcp",
-        "-i", rtsp_url,
-        "-t", str(max_duration),
-        "-c", "copy",
-        "-movflags", "+faststart",
+        "ffmpeg",
+        "-y",
+        "-rtsp_transport",
+        "tcp",
+        "-i",
+        rtsp_url,
+        "-t",
+        str(max_duration),
+        "-c",
+        "copy",
+        "-movflags",
+        "+faststart",
         out_path,
     ]
 
@@ -3781,7 +3998,7 @@ def _nvr_smb_upload(clip_path: str, cfg: dict[str, Any]) -> tuple[bool, str]:
 # ── NVR state (in-process; resets on restart) ────────────────────────────────
 # Maps camera name → active Popen (None if not recording)
 _nvr_active: dict[str, Optional["subprocess.Popen[bytes]"]] = {}
-_nvr_start_times: dict[str, float] = {}   # camera name → epoch when recording started
+_nvr_start_times: dict[str, float] = {}  # camera name → epoch when recording started
 
 
 def _nvr_is_recording(cam_name: str) -> bool:
@@ -3797,6 +4014,7 @@ def _nvr_recording_duration(cam_name: str) -> int:
 
 
 # ── NVR sub-command handlers ──────────────────────────────────────────────────
+
 
 def _cmd_nvr_status(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     cam_arg = getattr(args, "cam", None)
@@ -3878,8 +4096,8 @@ def cmd_nvr(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     sub = getattr(args, "nvr_sub", None)
     handlers = {
         "status": _cmd_nvr_status,
-        "list":   _cmd_nvr_list,
-        "prune":  _cmd_nvr_prune,
+        "list": _cmd_nvr_list,
+        "prune": _cmd_nvr_prune,
         "upload": _cmd_nvr_upload,
     }
     if sub not in handlers:
@@ -3900,18 +4118,22 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     seconds elapsed. Prints each new event with type, timestamp, image URL and
     clip URL.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
-    interval  = getattr(args, "interval", 30) or 30
-    duration  = getattr(args, "duration", 0) or 0
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
+    interval = getattr(args, "interval", 30) or 30
+    duration = getattr(args, "duration", 0) or 0
     auto_snap = getattr(args, "snapshot", False)
-    use_push  = getattr(args, "push", False)
+    use_push = getattr(args, "push", False)
     signal_url = getattr(args, "signal", "") or ""
     signal_sender = getattr(args, "signal_sender", "") or ""
     signal_recipients_str = getattr(args, "signal_recipients", "") or ""
-    signal_recipients = [r.strip() for r in signal_recipients_str.split(",") if r.strip()] if signal_recipients_str else []
+    signal_recipients = (
+        [r.strip() for r in signal_recipients_str.split(",") if r.strip()]
+        if signal_recipients_str
+        else []
+    )
     webhook_url: str = (getattr(args, "webhook", "") or "").strip()
 
     # Motion edge tracking flags
@@ -3934,12 +4156,15 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             motion_trackers[cam_name] = MotionEdgeTracker(quiet_secs=quiet_secs)
 
     if signal_url:
-        print(f"  📨  Signal alerts → {signal_url} (sender={signal_sender}, recipients={signal_recipients})")
+        print(
+            f"  📨  Signal alerts → {signal_url} (sender={signal_sender}, recipients={signal_recipients})"
+        )
 
     push_mode = getattr(args, "push_mode", "auto")
     # Back-compat: --push-mode android/ios accepted but treated as auto (iOS path removed in v10.7.1)
     if push_mode in ("android", "ios"):
         import sys as _sys
+
         print(f"WARNING: --push-mode {push_mode} is deprecated, treating as auto", file=_sys.stderr)
         push_mode = "auto"
 
@@ -3953,10 +4178,19 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
         for label, app_id, key_fn in modes_to_try:
             try:
-                _watch_fcm_push(cfg, token, cams, duration, auto_snap,
-                                signal_url, signal_sender, signal_recipients,
-                                fcm_app_id=app_id, fcm_api_key=key_fn(),
-                                mode_label=label)
+                _watch_fcm_push(
+                    cfg,
+                    token,
+                    cams,
+                    duration,
+                    auto_snap,
+                    signal_url,
+                    signal_sender,
+                    signal_recipients,
+                    fcm_app_id=app_id,
+                    fcm_api_key=key_fn(),
+                    mode_label=label,
+                )
                 push_succeeded = True
                 break
             except Exception as e:
@@ -3990,7 +4224,7 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     print()
 
     start_time = time.time()
-    total_new  = 0
+    total_new = 0
 
     def _renew_session() -> tuple[str, requests.Session]:
         # With cached module-level session, this only refreshes the Bearer token
@@ -4023,14 +4257,13 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 token, session = _renew_session()
 
             for name, cam_info in cams.items():
-                cam_id  = cam_info["id"]
+                cam_id = cam_info["id"]
 
                 # Fetch latest events; retry once on 401
                 try:
                     events = api_get_events(session, cam_id, limit=20)
                 except Exception as e:
-                    print(f"  [warn] event fetch failed for {name}: {e}",
-                          file=sys.stderr)
+                    print(f"  [warn] event fetch failed for {name}: {e}", file=sys.stderr)
                     events = []
 
                 if not events and session.headers.get("Authorization", ""):
@@ -4039,8 +4272,10 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                         token, session = _renew_session()
                         events = api_get_events(session, cam_id, limit=20)
                     except Exception as e:
-                        print(f"  [warn] event re-fetch after renew failed for {name}: {e}",
-                              file=sys.stderr)
+                        print(
+                            f"  [warn] event re-fetch after renew failed for {name}: {e}",
+                            file=sys.stderr,
+                        )
                         events = []
 
                 baseline = last_seen.get(name, "")
@@ -4053,10 +4288,10 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
                 # Print new events (oldest first — events list is newest-first)
                 for ev in reversed(new_events):
-                    etype     = ev.get("eventType", "EVENT")
-                    ts        = ev.get("timestamp", "")[:19]
-                    img_url   = ev.get("imageUrl", "")
-                    clip_url  = ev.get("videoClipUrl", "")
+                    etype = ev.get("eventType", "EVENT")
+                    ts = ev.get("timestamp", "")[:19]
+                    img_url = ev.get("imageUrl", "")
+                    clip_url = ev.get("videoClipUrl", "")
                     type_icon = "🔊" if "AUDIO" in etype else ("👤" if etype == "PERSON" else "🚨")
                     print(f"  [{now_str}] {type_icon} {etype:<15s}  cam={name:<12s}  {ts}")
                     if img_url:
@@ -4067,8 +4302,14 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                     # Signal alert
                     if signal_url and signal_sender and signal_recipients:
                         _send_signal_alert(
-                            signal_url, signal_sender, signal_recipients,
-                            name, etype, ts, img_url, token,
+                            signal_url,
+                            signal_sender,
+                            signal_recipients,
+                            name,
+                            etype,
+                            ts,
+                            img_url,
+                            token,
                         )
                     # Webhook delivery
                     if webhook_url:
@@ -4077,7 +4318,9 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                     if auto_snap and img_url and _is_safe_bosch_url(img_url):
                         try:
                             r = session.get(img_url, timeout=15)
-                            if r.status_code == 200 and "image" in r.headers.get("Content-Type", ""):
+                            if r.status_code == 200 and "image" in r.headers.get(
+                                "Content-Type", ""
+                            ):
                                 fname = f"event_{name}_{ts.replace(':', '-').replace(' ', '_')}.jpg"
                                 fpath = os.path.join(BASE_DIR, fname)
                                 with open(fpath, "wb") as f:
@@ -4085,7 +4328,9 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                                 print(f"             💾 Saved: {fpath}")
                                 open_file(fpath)
                             else:
-                                print(f"             ⚠️  Could not download snapshot (HTTP {r.status_code})")
+                                print(
+                                    f"             ⚠️  Could not download snapshot (HTTP {r.status_code})"
+                                )
                         except Exception as snap_err:
                             print(f"             ⚠️  Snapshot download error: {snap_err}")
 
@@ -4121,8 +4366,13 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                                 _nvr_start_times[name] = time.time()
                                 print(t("nvr.recording.started", camera=name, path=out_path))
                             else:
-                                print(t("nvr.recording.failed", camera=name,
-                                        reason="ffmpeg not found or no RTSP URL"))
+                                print(
+                                    t(
+                                        "nvr.recording.failed",
+                                        camera=name,
+                                        reason="ffmpeg not found or no RTSP URL",
+                                    )
+                                )
                         # Auto-snapshot on rising edge
                         if motion_auto_snap:
                             snap_ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -4130,9 +4380,7 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                             snap_path = os.path.join(snap_dir, f"motion_{snap_ts}.jpg")
                             snap_data: Optional[bytes] = None
                             try:
-                                snap_data = snap_from_proxy(
-                                    cam_info, token, hq=False, cfg=cfg
-                                )
+                                snap_data = snap_from_proxy(cam_info, token, hq=False, cfg=cfg)
                             except Exception:
                                 pass
                             if snap_data is None:
@@ -4169,19 +4417,33 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                                     clip_bytes = os.path.getsize(out_path)
                                 except OSError:
                                     pass
-                                print(t("nvr.recording.stopped", camera=name,
-                                        duration_secs=duration_secs, bytes=clip_bytes))
+                                print(
+                                    t(
+                                        "nvr.recording.stopped",
+                                        camera=name,
+                                        duration_secs=duration_secs,
+                                        bytes=clip_bytes,
+                                    )
+                                )
                                 # FIFO prune after new clip
                                 _nvr_prune(name, keep=nvr_max_clips)
                                 # Auto-upload if SMB configured
                                 smb_host = cfg.get("nvr", {}).get("smb", {}).get("host", "").strip()
                                 if smb_host and out_path != "?":
                                     smb_share = cfg.get("nvr", {}).get("smb", {}).get("share", "")
-                                    print(t("nvr.upload.started", path=out_path,
-                                            host=smb_host, share=smb_share))
+                                    print(
+                                        t(
+                                            "nvr.upload.started",
+                                            path=out_path,
+                                            host=smb_host,
+                                            share=smb_share,
+                                        )
+                                    )
                                     ok, msg = _nvr_smb_upload(out_path, cfg)
                                     print(f"  {msg}")
-                                    if ok and cfg.get("nvr", {}).get("smb", {}).get("delete_after_upload", False):
+                                    if ok and cfg.get("nvr", {}).get("smb", {}).get(
+                                        "delete_after_upload", False
+                                    ):
                                         try:
                                             os.remove(out_path)
                                         except OSError:
@@ -4208,10 +4470,10 @@ def cmd_intercom(cfg: dict[str, Any], args: argparse.Namespace) -> None:
       3. Capture microphone -> send to camera speaker
       4. Camera audio -> play on local speakers
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
     duration = getattr(args, "duration", 60) or 60
     speaker_level = getattr(args, "speaker_level", 50) or 50
 
@@ -4238,8 +4500,11 @@ def cmd_intercom(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         cur_mic = cur_audio.get("microphoneLevel", cur_audio.get("MicrophoneLevel", 50))
         r = session.put(
             f"{CLOUD_API}/v11/video_inputs/{cam_id}/audio",
-            json={"audioEnabled": cur_enabled, "microphoneLevel": cur_mic,
-                  "speakerLevel": speaker_level},
+            json={
+                "audioEnabled": cur_enabled,
+                "microphoneLevel": cur_mic,
+                "speakerLevel": speaker_level,
+            },
             timeout=10,
         )
         if r.status_code in (200, 201, 204):
@@ -4299,12 +4564,17 @@ def cmd_intercom(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         proc = subprocess.Popen(
             [
                 ffplay,
-                "-nodisp",           # no video window
-                "-rtsp_transport", "tcp",
-                "-fflags", "nobuffer",
-                "-flags", "low_delay",
-                "-analyzeduration", "500000",
-                "-probesize", "32768",
+                "-nodisp",  # no video window
+                "-rtsp_transport",
+                "tcp",
+                "-fflags",
+                "nobuffer",
+                "-flags",
+                "low_delay",
+                "-analyzeduration",
+                "500000",
+                "-probesize",
+                "32768",
                 rtsps_url,
             ],
             stdout=subprocess.DEVNULL,
@@ -4390,11 +4660,11 @@ def cmd_motion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     API: GET/PUT /v11/video_inputs/{id}/motion
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
-    enable  = getattr(args, "enable", False)
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
+    enable = getattr(args, "enable", False)
     disable = getattr(args, "disable", False)
     sensitivity = getattr(args, "sensitivity", None)
 
@@ -4410,28 +4680,30 @@ def cmd_motion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if r.status_code != 200:
             print(f"  ❌  Could not fetch motion settings: HTTP {r.status_code}")
             continue
-        data    = r.json()
-        current_enabled  = data.get("enabled", False)
-        current_sens     = data.get("motionAlarmConfiguration", data.get("sensitivity", "UNKNOWN"))
+        data = r.json()
+        current_enabled = data.get("enabled", False)
+        current_sens = data.get("motionAlarmConfiguration", data.get("sensitivity", "UNKNOWN"))
 
         enabled_str = "ENABLED" if current_enabled else "DISABLED"
-        icon        = "✅" if current_enabled else "❌"
+        icon = "✅" if current_enabled else "❌"
         print(f"  {icon}  Motion: {enabled_str}  Sensitivity: {current_sens}")
 
         if not enable and not disable and not sensitivity:
             print("\n  Run with --enable / --disable / --sensitivity to change.")
-            print(f"  E.g.: python3 bosch_camera.py motion {name.lower()} --enable --sensitivity SUPER_HIGH")
+            print(
+                f"  E.g.: python3 bosch_camera.py motion {name.lower()} --enable --sensitivity SUPER_HIGH"
+            )
             continue
 
         # Build PUT body
         new_enabled = current_enabled
-        new_sens    = current_sens
+        new_sens = current_sens
         if enable:
             new_enabled = True
         if disable:
             new_enabled = False
         if sensitivity:
-            new_sens    = sensitivity
+            new_sens = sensitivity
             new_enabled = True  # enabling implicitly when setting sensitivity
 
         body = {"enabled": new_enabled, "motionAlarmConfiguration": new_sens}
@@ -4445,7 +4717,7 @@ def cmd_motion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         )
         if pr.status_code in (200, 201, 204):
             state_str = "ENABLED" if new_enabled else "DISABLED"
-            icon_new  = "✅" if new_enabled else "❌"
+            icon_new = "✅" if new_enabled else "❌"
             print(f"  {icon_new}  Motion {state_str}  Sensitivity: {new_sens}")
         else:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
@@ -4462,11 +4734,11 @@ def cmd_recording(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     API: GET/PUT /v11/video_inputs/{id}/recording_options
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
-    sound_on  = getattr(args, "sound_on",  False)
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
+    sound_on = getattr(args, "sound_on", False)
     sound_off = getattr(args, "sound_off", False)
 
     for name, cam_info in cams.items():
@@ -4480,11 +4752,11 @@ def cmd_recording(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if r.status_code != 200:
             print(f"  ❌  Could not fetch recording options: HTTP {r.status_code}")
             continue
-        data          = r.json()
+        data = r.json()
         current_sound = data.get("recordSound", False)
 
         sound_str = "ON" if current_sound else "OFF"
-        icon      = "🔊" if current_sound else "🔇"
+        icon = "🔊" if current_sound else "🔇"
         print(f"  {icon}  Record Sound: {sound_str}")
 
         if not sound_on and not sound_off:
@@ -4509,7 +4781,7 @@ def cmd_recording(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         )
         if pr.status_code in (200, 201, 204):
             state_str = "ON" if new_sound else "OFF"
-            icon_new  = "🔊" if new_sound else "🔇"
+            icon_new = "🔊" if new_sound else "🔇"
             print(f"  {icon_new}  Record Sound: {state_str}")
         else:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
@@ -4529,13 +4801,14 @@ def cmd_audio(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     Source: captures/api-findings.md §6.2 (verified 2026-04)
     """
     import json as _json_mod
-    token    = get_token(cfg)
-    session  = make_session(token)
+
+    token = get_token(cfg)
+    session = make_session(token)
     _cameras = get_cameras(cfg, session)
-    cam_arg  = getattr(args, "cam", None)
-    mic      = getattr(args, "mic", None)
-    speaker  = getattr(args, "speaker", None)
-    as_json  = getattr(args, "json", False)
+    cam_arg = getattr(args, "cam", None)
+    mic = getattr(args, "mic", None)
+    speaker = getattr(args, "speaker", None)
+    as_json = getattr(args, "json", False)
 
     cams = resolve_cam(cfg, cam_arg)
     results: list[dict[str, Any]] = []
@@ -4560,13 +4833,17 @@ def cmd_audio(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             results.append({"cam": name, "error": f"http_{r.status_code}"})
             continue
 
-        data    = r.json()
+        data = r.json()
         enabled = data.get("audioEnabled", data.get("enabled", False))
         mic_lvl = data.get("microphoneLevel", data.get("MicrophoneLevel", 50))
         spk_lvl = data.get("speakerLevel", data.get("SpeakerLevel", 50))
 
-        entry: dict[str, Any] = {"cam": name, "audioEnabled": enabled,
-                       "microphoneLevel": mic_lvl, "speakerLevel": spk_lvl}
+        entry: dict[str, Any] = {
+            "cam": name,
+            "audioEnabled": enabled,
+            "microphoneLevel": mic_lvl,
+            "speakerLevel": spk_lvl,
+        }
 
         if not as_json:
             print(f"\n── Audio: {name} ────────────────────────────────────────────")
@@ -4633,14 +4910,15 @@ def cmd_intrusion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     Source: captures/api-findings.md §6.2 (verified 2026-04); sensitivity range extended 0-7 in 2026.
     """
     import json as _json_mod
-    token    = get_token(cfg)
-    session  = make_session(token)
+
+    token = get_token(cfg)
+    session = make_session(token)
     _cameras = get_cameras(cfg, session)
-    cam_arg  = getattr(args, "cam", None)
-    mode     = getattr(args, "mode", None)
-    sens     = getattr(args, "sensitivity", None)
-    dist     = getattr(args, "distance", None)
-    as_json  = getattr(args, "json", False)
+    cam_arg = getattr(args, "cam", None)
+    mode = getattr(args, "mode", None)
+    sens = getattr(args, "sensitivity", None)
+    dist = getattr(args, "distance", None)
+    as_json = getattr(args, "json", False)
 
     cams = resolve_cam(cfg, cam_arg)
     results: list[dict[str, Any]] = []
@@ -4648,8 +4926,9 @@ def cmd_intrusion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
 
-        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/intrusionDetectionConfig",
-                        timeout=10)
+        r = session.get(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/intrusionDetectionConfig", timeout=10
+        )
         if r.status_code == 401:
             print("  ❌  Token expired.")
             return
@@ -4666,16 +4945,19 @@ def cmd_intrusion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             results.append({"cam": name, "error": f"http_{r.status_code}"})
             continue
 
-        data      = r.json()
-        enabled   = data.get("enabled", False)
-        det_mode  = data.get("detectionMode", "UNKNOWN")
-        cur_sens  = data.get("sensitivity", 3)
-        cur_dist  = data.get("distance", 5)
+        data = r.json()
+        enabled = data.get("enabled", False)
+        det_mode = data.get("detectionMode", "UNKNOWN")
+        cur_sens = data.get("sensitivity", 3)
+        cur_dist = data.get("distance", 5)
 
-        entry: dict[str, Any] = {"cam": name, "enabled": enabled,
-                       "detectionMode": det_mode,
-                       "sensitivity": cur_sens,
-                       "distance": cur_dist}
+        entry: dict[str, Any] = {
+            "cam": name,
+            "enabled": enabled,
+            "detectionMode": det_mode,
+            "sensitivity": cur_sens,
+            "distance": cur_dist,
+        }
 
         if not as_json:
             print(f"\n── Intrusion Detection: {name} ─────────────────────────────────")
@@ -4688,7 +4970,9 @@ def cmd_intrusion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if mode is None and sens is None and dist is None:
             if not as_json:
                 print("\n  Run with --mode / --sensitivity / --distance to change. E.g.:")
-                print(f"    python3 bosch_camera.py intrusion {name.lower()} --mode indoor --sensitivity 4")
+                print(
+                    f"    python3 bosch_camera.py intrusion {name.lower()} --mode indoor --sensitivity 4"
+                )
             results.append(entry)
             continue
 
@@ -4709,11 +4993,17 @@ def cmd_intrusion(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         new_mode = MODE_MAP.get((mode or "").lower(), mode) if mode else det_mode
         new_sens = sens if sens is not None else cur_sens
         new_dist = dist if dist is not None else cur_dist
-        body = {"enabled": enabled, "detectionMode": new_mode,
-                "sensitivity": new_sens, "distance": new_dist}
+        body = {
+            "enabled": enabled,
+            "detectionMode": new_mode,
+            "sensitivity": new_sens,
+            "distance": new_dist,
+        }
 
         if not as_json:
-            print(f"  🔄  Setting intrusion → mode={new_mode}  sensitivity={new_sens}  distance={new_dist}...")
+            print(
+                f"  🔄  Setting intrusion → mode={new_mode}  sensitivity={new_sens}  distance={new_dist}..."
+            )
 
         pr = session.put(
             f"{CLOUD_API}/v11/video_inputs/{cam_id}/intrusionDetectionConfig",
@@ -4747,11 +5037,12 @@ def cmd_wifi(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     Source: captures/api-findings.md §5 (wifiinfo in top-frequency endpoint list)
     """
     import json as _json_mod
-    token    = get_token(cfg)
-    session  = make_session(token)
+
+    token = get_token(cfg)
+    session = make_session(token)
     _cameras = get_cameras(cfg, session)
-    cam_arg  = getattr(args, "cam", None)
-    as_json  = getattr(args, "json", False)
+    cam_arg = getattr(args, "cam", None)
+    as_json = getattr(args, "json", False)
 
     cams = resolve_cam(cfg, cam_arg)
     results: list[dict[str, Any]] = []
@@ -4774,22 +5065,32 @@ def cmd_wifi(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             results.append({"cam": name, "error": f"http_{r.status_code}"})
             continue
 
-        data   = r.json()
-        ssid   = data.get("ssid", data.get("SSID", "?"))
-        rssi   = data.get("rssi", data.get("RSSI", data.get("signalLevel", None)))
+        data = r.json()
+        ssid = data.get("ssid", data.get("SSID", "?"))
+        rssi = data.get("rssi", data.get("RSSI", data.get("signalLevel", None)))
         signal = data.get("signalStrength", data.get("signal", None))
-        ip_w   = data.get("ipAddress", data.get("ip", "?"))
-        mac_w  = data.get("macAddress", data.get("mac", "?"))
+        ip_w = data.get("ipAddress", data.get("ip", "?"))
+        mac_w = data.get("macAddress", data.get("mac", "?"))
 
-        entry: dict[str, Any] = {"cam": name, "ssid": ssid, "rssi_dbm": rssi,
-                       "signal_pct": signal, "ip": ip_w, "mac": mac_w}
+        entry: dict[str, Any] = {
+            "cam": name,
+            "ssid": ssid,
+            "rssi_dbm": rssi,
+            "signal_pct": signal,
+            "ip": ip_w,
+            "mac": mac_w,
+        }
         results.append(entry)
 
         if not as_json:
-            rssi_str   = f"{rssi} dBm" if rssi is not None else "?"
-            signal_str = f"{signal}%" if isinstance(signal, int) else (str(signal) if signal else "?")
+            rssi_str = f"{rssi} dBm" if rssi is not None else "?"
+            signal_str = (
+                f"{signal}%" if isinstance(signal, int) else (str(signal) if signal else "?")
+            )
             icon = "📶" if signal is not None and isinstance(signal, int) and signal >= 50 else "📉"
-            print(f"  {icon}  {name:<20}  SSID: {ssid:<24}  RSSI: {rssi_str:<12}  Signal: {signal_str}")
+            print(
+                f"  {icon}  {name:<20}  SSID: {ssid:<24}  RSSI: {rssi_str:<12}  Signal: {signal_str}"
+            )
 
     if as_json:
         print(_json_mod.dumps(results, indent=2))
@@ -4868,8 +5169,7 @@ def rcp_session(proxy_base: str) -> str:
         "type": "P_OCTET",
         "payload": _RCP_HELLO_PAYLOAD,
     }
-    r1 = requests_get_bosch_cloud(rcp_url, params=params_hello,
-                                  auth=("", ""), timeout=10)
+    r1 = requests_get_bosch_cloud(rcp_url, params=params_hello, auth=("", ""), timeout=10)
     if r1.status_code != 200:
         raise RuntimeError(f"RCP HELLO returned HTTP {r1.status_code}")
 
@@ -4879,7 +5179,7 @@ def rcp_session(proxy_base: str) -> str:
         ms = _re.search(r"<str>([0-9a-fA-F]+)</str>", r1.text)
         if ms:
             raw = bytes.fromhex(ms.group(1))
-            m2  = _re.search(rb"(0x[0-9a-fA-F]+)", raw)
+            m2 = _re.search(rb"(0x[0-9a-fA-F]+)", raw)
             if m2:
                 sessionid = m2.group(1).decode()
             else:
@@ -4897,8 +5197,7 @@ def rcp_session(proxy_base: str) -> str:
         "sessionid": sessionid,
         "payload": _RCP_HELLO_PAYLOAD,
     }
-    r2 = requests_get_bosch_cloud(rcp_url, params=params_init,
-                                  auth=("", ""), timeout=10)
+    r2 = requests_get_bosch_cloud(rcp_url, params=params_init, auth=("", ""), timeout=10)
     if r2.status_code != 200:
         raise RuntimeError(f"RCP SESSION_INIT returned HTTP {r2.status_code}")
 
@@ -4923,8 +5222,9 @@ def rcp_session_cached(proxy_base: str) -> str:
     return session_id
 
 
-def rcp_read(rcp_url: str, command: str, sessionid: str,
-             type_: str = "P_OCTET", num: int = 0) -> bytes | None:
+def rcp_read(
+    rcp_url: str, command: str, sessionid: str, type_: str = "P_OCTET", num: int = 0
+) -> bytes | None:
     """
     Send an RCP READ request and return the raw result bytes.
     Returns None if the response is empty (len=0) or an error occurs.
@@ -4939,15 +5239,14 @@ def rcp_read(rcp_url: str, command: str, sessionid: str,
     import re as _re
 
     params: dict[str, str | int] = {
-        "command":   command,
+        "command": command,
         "direction": "READ",
-        "type":      type_,
-        "num":       num,
+        "type": type_,
+        "num": num,
         "sessionid": sessionid,
     }
     try:
-        r = requests_get_bosch_cloud(rcp_url, params=params,
-                                     auth=("", ""), timeout=10)
+        r = requests_get_bosch_cloud(rcp_url, params=params, auth=("", ""), timeout=10)
     except Exception:
         return None
 
@@ -4960,7 +5259,7 @@ def rcp_read(rcp_url: str, command: str, sessionid: str,
         return None
     hex_str = m.group(1)
     if not hex_str:
-        return None   # empty result
+        return None  # empty result
     try:
         return bytes.fromhex(hex_str)
     except ValueError:
@@ -4978,7 +5277,7 @@ def rcp_parse_utf16be_strings(data: bytes) -> list[str]:
     i = 0
     current = bytearray()
     while i < len(data) - 1:
-        word = data[i:i+2]
+        word = data[i : i + 2]
         if word == b"\x00\x00":
             if current:
                 try:
@@ -5010,10 +5309,10 @@ def rcp_parse_clock(data: bytes) -> str:
     if len(data) < 7:
         return f"(invalid clock data: {data.hex()})"
     try:
-        year  = (data[0] << 8) | data[1]
+        year = (data[0] << 8) | data[1]
         month = data[2]
-        day   = data[3]
-        hour  = data[4]
+        day = data[3]
+        hour = data[4]
         minute = data[5]
         second = data[6]
         return f"{year:04d}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
@@ -5082,21 +5381,36 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     The cloud proxy hash acts as the credential — no username/password needed.
     Auth level via cloud proxy = 3 (read-only). Writes require auth level 5.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
-    sub     = (getattr(args, "sub", None) or "").lower()
+    sub = (getattr(args, "sub", None) or "").lower()
 
     # Allow "rcp info" without a camera name (sub parsed as cam_arg)
-    RCP_SUBS = ("info", "clock", "snapshot", "alarms", "privacy",
-                "dimmer", "motion", "services", "frame", "script", "iva", "bitrate", "all")
+    RCP_SUBS = (
+        "info",
+        "clock",
+        "snapshot",
+        "alarms",
+        "privacy",
+        "dimmer",
+        "motion",
+        "services",
+        "frame",
+        "script",
+        "iva",
+        "bitrate",
+        "all",
+    )
     if cam_arg and cam_arg.lower() in RCP_SUBS and not sub:
         sub, cam_arg = cam_arg.lower(), None
 
     if not sub:
         print("\n  ℹ️   Usage: python3 bosch_camera.py rcp [camera] <subcommand>")
-        print("  Subcommands: info | clock | snapshot | alarms | privacy | dimmer | motion | services | frame | script | iva | bitrate | all")
+        print(
+            "  Subcommands: info | clock | snapshot | alarms | privacy | dimmer | motion | services | frame | script | iva | bitrate | all"
+        )
         return
 
     cams = resolve_cam(cfg, cam_arg)
@@ -5157,6 +5471,7 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             print("\n  ── RCP Thumbnail Snapshot ────────────────────────────────")
             # Confirm resolution via 0x0a88 (returns 8B: width 4B BE + height 4B BE)
             import struct as _struct
+
             res_d = rcp_read(rcp_url, "0x0a88", sessionid)
             if res_d and len(res_d) >= 8:
                 w, h = _struct.unpack(">II", res_d[:8])
@@ -5203,8 +5518,8 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             d = rcp_read(rcp_url, "0x0d00", sessionid)
             if d and len(d) >= 1:
                 state_byte = d[1] if len(d) > 1 else d[0]
-                state_str  = "ON (masked)" if state_byte else "OFF (visible)"
-                icon       = "🔒" if state_byte else "👁️"
+                state_str = "ON (masked)" if state_byte else "OFF (visible)"
+                icon = "🔒" if state_byte else "👁️"
                 print(f"  {icon}  Privacy mask: {state_str}  (byte[1]={state_byte:#04x})")
                 print(f"  Raw:          {d.hex()}")
             else:
@@ -5233,10 +5548,10 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             if d:
                 # Each zone is typically 8 bytes: x1(2B) y1(2B) x2(2B) y2(2B) in 0-10000 units
                 zone_size = 8
-                n_zones   = len(d) // zone_size
+                n_zones = len(d) // zone_size
                 print(f"  Zones:      {n_zones} zone(s)  ({len(d)} bytes raw)")
                 for z in range(n_zones):
-                    chunk = d[z*zone_size:(z+1)*zone_size]
+                    chunk = d[z * zone_size : (z + 1) * zone_size]
                     if len(chunk) == 8:
                         x1 = (chunk[0] << 8) | chunk[1]
                         y1 = (chunk[2] << 8) | chunk[3]
@@ -5254,7 +5569,9 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             d = rcp_read(rcp_url, "0x0c62", sessionid)
             if d:
                 # Services list is typically null-terminated ASCII strings
-                services = [s for s in d.decode("ascii", errors="replace").split("\x00") if s.strip()]
+                services = [
+                    s for s in d.decode("ascii", errors="replace").split("\x00") if s.strip()
+                ]
                 if services:
                     for svc in services:
                         print(f"  Service:    {svc}")
@@ -5268,10 +5585,11 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             print("\n  ── Raw Frame (0x0c98) ────────────────────────────────────")
             d = rcp_read(rcp_url, "0x0c98", sessionid)
             if d and len(d) == 115200:
-                safe_name = name.replace(' ', '_')
+                safe_name = name.replace(" ", "_")
                 try:
                     import numpy as np
                     from PIL import Image
+
                     # YUV422 interleaved (YUYV): each 4 bytes = 2 pixels: Y0 U Y1 V
                     raw = np.frombuffer(d, dtype=np.uint8).reshape(180, 320, 2)
                     # Expand to YUV444
@@ -5286,16 +5604,20 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                     img = Image.fromarray(rgb)
                     path = os.path.join(BASE_DIR, f"rcp_frame_{safe_name}.jpg")
                     img.save(path, "JPEG")
-                    print(f"  Frame:      320x180 YUV422 ({len(d):,} bytes) -> saved as JPEG: {path}")
+                    print(
+                        f"  Frame:      320x180 YUV422 ({len(d):,} bytes) -> saved as JPEG: {path}"
+                    )
                     open_file(path)
                 except Exception:
                     path = os.path.join(BASE_DIR, f"rcp_frame_{safe_name}.yuv")
                     with open(path, "wb") as f:
                         f.write(d)
-                    print(f"  Frame:      320x180 YUV422 ({len(d):,} bytes) -> saved as raw YUV: {path}")
+                    print(
+                        f"  Frame:      320x180 YUV422 ({len(d):,} bytes) -> saved as raw YUV: {path}"
+                    )
                     print("  Note:       Install numpy + Pillow for JPEG conversion")
             elif d:
-                safe_name = name.replace(' ', '_')
+                safe_name = name.replace(" ", "_")
                 path = os.path.join(BASE_DIR, f"rcp_frame_{safe_name}.bin")
                 with open(path, "wb") as f:
                     f.write(d)
@@ -5307,11 +5629,14 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if sub in ("script", "all"):
             print("\n  ── IVA Automation Script (0x09f3) ────────────────────────")
             d = rcp_read(rcp_url, "0x09f3", sessionid)
-            if d and d[:2] == b'\x1f\x8b':  # gzip magic
+            if d and d[:2] == b"\x1f\x8b":  # gzip magic
                 import gzip
+
                 try:
-                    text = gzip.decompress(d).decode('utf-8', errors='replace')
-                    print(f"  Script:     {len(d):,} bytes compressed -> {len(text):,} chars decompressed")
+                    text = gzip.decompress(d).decode("utf-8", errors="replace")
+                    print(
+                        f"  Script:     {len(d):,} bytes compressed -> {len(text):,} chars decompressed"
+                    )
                     for line in text.splitlines():
                         print(f"  {line}")
                 except Exception as exc:
@@ -5329,7 +5654,9 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             # 0x0ba9 — IVA rule type names (null-terminated ASCII list)
             d = rcp_read(rcp_url, "0x0ba9", sessionid)
             if d:
-                rule_names = [s for s in d.decode("ascii", errors="replace").split("\x00") if s.strip()]
+                rule_names = [
+                    s for s in d.decode("ascii", errors="replace").split("\x00") if s.strip()
+                ]
                 if rule_names:
                     print(f"  IVA rule types ({len(rule_names)}):")
                     for rn in rule_names:
@@ -5357,14 +5684,15 @@ def cmd_rcp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             d = rcp_read(rcp_url, "0x0c81", sessionid)
             if d and len(d) >= 4:
                 import struct as _s
+
                 # Ladder is a series of big-endian uint32 values (kbps)
                 n = len(d) // 4
-                tiers = [_s.unpack(">I", d[i*4:(i+1)*4])[0] for i in range(n)]
+                tiers = [_s.unpack(">I", d[i * 4 : (i + 1) * 4])[0] for i in range(n)]
                 labels = ["low", "medium-low", "medium", "medium-high", "high"]
                 for i, kbps in enumerate(tiers):
                     label = labels[i] if i < len(labels) else f"tier{i}"
-                    marker = " ←" if i == len(tiers)-1 else ""
-                    print(f"  [{label}]  {kbps:,} kbps  ({kbps//1000:.1f} Mbps){marker}")
+                    marker = " ←" if i == len(tiers) - 1 else ""
+                    print(f"  [{label}]  {kbps:,} kbps  ({kbps // 1000:.1f} Mbps){marker}")
                 print("\n  Note: highQualityVideo=true selects the highest tier")
             else:
                 print("  Bitrate: (not available)")
@@ -5386,8 +5714,8 @@ def cmd_token(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     if action:
         action = action.lower()
 
-    acct    = cfg.get("account", {})
-    token   = acct.get("bearer_token", "").strip()
+    acct = cfg.get("account", {})
+    token = acct.get("bearer_token", "").strip()
     refresh = acct.get("refresh_token", "").strip()
 
     print("\n── Token Status ─────────────────────────────────────────────")
@@ -5395,12 +5723,12 @@ def cmd_token(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         print(f"  Access token:  {token[:24]}...  ({len(token)} chars)")
         try:
             parts = token.split(".")
-            pad   = len(parts[1]) % 4
-            info  = json.loads(_b64.urlsafe_b64decode(parts[1] + "=" * pad))
-            exp   = info.get("exp", 0)
+            pad = len(parts[1]) % 4
+            info = json.loads(_b64.urlsafe_b64decode(parts[1] + "=" * pad))
+            exp = info.get("exp", 0)
             exp_dt = datetime.datetime.fromtimestamp(exp)
-            diff   = exp_dt - datetime.datetime.now()
-            mins   = int(diff.total_seconds() / 60)
+            diff = exp_dt - datetime.datetime.now()
+            mins = int(diff.total_seconds() / 60)
             if mins > 0:
                 status = f"valid ~{mins}m ✅"
             else:
@@ -5422,9 +5750,10 @@ def cmd_token(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     if action in ("fix", "refresh", "renew", "browser"):
         print()
-        force_browser = (action == "browser")
+        force_browser = action == "browser"
         try:
             from get_token import get_token_auto
+
             new_token = get_token_auto(cfg, force_browser=force_browser)
             if new_token:
                 print("\n  ✅  Token renewed successfully.")
@@ -5440,7 +5769,7 @@ def cmd_token(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
 def cmd_rescan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Re-discover cameras from API and update config."""
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     print("\n  🔍  Re-scanning cameras...")
     cameras = discover_cameras(cfg, session)
@@ -5450,6 +5779,7 @@ def cmd_rescan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
 
 # ══════════════════════════ INTERACTIVE MENU ══════════════════════════════════
+
 
 def cmd_menu(cfg: dict[str, Any]) -> None:
     """Interactive numbered menu."""
@@ -5539,11 +5869,11 @@ def cmd_menu(cfg: dict[str, Any]) -> None:
     pan_cams = [n for n in cam_names if cameras.get(n, {}).get("pan_limit", 0) > 0]
     pan_start = offset
     pan_actions = [
-        ("left",       "◀◀ Full left"),
-        ("center",     "■  Center (0°)"),
-        ("right",      "▶▶ Full right"),
-        ("home",       "🏠 Home (0°)"),
-        ("back-left",  "◀◀◀ Back-left (-120°)"),
+        ("left", "◀◀ Full left"),
+        ("center", "■  Center (0°)"),
+        ("right", "▶▶ Full right"),
+        ("home", "🏠 Home (0°)"),
+        ("back-left", "◀◀◀ Back-left (-120°)"),
         ("back-right", "▶▶▶ Back-right (+120°)"),
     ]
     if pan_cams:
@@ -5552,7 +5882,11 @@ def cmd_menu(cfg: dict[str, Any]) -> None:
         for name in pan_cams:
             for action_key, label in pan_actions:
                 lim = cameras[name].get("pan_limit", 120)
-                lim_str = f"-{lim}°" if action_key == "left" else (f"+{lim}°" if action_key == "right" else "0°")
+                lim_str = (
+                    f"-{lim}°"
+                    if action_key == "left"
+                    else (f"+{lim}°" if action_key == "right" else "0°")
+                )
                 print(f"  {offset})  Pan {label} ({lim_str}) — {name}")
                 offset += 1
 
@@ -5675,7 +6009,7 @@ def cmd_menu(cfg: dict[str, Any]) -> None:
         a.live = False
         cmd_snapshot(cfg, a)
     elif liveshot_start <= c < liveshot_start + len(cam_names):
-        a.cam  = cam_names[c - liveshot_start]
+        a.cam = cam_names[c - liveshot_start]
         a.live = True
         cmd_snapshot(cfg, a)
     elif live_start <= c < live_start + len(cam_names):
@@ -5694,31 +6028,31 @@ def cmd_menu(cfg: dict[str, Any]) -> None:
     # Privacy
     elif privacy_start <= c < privacy_start + len(cam_names) * 2:
         idx = c - privacy_start
-        a.cam    = cam_names[idx // 2]
+        a.cam = cam_names[idx // 2]
         a.action = "on" if idx % 2 == 0 else "off"
         cmd_privacy(cfg, a)
     # Light (only light_cams)
     elif light_cams and light_start <= c < light_start + len(light_cams) * 2:
         idx = c - light_start
-        a.cam    = light_cams[idx // 2]
+        a.cam = light_cams[idx // 2]
         a.action = "on" if idx % 2 == 0 else "off"
         cmd_light(cfg, a)
     # Notifications
     elif notif_start <= c < notif_start + len(cam_names) * 2:
         idx = c - notif_start
-        a.cam    = cam_names[idx // 2]
+        a.cam = cam_names[idx // 2]
         a.action = "on" if idx % 2 == 0 else "off"
         cmd_notifications(cfg, a)
     # Pan (only pan_cams)
     elif pan_cams and pan_start <= c < pan_start + len(pan_cams) * len(pan_actions):
         idx = c - pan_start
-        a.cam    = pan_cams[idx // len(pan_actions)]
+        a.cam = pan_cams[idx // len(pan_actions)]
         a.action = pan_actions[idx % len(pan_actions)][0]
         cmd_pan(cfg, a)
     # Auto-follow (only pan_cams)
     elif pan_cams and autofollow_start <= c < autofollow_start + len(pan_cams) * 2:
         idx = c - autofollow_start
-        a.cam    = pan_cams[idx // 2]
+        a.cam = pan_cams[idx // 2]
         a.action = "on" if idx % 2 == 0 else "off"
         cmd_autofollow(cfg, a)
     # Intercom
@@ -5775,20 +6109,20 @@ def cmd_autofollow(cfg: dict[str, Any], args: argparse.Namespace) -> None:
          Response: HTTP 204 on success.
     Only available for cameras with featureSupport.panLimit > 0 (CAMERA_360).
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
-    action  = getattr(args, "action", None)
+    action = getattr(args, "action", None)
 
     if cam_arg and cam_arg.lower() in ("on", "off") and action is None:
-        action  = cam_arg.lower()
+        action = cam_arg.lower()
         cam_arg = None
 
     cams = resolve_cam(cfg, cam_arg)
 
     for name, cam_info in cams.items():
-        cam_id    = cam_info["id"]
+        cam_id = cam_info["id"]
         pan_limit = cam_info.get("pan_limit", 0)
 
         print(f"\n── Auto-Follow: {name} ─────────────────────────────────────")
@@ -5847,10 +6181,10 @@ def cmd_siren(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     (field: alarmDelayInSeconds, range 10–300 s). Use --set-duration to update this
     before triggering the alarm.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
 
     if len(cams) != 1:
         print("  ❌  Siren requires exactly one camera. Specify the camera name.")
@@ -5926,10 +6260,10 @@ def cmd_unread(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     production (verified 2026-05-28). The field is available in the per-camera
     detail endpoint instead.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
 
     print("\n── Unread Events ──────────────────────────────────────")
     for name, cam_info in cams.items():
@@ -5939,7 +6273,7 @@ def cmd_unread(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             timeout=10,
         )
         if r.status_code == 200:
-            data  = r.json()
+            data = r.json()
             count = data.get("numberOfUnreadEvents", 0)
             print(f"  📬  {name}: {count} unread event(s)")
         elif r.status_code == 401:
@@ -5962,14 +6296,14 @@ def cmd_privacy_sound(cfg: dict[str, Any], args: argparse.Namespace) -> None:
          Response: {"result": true/false}
     When enabled, the camera plays an audible indicator when privacy mode changes.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
-    action  = getattr(args, "action", None)
+    action = getattr(args, "action", None)
 
     if cam_arg and cam_arg.lower() in ("on", "off") and action is None:
-        action  = cam_arg.lower()
+        action = cam_arg.lower()
         cam_arg = None
 
     cams = resolve_cam(cfg, cam_arg)
@@ -5995,9 +6329,9 @@ def cmd_privacy_sound(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if r.status_code != 200:
             print(f"  ❌  Could not fetch privacy sound state: HTTP {r.status_code}")
             continue
-        data    = r.json()
+        data = r.json()
         current = data.get("result", False)
-        icon    = "🔊" if current else "🔇"
+        icon = "🔊" if current else "🔇"
         print(f"  {icon}  Privacy sound:  {'ENABLED' if current else 'DISABLED'}")
 
         if action is None:
@@ -6041,11 +6375,11 @@ def cmd_rules(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     API: GET/POST/PUT/DELETE /v11/video_inputs/{id}/rules
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
-    sub     = getattr(args, "sub", None)
+    sub = getattr(args, "sub", None)
 
     # Allow "rules add" without camera name
     RULES_SUBS = ("add", "edit", "delete")
@@ -6062,10 +6396,10 @@ def cmd_rules(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
         if sub == "add":
             rule_name = getattr(args, "rule_name", None) or "New Rule"
-            start     = getattr(args, "start", None) or "00:00"
-            end       = getattr(args, "end", None) or "23:59"
-            days_str  = getattr(args, "days", None) or "0,1,2,3,4,5,6"
-            weekdays  = [int(d.strip()) for d in days_str.split(",") if d.strip().isdigit()]
+            start = getattr(args, "start", None) or "00:00"
+            end = getattr(args, "end", None) or "23:59"
+            days_str = getattr(args, "days", None) or "0,1,2,3,4,5,6"
+            weekdays = [int(d.strip()) for d in days_str.split(",") if d.strip().isdigit()]
 
             body = {
                 "id": None,
@@ -6100,7 +6434,9 @@ def cmd_rules(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if sub == "edit":
             rule_id = getattr(args, "rule_id", None)
             if not rule_id:
-                print("  ❌  --id is required for edit. Usage: rules [cam] edit --id RULE_ID --active|--inactive")
+                print(
+                    "  ❌  --id is required for edit. Usage: rules [cam] edit --id RULE_ID --active|--inactive"
+                )
                 continue
             active = getattr(args, "active", False)
             inactive = getattr(args, "inactive", False)
@@ -6132,9 +6468,13 @@ def cmd_rules(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             if edit_name:
                 target_rule["name"] = edit_name
             if edit_start:
-                target_rule["startTime"] = edit_start if len(edit_start.split(":")) == 3 else f"{edit_start}:00"
+                target_rule["startTime"] = (
+                    edit_start if len(edit_start.split(":")) == 3 else f"{edit_start}:00"
+                )
             if edit_end:
-                target_rule["endTime"] = edit_end if len(edit_end.split(":")) == 3 else f"{edit_end}:00"
+                target_rule["endTime"] = (
+                    edit_end if len(edit_end.split(":")) == 3 else f"{edit_end}:00"
+                )
             if edit_days:
                 target_rule["weekdays"] = [int(d.strip()) for d in edit_days.split(",")]
 
@@ -6198,19 +6538,21 @@ def cmd_rules(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if not rules:
             print("  (no rules configured)")
             print("\n  Create a rule with:")
-            print(f"    python3 bosch_camera.py rules {name.lower()} add --name 'Night Mode' --start 22:00 --end 06:00 --days 0,1,2,3,4,5,6")
+            print(
+                f"    python3 bosch_camera.py rules {name.lower()} add --name 'Night Mode' --start 22:00 --end 06:00 --days 0,1,2,3,4,5,6"
+            )
             continue
         print(f"  {len(rules)} rule(s):\n")
         DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         for rule in rules:
-            rid    = rule.get("id", "?")
-            rname  = rule.get("name", "?")
+            rid = rule.get("id", "?")
+            rname = rule.get("name", "?")
             active = rule.get("isActive", False)
-            start  = rule.get("startTime", "?")
-            end    = rule.get("endTime", "?")
-            days   = rule.get("weekdays", [])
+            start = rule.get("startTime", "?")
+            end = rule.get("endTime", "?")
+            days = rule.get("weekdays", [])
             days_str = ", ".join(DAY_NAMES[d] if d < len(DAY_NAMES) else str(d) for d in days)
-            icon   = "✅" if active else "⏸️"
+            icon = "✅" if active else "⏸️"
             print(f"  {icon}  {rname}")
             print(f"      ID:     {rid}")
             print(f"      Active: {active}")
@@ -6232,10 +6574,10 @@ def cmd_friends(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     API: GET/POST/PUT/DELETE /v11/friends/*
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    sub     = getattr(args, "sub", None)
+    sub = getattr(args, "sub", None)
     sub_arg = getattr(args, "sub_arg", None)
 
     print("\n── Friends / Camera Sharing ─────────────────────────────────────")
@@ -6269,8 +6611,8 @@ def cmd_friends(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     if sub == "share":
         friend_id = sub_arg
-        cam_name  = getattr(args, "share_cam", None)
-        days      = getattr(args, "days", None)
+        cam_name = getattr(args, "share_cam", None)
+        days = getattr(args, "days", None)
         if not friend_id or not cam_name:
             print("  ❌  Usage: friends share FRIEND_ID CAM [--days N]")
             return
@@ -6285,7 +6627,7 @@ def cmd_friends(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 end = now + datetime.timedelta(days=days)
                 share_entry["shareTime"] = {
                     "start": now.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-                    "end":   end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    "end": end.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                 }
             shares.append(share_entry)
 
@@ -6398,12 +6740,12 @@ def cmd_friends(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         return
     print(f"  {len(friends)} friend(s):\n")
     for friend in friends:
-        fid    = friend.get("id", "?")
-        email  = friend.get("email", friend.get("invitationEmail", "?"))
-        nick   = friend.get("nickName", "?")
+        fid = friend.get("id", "?")
+        email = friend.get("email", friend.get("invitationEmail", "?"))
+        nick = friend.get("nickName", "?")
         status = friend.get("status", friend.get("invitationStatus", "?"))
         shares = friend.get("sharedVideoInputs", friend.get("shares", []))
-        icon   = "✅" if status in ("ACCEPTED", "ACTIVE") else "⏳"
+        icon = "✅" if status in ("ACCEPTED", "ACTIVE") else "⏳"
         print(f"  {icon}  {nick} ({email})")
         print(f"      ID:     {fid}")
         print(f"      Status: {status}")
@@ -6423,7 +6765,7 @@ def cmd_accept_invite(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     API: POST /v11/friends/accept
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     invite_token = getattr(args, "token", None)
 
@@ -6465,17 +6807,17 @@ def cmd_shared_with_friends(cfg: dict[str, Any], args: argparse.Namespace) -> No
 
     API: GET /v11/video_inputs/{id}/shared_with_friends
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
-    cams    = resolve_cam(cfg, getattr(args, "cam", None))
+    cams = resolve_cam(cfg, getattr(args, "cam", None))
 
     print("\n── Shared With Friends ────────────────────────────────────────")
 
     for cam_name, cam_info in cams.items():
         cam_id = cam_info["id"]
         # Config-based entries use "model"; live API responses use "hardwareVersion"
-        model  = cam_info.get("model") or cam_info.get("hardwareVersion", "?")
+        model = cam_info.get("model") or cam_info.get("hardwareVersion", "?")
         model_name = HW_DISPLAY_NAMES.get(model, model)
         print(f"\n  📷  {cam_name} ({model_name})")
 
@@ -6499,11 +6841,11 @@ def cmd_shared_with_friends(cfg: dict[str, Any], args: argparse.Namespace) -> No
             if isinstance(friends, list):
                 print(f"      Shared with {len(friends)} friend(s):")
                 for friend in friends:
-                    fid    = friend.get("id", friend.get("friendId", "?"))
-                    email  = friend.get("email", friend.get("invitationEmail", "?"))
-                    nick   = friend.get("nickName", "?")
+                    fid = friend.get("id", friend.get("friendId", "?"))
+                    email = friend.get("email", friend.get("invitationEmail", "?"))
+                    nick = friend.get("nickName", "?")
                     status = friend.get("status", friend.get("invitationStatus", "?"))
-                    icon   = "✅" if status in ("ACCEPTED", "ACTIVE") else "⏳"
+                    icon = "✅" if status in ("ACCEPTED", "ACTIVE") else "⏳"
                     print(f"      {icon}  {nick} ({email})")
                     print(f"          ID:     {fid}")
                     print(f"          Status: {status}")
@@ -6534,11 +6876,12 @@ def cmd_zones(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     Note: Returns HTTP 443 when privacy mode is active.
     """
     import json as _json
-    token   = get_token(cfg)
+
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
-    sub     = getattr(args, "sub", None)
+    sub = getattr(args, "sub", None)
 
     ZONES_SUBS = ("set", "clear")
     if cam_arg and cam_arg.lower() in ZONES_SUBS and not sub:
@@ -6555,7 +6898,9 @@ def cmd_zones(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if sub == "set":
             zones_json = getattr(args, "json", None)
             if not zones_json:
-                print("  ❌  --json is required. Example: --json '[{\"x\":0.0,\"y\":0.3,\"w\":0.67,\"h\":0.7}]'")
+                print(
+                    '  ❌  --json is required. Example: --json \'[{"x":0.0,"y":0.3,"w":0.67,"h":0.7}]\''
+                )
                 continue
             try:
                 zones = _json.loads(zones_json)
@@ -6618,7 +6963,9 @@ def cmd_zones(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             continue
         print(f"  {len(zones)} zone(s):\n")
         for i, z in enumerate(zones):
-            print(f"  Zone {i+1}: x={z.get('x', 0):.4f}  y={z.get('y', 0):.4f}  w={z.get('w', 0):.4f}  h={z.get('h', 0):.4f}")
+            print(
+                f"  Zone {i + 1}: x={z.get('x', 0):.4f}  y={z.get('y', 0):.4f}  w={z.get('w', 0):.4f}  h={z.get('h', 0):.4f}"
+            )
         print(f"\n  JSON: {_json.dumps(zones)}")
 
 
@@ -6635,11 +6982,12 @@ def cmd_privacy_masks(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     Note: Returns HTTP 443 when privacy mode is active.
     """
     import json as _json
-    token   = get_token(cfg)
+
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
-    sub     = getattr(args, "sub", None)
+    sub = getattr(args, "sub", None)
 
     MASKS_SUBS = ("set", "clear")
     if cam_arg and cam_arg.lower() in MASKS_SUBS and not sub:
@@ -6656,7 +7004,9 @@ def cmd_privacy_masks(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if sub == "set":
             masks_json = getattr(args, "json", None)
             if not masks_json:
-                print("  ❌  --json is required. Example: --json '[{\"x\":0.0,\"y\":0.0,\"w\":0.3,\"h\":0.3}]'")
+                print(
+                    '  ❌  --json is required. Example: --json \'[{"x":0.0,"y":0.0,"w":0.3,"h":0.3}]\''
+                )
                 continue
             try:
                 masks = _json.loads(masks_json)
@@ -6714,7 +7064,9 @@ def cmd_privacy_masks(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             continue
         print(f"  {len(masks)} mask(s):\n")
         for i, m in enumerate(masks):
-            print(f"  Mask {i+1}: x={m.get('x', 0):.4f}  y={m.get('y', 0):.4f}  w={m.get('w', 0):.4f}  h={m.get('h', 0):.4f}")
+            print(
+                f"  Mask {i + 1}: x={m.get('x', 0):.4f}  y={m.get('y', 0):.4f}  w={m.get('w', 0):.4f}  h={m.get('h', 0):.4f}"
+            )
         print(f"\n  JSON: {_json.dumps(masks)}")
 
 
@@ -6728,11 +7080,11 @@ def cmd_lighting_schedule(cfg: dict[str, Any], args: argparse.Namespace) -> None
     API: GET/PUT /v11/video_inputs/{id}/lighting_options
     Only available for outdoor cameras (Eyes) with LED light.
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
-    sub     = getattr(args, "sub", None)
+    sub = getattr(args, "sub", None)
 
     if cam_arg and cam_arg.lower() == "set" and not sub:
         sub, cam_arg = "set", None
@@ -6757,9 +7109,13 @@ def cmd_lighting_schedule(cfg: dict[str, Any], args: argparse.Namespace) -> None
             motion = getattr(args, "motion", None)
             threshold = getattr(args, "threshold", None)
             if on_time:
-                data["generalLightOnTime"] = on_time if len(on_time.split(":")) == 3 else f"{on_time}:00"
+                data["generalLightOnTime"] = (
+                    on_time if len(on_time.split(":")) == 3 else f"{on_time}:00"
+                )
             if off_time:
-                data["generalLightOffTime"] = off_time if len(off_time.split(":")) == 3 else f"{off_time}:00"
+                data["generalLightOffTime"] = (
+                    off_time if len(off_time.split(":")) == 3 else f"{off_time}:00"
+                )
             if motion is not None:
                 data["lightOnMotion"] = motion
             if threshold is not None:
@@ -6773,7 +7129,9 @@ def cmd_lighting_schedule(cfg: dict[str, Any], args: argparse.Namespace) -> None
                 timeout=10,
             )
             if pr.status_code in (200, 204):
-                print(f"  ✅  Schedule updated: {data.get('generalLightOnTime')} → {data.get('generalLightOffTime')}")
+                print(
+                    f"  ✅  Schedule updated: {data.get('generalLightOnTime')} → {data.get('generalLightOffTime')}"
+                )
             elif pr.status_code == 444:
                 print("  ⚠️   Camera offline.")
             else:
@@ -6796,10 +7154,16 @@ def cmd_lighting_schedule(cfg: dict[str, Any], args: argparse.Namespace) -> None
             continue
         d = r.json()
         print(f"  Modus:          {d.get('scheduleStatus', '?')}")
-        print(f"  Zeitplan:       {d.get('generalLightOnTime', '?')} → {d.get('generalLightOffTime', '?')}")
+        print(
+            f"  Zeitplan:       {d.get('generalLightOnTime', '?')} → {d.get('generalLightOffTime', '?')}"
+        )
         print(f"  Dunkelheit:     {d.get('darknessThreshold', '?')}")
-        print(f"  Bei Bewegung:   {'Ja' if d.get('lightOnMotion') else 'Nein'} ({d.get('lightOnMotionFollowUpTimeSeconds', 0)}s Nachlauf)")
-        print(f"  Frontlicht:     {'An' if d.get('frontIlluminatorInGeneralLightOn') else 'Aus'} (Intensität: {d.get('frontIlluminatorGeneralLightIntensity', '?')})")
+        print(
+            f"  Bei Bewegung:   {'Ja' if d.get('lightOnMotion') else 'Nein'} ({d.get('lightOnMotionFollowUpTimeSeconds', 0)}s Nachlauf)"
+        )
+        print(
+            f"  Frontlicht:     {'An' if d.get('frontIlluminatorInGeneralLightOn') else 'Aus'} (Intensität: {d.get('frontIlluminatorGeneralLightIntensity', '?')})"
+        )
         print(f"  Wallwasher:     {'An' if d.get('wallwasherInGeneralLightOn') else 'Aus'}")
 
 
@@ -6812,14 +7176,14 @@ def cmd_rename(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     API: PUT /v11/video_inputs
          Body: {"videoInputId": "uuid", "title": "New Name", "timeZone": "Europe/Berlin"}
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     new_name = getattr(args, "new_name", None)
 
     if not cam_arg or not new_name:
-        print("  ❌  Usage: rename CAM \"New Name\"")
+        print('  ❌  Usage: rename CAM "New Name"')
         return
 
     cams = resolve_cam(cfg, cam_arg)
@@ -6874,11 +7238,11 @@ def cmd_profile(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     API: GET /v11/registration/check, PUT /v11/registration
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
-    edit    = getattr(args, "sub", None)
+    edit = getattr(args, "sub", None)
     display_name = getattr(args, "display_name", None)
-    marketing    = getattr(args, "marketing", None)
+    marketing = getattr(args, "marketing", None)
 
     # Allow "profile edit" without the sub argument
     if edit and edit.lower() == "edit":
@@ -6905,21 +7269,21 @@ def cmd_profile(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         return
     data = r.json()
     # Response has nested "userInformation" object
-    user_info  = data.get("userInformation", data)
+    user_info = data.get("userInformation", data)
 
     # Display profile info
-    email      = user_info.get("email", "?")
-    first      = user_info.get("firstName", "")
-    last       = user_info.get("lastName", "")
-    display    = user_info.get("displayName", "?")
-    name       = f"{first} {last}".strip() if first else display
+    email = user_info.get("email", "?")
+    first = user_info.get("firstName", "")
+    last = user_info.get("lastName", "")
+    display = user_info.get("displayName", "?")
+    name = f"{first} {last}".strip() if first else display
     last_login = data.get("lastLoginTime", "?")
-    token_exp  = data.get("tokenExpirationTime", "?")
-    mkt        = user_info.get("marketingContact", "?")
-    iot        = user_info.get("iotThingsIntegration", "?")
-    lang       = user_info.get("language", "?")
-    tz         = user_info.get("timeZone", "?")
-    problems   = data.get("loginProblems", [])
+    token_exp = data.get("tokenExpirationTime", "?")
+    mkt = user_info.get("marketingContact", "?")
+    iot = user_info.get("iotThingsIntegration", "?")
+    lang = user_info.get("language", "?")
+    tz = user_info.get("timeZone", "?")
+    problems = data.get("loginProblems", [])
 
     print(f"  👤  Name:           {name} (display: {display})")
     print(f"  📧  Email:          {email}")
@@ -6936,12 +7300,22 @@ def cmd_profile(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     # Show full response for debugging
     for key, val in data.items():
-        if key not in ("userInformation", "lastLoginTime", "tokenExpirationTime", "loginProblems",
-                        "userInformation", "lastLoginTime", "tokenExpirationTime", "loginProblems"):
+        if key not in (
+            "userInformation",
+            "lastLoginTime",
+            "tokenExpirationTime",
+            "loginProblems",
+            "userInformation",
+            "lastLoginTime",
+            "tokenExpirationTime",
+            "loginProblems",
+        ):
             print(f"  ℹ️   {key}: {val}")
 
     if edit != "edit":
-        print("\n  Edit with: python3 bosch_camera.py profile edit --display-name 'Name' --marketing on|off")
+        print(
+            "\n  Edit with: python3 bosch_camera.py profile edit --display-name 'Name' --marketing on|off"
+        )
         return
 
     # Edit profile — build body from current profile + changes
@@ -6993,7 +7367,7 @@ def cmd_account(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     API: GET /v11/feature_flags, GET /v11/contracts, GET /v11/purchases
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
 
     print("\n── Account Info ───────────────────────────────────────────────")
@@ -7011,8 +7385,8 @@ def cmd_account(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             for flag in flags:
                 if isinstance(flag, dict):
                     fname = flag.get("name", flag.get("key", "?"))
-                    fval  = flag.get("value", flag.get("enabled", "?"))
-                    icon  = "✅" if fval else "❌"
+                    fval = flag.get("value", flag.get("enabled", "?"))
+                    icon = "✅" if fval else "❌"
                     print(f"  {icon}  {fname}: {fval}")
                 else:
                     print(f"  ✅  {flag}")
@@ -7056,10 +7430,10 @@ def cmd_account(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             if not purchases:
                 print("  (no active purchases/subscriptions)")
             for p in purchases:
-                pname   = p.get("name", p.get("productId", "?"))
+                pname = p.get("name", p.get("productId", "?"))
                 pstatus = p.get("status", p.get("state", "?"))
                 pexpiry = p.get("expiryDate", p.get("validUntil", "?"))
-                icon    = "✅" if pstatus in ("ACTIVE", "active") else "⏸️"
+                icon = "✅" if pstatus in ("ACTIVE", "active") else "⏸️"
                 print(f"  {icon}  {pname}")
                 print(f"      Status: {pstatus}")
                 if pexpiry and pexpiry != "?":
@@ -7077,6 +7451,7 @@ def cmd_account(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
 
 # ══════════════════════ DIAGNOSTIC & PERFORMANCE HELPERS ═══════════════════════
+
 
 def fetch_rcp_lan(
     cam_ip: str,
@@ -7104,10 +7479,10 @@ def fetch_rcp_lan(
 
     url = f"https://{cam_ip}/rcp.xml"
     params: dict[str, str | int] = {
-        "command":   opcode_hex,
+        "command": opcode_hex,
         "direction": "READ",
-        "type":      type_,
-        "num":       num,
+        "type": type_,
+        "num": num,
     }
     try:
         r = requests.get(
@@ -7158,10 +7533,10 @@ def _get_local_connection_creds(
     if r.status_code != 200:
         return None
 
-    data  = r.json()
-    urls  = data.get("urls", [])
-    user  = data.get("user") or ""
-    pw    = data.get("password") or ""
+    data = r.json()
+    urls = data.get("urls", [])
+    user = data.get("user") or ""
+    pw = data.get("password") or ""
 
     if not urls or not user or not pw:
         return None
@@ -7172,6 +7547,7 @@ def _get_local_connection_creds(
 
 
 # ══════════════════════ NEW CLI COMMANDS (F1/F4/F6/F13) ══════════════════════
+
 
 def cmd_snapshot_mjpeg(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """F1 — MJPEG/FFmpeg snapshot for Gen2 cameras (faster than snap.jpg).
@@ -7188,9 +7564,9 @@ def cmd_snapshot_mjpeg(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     Usage:
       python3 bosch_camera.py snapshot-mjpeg [<cam>] [-o out.jpg]
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
-    _cams   = get_cameras(cfg, session)
+    _cams = get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     out_path: str | None = getattr(args, "output", None)
 
@@ -7209,7 +7585,9 @@ def cmd_snapshot_mjpeg(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         print("  🔄  Opening LOCAL connection for LAN credentials...")
         creds = _get_local_connection_creds(session, cam_info["id"])
         if not creds:
-            print("  ⚠️   Skipped — could not obtain LOCAL connection creds (camera offline or LAN not reachable).")
+            print(
+                "  ⚠️   Skipped — could not obtain LOCAL connection creds (camera offline or LAN not reachable)."
+            )
             continue
 
         cam_host, cam_user, cam_pass = creds
@@ -7230,11 +7608,16 @@ def cmd_snapshot_mjpeg(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         try:
             proc = subprocess.run(
                 [
-                    "ffmpeg", "-y",
-                    "-rtsp_transport", "tcp",
-                    "-i", rtsp_url,
-                    "-vframes", "1",
-                    "-f", "image2pipe",
+                    "ffmpeg",
+                    "-y",
+                    "-rtsp_transport",
+                    "tcp",
+                    "-i",
+                    rtsp_url,
+                    "-vframes",
+                    "1",
+                    "-f",
+                    "image2pipe",
                     "-",
                 ],
                 capture_output=True,
@@ -7254,7 +7637,9 @@ def cmd_snapshot_mjpeg(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
         if proc.returncode != 0 or not proc.stdout:
             # FFmpeg writes diagnostics to stderr — show tail for debugging
-            stderr_tail = (proc.stderr or b"").decode("utf-8", errors="replace").strip().splitlines()
+            stderr_tail = (
+                (proc.stderr or b"").decode("utf-8", errors="replace").strip().splitlines()
+            )
             hint = stderr_tail[-1] if stderr_tail else "(no output)"
             print(f"  ⚠️   Skipped — FFmpeg exited {proc.returncode}: {hint}")
             continue
@@ -7281,9 +7666,9 @@ def cmd_onvif_scopes(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """
     import json as _json_mod
 
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
-    _cams   = get_cameras(cfg, session)
+    _cams = get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
     as_json = getattr(args, "json", False)
 
@@ -7298,7 +7683,9 @@ def cmd_onvif_scopes(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         creds = _get_local_connection_creds(session, cam_info["id"])
         if not creds:
             if not as_json:
-                print("  ⚠️   Could not open LOCAL connection — camera offline or LAN not reachable.")
+                print(
+                    "  ⚠️   Could not open LOCAL connection — camera offline or LAN not reachable."
+                )
             results.append({"cam": name, "error": "local_connection_failed"})
             continue
 
@@ -7347,9 +7734,9 @@ def cmd_rcp_version(cfg: dict[str, Any], args: argparse.Namespace) -> None:
       python3 bosch_camera.py rcp-version [<cam>]
     """
 
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
-    _cams   = get_cameras(cfg, session)
+    _cams = get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
 
     cams = resolve_cam(cfg, cam_arg)
@@ -7379,7 +7766,7 @@ def cmd_rcp_version(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         model = cam_info.get("model", cam_info.get("hardwareVersion", "?"))
         print(f"  Camera:       {model}  FW {fw}")
 
-        ver_primary   = _read_version("0xff00")
+        ver_primary = _read_version("0xff00")
         ver_secondary = _read_version("0xff04")
 
         print(f"  RCP Primary:   {ver_primary}")
@@ -7402,7 +7789,7 @@ def cmd_feature_flags(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """
     import json as _json_mod
 
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     as_json = getattr(args, "json", False)
 
@@ -7444,10 +7831,9 @@ def cmd_feature_flags(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     if as_json:
         print(_json_mod.dumps(flags_dict, indent=2))
     else:
-        enabled  = [k for k, v in flags_dict.items() if v is True or v == "true"]
+        enabled = [k for k, v in flags_dict.items() if v is True or v == "true"]
         disabled = [k for k, v in flags_dict.items() if v is False or v == "false"]
-        other    = [(k, v) for k, v in flags_dict.items()
-                    if k not in enabled and k not in disabled]
+        other = [(k, v) for k, v in flags_dict.items() if k not in enabled and k not in disabled]
         if enabled:
             print(f"\n  Enabled ({len(enabled)}):")
             for k in sorted(enabled):
@@ -7476,14 +7862,14 @@ def cmd_timestamp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     API: GET/PUT /v11/video_inputs/{id}/timestamp
          Body: {"result": true/false}
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
-    action  = getattr(args, "action", None)
+    action = getattr(args, "action", None)
 
     if cam_arg and cam_arg.lower() in ("on", "off") and action is None:
-        action  = cam_arg.lower()
+        action = cam_arg.lower()
         cam_arg = None
 
     cams = resolve_cam(cfg, cam_arg)
@@ -7502,9 +7888,9 @@ def cmd_timestamp(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if r.status_code != 200:
             print(f"  ❌  Could not fetch timestamp state: HTTP {r.status_code}")
             continue
-        data    = r.json()
+        data = r.json()
         current = data.get("result", False)
-        icon    = "🕐" if current else "🕐"
+        icon = "🕐" if current else "🕐"
         print(f"  {icon}  Timestamp overlay:  {'ENABLED' if current else 'DISABLED'}")
 
         if action is None:
@@ -7541,11 +7927,11 @@ def cmd_notification_types(cfg: dict[str, Any], args: argparse.Namespace) -> Non
 
     API: GET/PUT /v11/video_inputs/{id}/notifications
     """
-    token   = get_token(cfg)
+    token = get_token(cfg)
     session = make_session(token)
     get_cameras(cfg, session)
     cam_arg = getattr(args, "cam", None)
-    sets    = getattr(args, "set", None)
+    sets = getattr(args, "set", None)
 
     cams = resolve_cam(cfg, cam_arg)
 
@@ -7660,9 +8046,7 @@ def main() -> None:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "  Examples:\n"
-            "    python3 bosch_camera.py info\n"
-            "    python3 bosch_camera.py info --full"
+            "  Examples:\n    python3 bosch_camera.py info\n    python3 bosch_camera.py info --full"
         ),
     )
     p_info.add_argument(
@@ -7728,8 +8112,9 @@ def main() -> None:
             description=f"📸  {_alias} — Alias for: snapshot --live\n\nSee 'snapshot --help' for full details.",
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
-        p_alias.add_argument("cam", nargs="?", metavar="<camera>",
-                             help="Camera name or partial match")
+        p_alias.add_argument(
+            "cam", nargs="?", metavar="<camera>", help="Camera name or partial match"
+        )
         p_alias.add_argument("--live", action="store_true", help=argparse.SUPPRESS)
 
     # ── live ───────────────────────────────────────────────────────────────────
@@ -7837,10 +8222,15 @@ def main() -> None:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_testlocal.add_argument("cam", nargs="?", metavar="<camera>",
-                             help="Camera name or partial match (omit = first camera)")
-    p_testlocal.add_argument("--play", action="store_true",
-                             help="Open LOCAL RTSPS stream in ffplay after testing")
+    p_testlocal.add_argument(
+        "cam",
+        nargs="?",
+        metavar="<camera>",
+        help="Camera name or partial match (omit = first camera)",
+    )
+    p_testlocal.add_argument(
+        "--play", action="store_true", help="Open LOCAL RTSPS stream in ffplay after testing"
+    )
 
     # stream alias
     p_stream = subparsers.add_parser(
@@ -7849,22 +8239,44 @@ def main() -> None:
         description="📺  stream — Alias for: live\n\nSee 'live --help' for full details.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p_stream.add_argument("cam", nargs="?", metavar="<camera>",
-                          help="Camera name or partial match")
-    p_stream.add_argument("--vlc", action="store_true",
-                          help="Open in VLC via ffmpeg pipe instead of ffplay")
-    p_stream.add_argument("--hq", action="store_true",
-                          help="Request highQualityVideo=true in PUT /connection")
-    p_stream.add_argument("--inst", type=int, default=2, metavar="N",
-                          help="Stream instance number in RTSPS URL (default: 2)")
-    p_stream.add_argument("--quality", choices=["auto", "high", "low"], metavar="Q",
-                          help="Quality preset: auto | high (30Mbps) | low (1.9Mbps)")
-    p_stream.add_argument("--webrtc", action="store_true", dest="webrtc",
-                          help=t("help.live.webrtc"))
-    p_stream.add_argument("--go2rtc-binary", metavar="PATH", dest="go2rtc_binary", default="go2rtc",
-                          help=t("help.live.go2rtc_binary"))
-    p_stream.add_argument("--webrtc-port", type=int, metavar="N", dest="webrtc_port", default=1984,
-                          help=t("help.live.webrtc_port"))
+    p_stream.add_argument("cam", nargs="?", metavar="<camera>", help="Camera name or partial match")
+    p_stream.add_argument(
+        "--vlc", action="store_true", help="Open in VLC via ffmpeg pipe instead of ffplay"
+    )
+    p_stream.add_argument(
+        "--hq", action="store_true", help="Request highQualityVideo=true in PUT /connection"
+    )
+    p_stream.add_argument(
+        "--inst",
+        type=int,
+        default=2,
+        metavar="N",
+        help="Stream instance number in RTSPS URL (default: 2)",
+    )
+    p_stream.add_argument(
+        "--quality",
+        choices=["auto", "high", "low"],
+        metavar="Q",
+        help="Quality preset: auto | high (30Mbps) | low (1.9Mbps)",
+    )
+    p_stream.add_argument(
+        "--webrtc", action="store_true", dest="webrtc", help=t("help.live.webrtc")
+    )
+    p_stream.add_argument(
+        "--go2rtc-binary",
+        metavar="PATH",
+        dest="go2rtc_binary",
+        default="go2rtc",
+        help=t("help.live.go2rtc_binary"),
+    )
+    p_stream.add_argument(
+        "--webrtc-port",
+        type=int,
+        metavar="N",
+        dest="webrtc_port",
+        default=1984,
+        help=t("help.live.webrtc_port"),
+    )
 
     # "download" and "events" subcommands removed (Bosch request)
 
@@ -8097,7 +8509,7 @@ def main() -> None:
             "  Controls the pan position of the indoor 360 camera.\n"
             "  Only available for cameras with featureSupport.panLimit > 0.\n"
             "  API: PUT /v11/video_inputs/{id}/pan\n"
-            "       Body: {\"absolutePosition\": <degrees>}\n"
+            '       Body: {"absolutePosition": <degrees>}\n'
             "\n"
             "  Named presets (--preset):\n"
             "    home       →    0°\n"
@@ -8279,34 +8691,82 @@ def main() -> None:
         ),
     )
     p_watch.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
-    p_watch.add_argument("--interval", type=int, default=30, metavar="N",
-                         help="Poll interval in seconds (default: 30)")
-    p_watch.add_argument("--duration", type=int, default=0, metavar="N",
-                         help="Stop after N seconds (default: 0 = infinite)")
-    p_watch.add_argument("--snapshot", action="store_true",
-                         help="Auto-download and open the event JPEG when a new event arrives")
-    p_watch.add_argument("--push", action="store_true",
-                         help="Use FCM push notifications instead of polling (~2s latency, requires firebase-messaging)")
-    p_watch.add_argument("--signal", metavar="URL",
-                         help="Send alerts to Signal via signal-cli-rest-api (e.g. http://localhost:8080)")
-    p_watch.add_argument("--signal-recipients", metavar="NUMS",
-                         help="Comma-separated Signal recipients (phone numbers, e.g. +491234567890)")
-    p_watch.add_argument("--signal-sender", metavar="NUM",
-                         help="Signal sender number (your registered signal-cli number)")
-    p_watch.add_argument("--push-mode", choices=["auto", "android", "ios", "polling"], default="auto",
-                         help="Push notification mode: auto (FCM with polling fallback), polling. "
-                              "android/ios accepted for back-compat but treated as auto (iOS path removed in v10.7.1)")
-    p_watch.add_argument("--track-motion", action="store_true", dest="track_motion",
-                         help=t("help.watch.track_motion"))
-    p_watch.add_argument("--auto-snapshot", action="store_true", dest="auto_snapshot",
-                         help=t("help.watch.auto_snapshot"))
-    p_watch.add_argument("--quiet-secs", type=int, default=30, metavar="N", dest="quiet_secs",
-                         help=t("help.watch.quiet_secs"))
-    p_watch.add_argument("--auto-record", action="store_true", dest="auto_record",
-                         help=t("help.watch.auto_record"))
-    p_watch.add_argument("--webhook", metavar="URL", default="",
-                         help="POST each new event as JSON to this URL (default: off). "
-                              "Payload: {camera, camera_id, event_type, timestamp, event_id, image_url, clip_url}.")
+    p_watch.add_argument(
+        "--interval",
+        type=int,
+        default=30,
+        metavar="N",
+        help="Poll interval in seconds (default: 30)",
+    )
+    p_watch.add_argument(
+        "--duration",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Stop after N seconds (default: 0 = infinite)",
+    )
+    p_watch.add_argument(
+        "--snapshot",
+        action="store_true",
+        help="Auto-download and open the event JPEG when a new event arrives",
+    )
+    p_watch.add_argument(
+        "--push",
+        action="store_true",
+        help="Use FCM push notifications instead of polling (~2s latency, requires firebase-messaging)",
+    )
+    p_watch.add_argument(
+        "--signal",
+        metavar="URL",
+        help="Send alerts to Signal via signal-cli-rest-api (e.g. http://localhost:8080)",
+    )
+    p_watch.add_argument(
+        "--signal-recipients",
+        metavar="NUMS",
+        help="Comma-separated Signal recipients (phone numbers, e.g. +491234567890)",
+    )
+    p_watch.add_argument(
+        "--signal-sender",
+        metavar="NUM",
+        help="Signal sender number (your registered signal-cli number)",
+    )
+    p_watch.add_argument(
+        "--push-mode",
+        choices=["auto", "android", "ios", "polling"],
+        default="auto",
+        help="Push notification mode: auto (FCM with polling fallback), polling. "
+        "android/ios accepted for back-compat but treated as auto (iOS path removed in v10.7.1)",
+    )
+    p_watch.add_argument(
+        "--track-motion",
+        action="store_true",
+        dest="track_motion",
+        help=t("help.watch.track_motion"),
+    )
+    p_watch.add_argument(
+        "--auto-snapshot",
+        action="store_true",
+        dest="auto_snapshot",
+        help=t("help.watch.auto_snapshot"),
+    )
+    p_watch.add_argument(
+        "--quiet-secs",
+        type=int,
+        default=30,
+        metavar="N",
+        dest="quiet_secs",
+        help=t("help.watch.quiet_secs"),
+    )
+    p_watch.add_argument(
+        "--auto-record", action="store_true", dest="auto_record", help=t("help.watch.auto_record")
+    )
+    p_watch.add_argument(
+        "--webhook",
+        metavar="URL",
+        default="",
+        help="POST each new event as JSON to this URL (default: off). "
+        "Payload: {camera, camera_id, event_type, timestamp, event_id, image_url, clip_url}.",
+    )
 
     # ── nvr (BETA) ──────────────────────────────────────────────────────────────
     p_nvr = subparsers.add_parser(
@@ -8347,18 +8807,25 @@ def main() -> None:
 
     p_nvr_list = nvr_sub.add_parser("list", help="List recorded clips")
     p_nvr_list.add_argument("cam", nargs="?", help="Camera name (optional)")
-    p_nvr_list.add_argument("--limit", type=int, default=20, metavar="N",
-                            help="Max clips to show (default: 20)")
+    p_nvr_list.add_argument(
+        "--limit", type=int, default=20, metavar="N", help="Max clips to show (default: 20)"
+    )
 
     p_nvr_prune = nvr_sub.add_parser("prune", help="FIFO prune old clips")
     p_nvr_prune.add_argument("cam", nargs="?", help="Camera name (optional)")
-    p_nvr_prune.add_argument("--keep", type=int, default=None, metavar="N",
-                             help="Keep N most recent clips (default: nvr.max_clips from config)")
+    p_nvr_prune.add_argument(
+        "--keep",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Keep N most recent clips (default: nvr.max_clips from config)",
+    )
 
     p_nvr_upload = nvr_sub.add_parser("upload", help="Upload clips to SMB/NAS")
     p_nvr_upload.add_argument("cam", nargs="?", help="Camera name (optional)")
-    p_nvr_upload.add_argument("--clip", metavar="PATH",
-                              help="Upload a specific clip (default: all pending)")
+    p_nvr_upload.add_argument(
+        "--clip", metavar="PATH", help="Upload a specific clip (default: all pending)"
+    )
 
     # ── intercom ────────────────────────────────────────────────────────────────
     p_intercom = subparsers.add_parser(
@@ -8381,8 +8848,12 @@ def main() -> None:
         ),
     )
     p_intercom.add_argument("cam", nargs="?", help="Camera name")
-    p_intercom.add_argument("--duration", type=int, default=60, help="Session duration in seconds (default 60)")
-    p_intercom.add_argument("--speaker-level", type=int, default=50, help="Speaker volume 0-100 (default 50)")
+    p_intercom.add_argument(
+        "--duration", type=int, default=60, help="Session duration in seconds (default 60)"
+    )
+    p_intercom.add_argument(
+        "--speaker-level", type=int, default=50, help="Speaker volume 0-100 (default 50)"
+    )
 
     # ── maintenance ────────────────────────────────────────────────────────────
     p_maint = subparsers.add_parser(
@@ -8435,12 +8906,14 @@ def main() -> None:
         ),
     )
     p_motion.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
-    p_motion.add_argument("--enable",  action="store_true", help="Enable motion detection")
+    p_motion.add_argument("--enable", action="store_true", help="Enable motion detection")
     p_motion.add_argument("--disable", action="store_true", help="Disable motion detection")
-    p_motion.add_argument("--sensitivity",
-                          choices=["OFF", "LOW", "MEDIUM_LOW", "MEDIUM_HIGH", "HIGH", "SUPER_HIGH"],
-                          metavar="S",
-                          help="Sensitivity: OFF | LOW | MEDIUM | HIGH | SUPER_HIGH")
+    p_motion.add_argument(
+        "--sensitivity",
+        choices=["OFF", "LOW", "MEDIUM_LOW", "MEDIUM_HIGH", "HIGH", "SUPER_HIGH"],
+        metavar="S",
+        help="Sensitivity: OFF | LOW | MEDIUM | HIGH | SUPER_HIGH",
+    )
 
     # ── recording ──────────────────────────────────────────────────────────────
     p_rec = subparsers.add_parser(
@@ -8463,10 +8936,12 @@ def main() -> None:
         ),
     )
     p_rec.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
-    p_rec.add_argument("--sound-on",  action="store_true", dest="sound_on",
-                       help="Enable sound recording")
-    p_rec.add_argument("--sound-off", action="store_true", dest="sound_off",
-                       help="Disable sound recording")
+    p_rec.add_argument(
+        "--sound-on", action="store_true", dest="sound_on", help="Enable sound recording"
+    )
+    p_rec.add_argument(
+        "--sound-off", action="store_true", dest="sound_off", help="Disable sound recording"
+    )
 
     # ── audio (mic/speaker levels) ─────────────────────────────────────────────
     p_audio_levels = subparsers.add_parser(
@@ -8478,7 +8953,7 @@ def main() -> None:
             "  Reads or writes microphoneLevel and speakerLevel (each 0-100).\n"
             "  API: GET/PUT /v11/video_inputs/{id}/audio\n"
             "\n"
-            "  Body: {\"audioEnabled\": bool, \"microphoneLevel\": 0-100, \"speakerLevel\": 0-100}"
+            '  Body: {"audioEnabled": bool, "microphoneLevel": 0-100, "speakerLevel": 0-100}'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -8490,13 +8965,14 @@ def main() -> None:
             "    python3 bosch_camera.py audio --json"
         ),
     )
-    p_audio_levels.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
-    p_audio_levels.add_argument("--mic", type=int, metavar="N",
-                                help="Microphone level 0-100")
-    p_audio_levels.add_argument("--speaker", type=int, metavar="N",
-                                help="Speaker level 0-100")
-    p_audio_levels.add_argument("--json", action="store_true", default=False,
-                                help="Machine-readable JSON output")
+    p_audio_levels.add_argument(
+        "cam", nargs="?", help="Camera name (optional, all cameras if omitted)"
+    )
+    p_audio_levels.add_argument("--mic", type=int, metavar="N", help="Microphone level 0-100")
+    p_audio_levels.add_argument("--speaker", type=int, metavar="N", help="Speaker level 0-100")
+    p_audio_levels.add_argument(
+        "--json", action="store_true", default=False, help="Machine-readable JSON output"
+    )
 
     # ── intrusion detection config ─────────────────────────────────────────────
     p_intrusion = subparsers.add_parser(
@@ -8521,15 +8997,24 @@ def main() -> None:
             "    python3 bosch_camera.py intrusion --json"
         ),
     )
-    p_intrusion.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
-    p_intrusion.add_argument("--mode", metavar="MODE",
-                             help="Detection mode: indoor (ALL_MOTIONS) or outdoor (ZONES)")
-    p_intrusion.add_argument("--sensitivity", type=int, metavar="N",
-                             help="Sensitivity 0-7 (higher = more sensitive)")
-    p_intrusion.add_argument("--distance", type=int, metavar="N",
-                             help="Detection distance 1-8 (Bosch rejects >8 with HTTP 400)")
-    p_intrusion.add_argument("--json", action="store_true", default=False,
-                             help="Machine-readable JSON output")
+    p_intrusion.add_argument(
+        "cam", nargs="?", help="Camera name (optional, all cameras if omitted)"
+    )
+    p_intrusion.add_argument(
+        "--mode", metavar="MODE", help="Detection mode: indoor (ALL_MOTIONS) or outdoor (ZONES)"
+    )
+    p_intrusion.add_argument(
+        "--sensitivity", type=int, metavar="N", help="Sensitivity 0-7 (higher = more sensitive)"
+    )
+    p_intrusion.add_argument(
+        "--distance",
+        type=int,
+        metavar="N",
+        help="Detection distance 1-8 (Bosch rejects >8 with HTTP 400)",
+    )
+    p_intrusion.add_argument(
+        "--json", action="store_true", default=False, help="Machine-readable JSON output"
+    )
 
     # ── wifi info ─────────────────────────────────────────────────────────────
     p_wifi = subparsers.add_parser(
@@ -8552,8 +9037,9 @@ def main() -> None:
         ),
     )
     p_wifi.add_argument("cam", nargs="?", help="Camera name (optional, all cameras if omitted)")
-    p_wifi.add_argument("--json", action="store_true", default=False,
-                        help="Machine-readable JSON output")
+    p_wifi.add_argument(
+        "--json", action="store_true", default=False, help="Machine-readable JSON output"
+    )
 
     # ── autofollow ─────────────────────────────────────────────────────────────
     p_af = subparsers.add_parser(
@@ -8565,8 +9051,9 @@ def main() -> None:
         ),
     )
     p_af.add_argument("cam", nargs="?", help="Camera name (optional)")
-    p_af.add_argument("action", nargs="?", choices=["on", "off"],
-                      help="on = enable auto-follow, off = disable")
+    p_af.add_argument(
+        "action", nargs="?", choices=["on", "off"], help="on = enable auto-follow, off = disable"
+    )
 
     # ── siren ─────────────────────────────────────────────────────────────────
     p_siren = subparsers.add_parser(
@@ -8588,10 +9075,19 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_siren.add_argument("cam", nargs="?", help="Camera name")
-    p_siren.add_argument("--stop", action="store_true", default=False,
-                         help="Stop an active panic alarm instead of triggering one")
-    p_siren.add_argument("--set-duration", type=int, metavar="SECS", dest="set_duration",
-                         help="Set siren duration in seconds (10–300) via alarm_settings, then trigger alarm")
+    p_siren.add_argument(
+        "--stop",
+        action="store_true",
+        default=False,
+        help="Stop an active panic alarm instead of triggering one",
+    )
+    p_siren.add_argument(
+        "--set-duration",
+        type=int,
+        metavar="SECS",
+        dest="set_duration",
+        help="Set siren duration in seconds (10–300) via alarm_settings, then trigger alarm",
+    )
 
     # ── unread ────────────────────────────────────────────────────────────────
     p_unread = subparsers.add_parser(
@@ -8616,7 +9112,7 @@ def main() -> None:
             "  When enabled, the camera plays an audible indicator whenever\n"
             "  privacy mode is toggled on or off.\n"
             "  API: GET/PUT /v11/video_inputs/{id}/privacy_sound_override\n"
-            "       Body: {\"result\": true/false}"
+            '       Body: {"result": true/false}'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -8680,20 +9176,24 @@ def main() -> None:
         metavar="add|edit|delete",
         help="Subcommand: add, edit, or delete a rule",
     )
-    p_rules.add_argument("--name", dest="rule_name", metavar="NAME",
-                         help="Rule name (for add)")
-    p_rules.add_argument("--start", default="00:00", metavar="HH:MM",
-                         help="Start time (for add, default 00:00)")
-    p_rules.add_argument("--end", default="23:59", metavar="HH:MM",
-                         help="End time (for add, default 23:59)")
-    p_rules.add_argument("--days", default="0,1,2,3,4,5,6", metavar="0,1,2,...",
-                         help="Weekdays 0=Mon..6=Sun comma-separated (for add, default all)")
-    p_rules.add_argument("--id", dest="rule_id", metavar="RULE_ID",
-                         help="Rule ID (for edit/delete)")
-    p_rules.add_argument("--active", action="store_true",
-                         help="Activate the rule (for edit)")
-    p_rules.add_argument("--inactive", action="store_true",
-                         help="Deactivate the rule (for edit)")
+    p_rules.add_argument("--name", dest="rule_name", metavar="NAME", help="Rule name (for add)")
+    p_rules.add_argument(
+        "--start", default="00:00", metavar="HH:MM", help="Start time (for add, default 00:00)"
+    )
+    p_rules.add_argument(
+        "--end", default="23:59", metavar="HH:MM", help="End time (for add, default 23:59)"
+    )
+    p_rules.add_argument(
+        "--days",
+        default="0,1,2,3,4,5,6",
+        metavar="0,1,2,...",
+        help="Weekdays 0=Mon..6=Sun comma-separated (for add, default all)",
+    )
+    p_rules.add_argument(
+        "--id", dest="rule_id", metavar="RULE_ID", help="Rule ID (for edit/delete)"
+    )
+    p_rules.add_argument("--active", action="store_true", help="Activate the rule (for edit)")
+    p_rules.add_argument("--inactive", action="store_true", help="Deactivate the rule (for edit)")
 
     # ── friends ───────────────────────────────────────────────────────────
     p_friends = subparsers.add_parser(
@@ -8743,8 +9243,9 @@ def main() -> None:
         metavar="<camera>",
         help="Camera name (for share subcommand)",
     )
-    p_friends.add_argument("--days", type=int, metavar="N",
-                           help="Share duration in days (for share; omit = permanent)")
+    p_friends.add_argument(
+        "--days", type=int, metavar="N", help="Share duration in days (for share; omit = permanent)"
+    )
 
     # ── accept-invite ─────────────────────────────────────────────────────
     p_accept = subparsers.add_parser(
@@ -8759,10 +9260,7 @@ def main() -> None:
             "  API: POST /v11/friends/accept"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=(
-            "  Examples:\n"
-            "    python3 bosch_camera.py accept-invite ABC123TOKEN"
-        ),
+        epilog=("  Examples:\n    python3 bosch_camera.py accept-invite ABC123TOKEN"),
     )
     p_accept.add_argument(
         "token",
@@ -8789,8 +9287,9 @@ def main() -> None:
             "    python3 bosch_camera.py shared Garten"
         ),
     )
-    p_shared.add_argument("cam", nargs="?", metavar="<camera>",
-                          help="Camera name (optional, default: all cameras)")
+    p_shared.add_argument(
+        "cam", nargs="?", metavar="<camera>", help="Camera name (optional, default: all cameras)"
+    )
 
     # ── zones ─────────────────────────────────────────────────────────────
     p_zones = subparsers.add_parser(
@@ -8811,16 +9310,22 @@ def main() -> None:
         epilog=(
             "  Examples:\n"
             "    python3 bosch_camera.py zones Garten\n"
-            "    python3 bosch_camera.py zones Garten set --json '[{\"x\":0.0,\"y\":0.3,\"w\":0.67,\"h\":0.7}]'\n"
+            '    python3 bosch_camera.py zones Garten set --json \'[{"x":0.0,"y":0.3,"w":0.67,"h":0.7}]\'\n'
             "    python3 bosch_camera.py zones Garten clear"
         ),
     )
-    p_zones.add_argument("cam", nargs="?", metavar="<camera>",
-                         help="Camera name or partial match (omit = all cameras)")
-    p_zones.add_argument("sub", nargs="?", metavar="set|clear",
-                         help="Subcommand: set or clear zones")
-    p_zones.add_argument("--json", metavar="JSON",
-                         help="Zones as a JSON array of {x,y,w,h} (for set)")
+    p_zones.add_argument(
+        "cam",
+        nargs="?",
+        metavar="<camera>",
+        help="Camera name or partial match (omit = all cameras)",
+    )
+    p_zones.add_argument(
+        "sub", nargs="?", metavar="set|clear", help="Subcommand: set or clear zones"
+    )
+    p_zones.add_argument(
+        "--json", metavar="JSON", help="Zones as a JSON array of {x,y,w,h} (for set)"
+    )
 
     # ── privacy-masks ─────────────────────────────────────────────────────
     p_pmasks = subparsers.add_parser(
@@ -8841,16 +9346,22 @@ def main() -> None:
         epilog=(
             "  Examples:\n"
             "    python3 bosch_camera.py privacy-masks Garten\n"
-            "    python3 bosch_camera.py privacy-masks Garten set --json '[{\"x\":0.0,\"y\":0.0,\"w\":0.3,\"h\":0.3}]'\n"
+            '    python3 bosch_camera.py privacy-masks Garten set --json \'[{"x":0.0,"y":0.0,"w":0.3,"h":0.3}]\'\n'
             "    python3 bosch_camera.py privacy-masks Garten clear"
         ),
     )
-    p_pmasks.add_argument("cam", nargs="?", metavar="<camera>",
-                          help="Camera name or partial match (omit = all cameras)")
-    p_pmasks.add_argument("sub", nargs="?", metavar="set|clear",
-                          help="Subcommand: set or clear masks")
-    p_pmasks.add_argument("--json", metavar="JSON",
-                          help="Masks as a JSON array of {x,y,w,h} (for set)")
+    p_pmasks.add_argument(
+        "cam",
+        nargs="?",
+        metavar="<camera>",
+        help="Camera name or partial match (omit = all cameras)",
+    )
+    p_pmasks.add_argument(
+        "sub", nargs="?", metavar="set|clear", help="Subcommand: set or clear masks"
+    )
+    p_pmasks.add_argument(
+        "--json", metavar="JSON", help="Masks as a JSON array of {x,y,w,h} (for set)"
+    )
 
     # ── lighting-schedule ─────────────────────────────────────────────────
     p_lsched = subparsers.add_parser(
@@ -8873,16 +9384,24 @@ def main() -> None:
             "    python3 bosch_camera.py lighting-schedule Garten set --on 18:00 --off 23:00 --motion --threshold 0.4"
         ),
     )
-    p_lsched.add_argument("cam", nargs="?", metavar="<camera>",
-                          help="Camera name or partial match (omit = all cameras)")
-    p_lsched.add_argument("sub", nargs="?", metavar="set",
-                          help="Subcommand: set the schedule")
+    p_lsched.add_argument(
+        "cam",
+        nargs="?",
+        metavar="<camera>",
+        help="Camera name or partial match (omit = all cameras)",
+    )
+    p_lsched.add_argument("sub", nargs="?", metavar="set", help="Subcommand: set the schedule")
     p_lsched.add_argument("--on", metavar="HH:MM", help="Light-on time (for set)")
     p_lsched.add_argument("--off", metavar="HH:MM", help="Light-off time (for set)")
-    p_lsched.add_argument("--motion", action="store_true", default=None,
-                          help="Turn on light when motion is detected (for set)")
-    p_lsched.add_argument("--threshold", type=float, metavar="0.0-1.0",
-                          help="Darkness threshold 0.0–1.0 (for set)")
+    p_lsched.add_argument(
+        "--motion",
+        action="store_true",
+        default=None,
+        help="Turn on light when motion is detected (for set)",
+    )
+    p_lsched.add_argument(
+        "--threshold", type=float, metavar="0.0-1.0", help="Darkness threshold 0.0–1.0 (for set)"
+    )
 
     # ── rename ────────────────────────────────────────────────────────────
     p_rename = subparsers.add_parser(
@@ -8898,8 +9417,8 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "  Examples:\n"
-            "    python3 bosch_camera.py rename Garten \"Garden Camera\"\n"
-            "    python3 bosch_camera.py rename Kamera \"Indoor Cam\""
+            '    python3 bosch_camera.py rename Garten "Garden Camera"\n'
+            '    python3 bosch_camera.py rename Kamera "Indoor Cam"'
         ),
     )
     p_rename.add_argument(
@@ -8909,7 +9428,7 @@ def main() -> None:
     )
     p_rename.add_argument(
         "new_name",
-        metavar="\"New Name\"",
+        metavar='"New Name"',
         help="New camera name (use quotes if it contains spaces)",
     )
 
@@ -8940,10 +9459,10 @@ def main() -> None:
         metavar="edit",
         help="Subcommand: 'edit' to update profile",
     )
-    p_profile.add_argument("--display-name", dest="display_name", metavar="NAME",
-                           help="New display name")
-    p_profile.add_argument("--marketing", metavar="on|off",
-                           help="Marketing consent: on or off")
+    p_profile.add_argument(
+        "--display-name", dest="display_name", metavar="NAME", help="New display name"
+    )
+    p_profile.add_argument("--marketing", metavar="on|off", help="Marketing consent: on or off")
 
     # ── account ───────────────────────────────────────────────────────────
     subparsers.add_parser(
@@ -8969,7 +9488,7 @@ def main() -> None:
             "🕐  timestamp — Control the time/date overlay on camera video\n"
             "\n"
             "  API: GET/PUT /v11/video_inputs/{id}/timestamp\n"
-            "       Body: {\"result\": true/false}"
+            '       Body: {"result": true/false}'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
@@ -8979,10 +9498,12 @@ def main() -> None:
             "    python3 bosch_camera.py timestamp garten off"
         ),
     )
-    p_ts.add_argument("cam", nargs="?", metavar="<camera>",
-                       help="Camera name (optional, default: all)")
-    p_ts.add_argument("action", nargs="?", metavar="on|off",
-                       help="on = show overlay, off = hide overlay")
+    p_ts.add_argument(
+        "cam", nargs="?", metavar="<camera>", help="Camera name (optional, default: all)"
+    )
+    p_ts.add_argument(
+        "action", nargs="?", metavar="on|off", help="on = show overlay, off = hide overlay"
+    )
 
     # ── notification-types ─────────────────────────────────────────────────
     p_nt = subparsers.add_parser(
@@ -9001,10 +9522,15 @@ def main() -> None:
             "    python3 bosch_camera.py notification-types kamera --set movement=on person=off"
         ),
     )
-    p_nt.add_argument("cam", nargs="?", metavar="<camera>",
-                       help="Camera name (optional, default: all)")
-    p_nt.add_argument("--set", nargs="+", metavar="key=on|off",
-                       help="Set notification types (e.g. movement=on person=off)")
+    p_nt.add_argument(
+        "cam", nargs="?", metavar="<camera>", help="Camera name (optional, default: all)"
+    )
+    p_nt.add_argument(
+        "--set",
+        nargs="+",
+        metavar="key=on|off",
+        help="Set notification types (e.g. movement=on person=off)",
+    )
 
     # ── snapshot-mjpeg (F1) ────────────────────────────────────────────────
     p_smj = subparsers.add_parser(
@@ -9029,10 +9555,16 @@ def main() -> None:
             "    python3 bosch_camera.py snapshot-mjpeg Terrasse -o /tmp/snap.jpg"
         ),
     )
-    p_smj.add_argument("cam", nargs="?", metavar="<camera>",
-                        help="Camera name (optional, default: all Gen2)")
-    p_smj.add_argument("-o", "--output", dest="output", metavar="PATH",
-                        help="Output file path (default: mjpeg_snapshot_<cam>_<ts>.jpg in script dir)")
+    p_smj.add_argument(
+        "cam", nargs="?", metavar="<camera>", help="Camera name (optional, default: all Gen2)"
+    )
+    p_smj.add_argument(
+        "-o",
+        "--output",
+        dest="output",
+        metavar="PATH",
+        help="Output file path (default: mjpeg_snapshot_<cam>_<ts>.jpg in script dir)",
+    )
 
     # ── onvif-scopes (F4) ─────────────────────────────────────────────────
     p_ov = subparsers.add_parser(
@@ -9054,10 +9586,10 @@ def main() -> None:
             "    python3 bosch_camera.py onvif-scopes Terrasse --json"
         ),
     )
-    p_ov.add_argument("cam", nargs="?", metavar="<camera>",
-                       help="Camera name (optional, default: all)")
-    p_ov.add_argument("--json", dest="json", action="store_true",
-                       help="Output as JSON")
+    p_ov.add_argument(
+        "cam", nargs="?", metavar="<camera>", help="Camera name (optional, default: all)"
+    )
+    p_ov.add_argument("--json", dest="json", action="store_true", help="Output as JSON")
 
     # ── rcp-version (F6) ──────────────────────────────────────────────────
     p_rv = subparsers.add_parser(
@@ -9079,8 +9611,9 @@ def main() -> None:
             "    python3 bosch_camera.py rcp-version Terrasse"
         ),
     )
-    p_rv.add_argument("cam", nargs="?", metavar="<camera>",
-                       help="Camera name (optional, default: all)")
+    p_rv.add_argument(
+        "cam", nargs="?", metavar="<camera>", help="Camera name (optional, default: all)"
+    )
 
     # ── feature-flags (F13) ───────────────────────────────────────────────
     p_ff = subparsers.add_parser(
@@ -9101,11 +9634,11 @@ def main() -> None:
             "    python3 bosch_camera.py feature-flags --json"
         ),
     )
-    p_ff.add_argument("--json", dest="json", action="store_true",
-                       help="Output as JSON")
+    p_ff.add_argument("--json", dest="json", action="store_true", help="Output as JSON")
 
     # ── global --lang ──────────────────────────────────────────────────────────
     from bosch_i18n import AVAILABLE_LANGS as _AVAILABLE_LANGS
+
     parser.add_argument(
         "--lang",
         choices=list(_AVAILABLE_LANGS),
@@ -9135,7 +9668,7 @@ def main() -> None:
         # If no cameras yet, do initial discovery
         if not cfg.get("cameras"):
             print(t("cli.first_run"))
-            token   = get_token(cfg)
+            token = get_token(cfg)
             session = make_session(token)
             cameras = discover_cameras(cfg, session)
             if cameras:
@@ -9154,52 +9687,52 @@ def main() -> None:
         cmd = "live"
 
     dispatch = {
-        "status":        cmd_status,
-        "info":          cmd_info,
-        "snapshot":      cmd_snapshot,
-        "live":          cmd_live,
+        "status": cmd_status,
+        "info": cmd_info,
+        "snapshot": cmd_snapshot,
+        "live": cmd_live,
         # "download" and "events" removed (Bosch request)
-        "ping":          cmd_ping,
-        "lan-ips":       cmd_lan_ips,
-        "privacy":       cmd_privacy,
-        "light":         cmd_light,
-        "pan":           cmd_pan,
+        "ping": cmd_ping,
+        "lan-ips": cmd_lan_ips,
+        "privacy": cmd_privacy,
+        "light": cmd_light,
+        "pan": cmd_pan,
         "notifications": cmd_notifications,
-        "watch":         cmd_watch,
-        "nvr":           cmd_nvr,
-        "motion":        cmd_motion,
-        "recording":     cmd_recording,
-        "audio":         cmd_audio,
-        "intrusion":     cmd_intrusion,
-        "wifi":          cmd_wifi,
-        "autofollow":    cmd_autofollow,
-        "siren":         cmd_siren,
-        "unread":        cmd_unread,
+        "watch": cmd_watch,
+        "nvr": cmd_nvr,
+        "motion": cmd_motion,
+        "recording": cmd_recording,
+        "audio": cmd_audio,
+        "intrusion": cmd_intrusion,
+        "wifi": cmd_wifi,
+        "autofollow": cmd_autofollow,
+        "siren": cmd_siren,
+        "unread": cmd_unread,
         "privacy-sound": cmd_privacy_sound,
-        "rules":         cmd_rules,
-        "friends":       cmd_friends,
+        "rules": cmd_rules,
+        "friends": cmd_friends,
         "accept-invite": cmd_accept_invite,
-        "shared":        cmd_shared_with_friends,
-        "zones":         cmd_zones,
+        "shared": cmd_shared_with_friends,
+        "zones": cmd_zones,
         "privacy-masks": cmd_privacy_masks,
         "lighting-schedule": cmd_lighting_schedule,
-        "rename":        cmd_rename,
-        "profile":       cmd_profile,
-        "account":       cmd_account,
-        "intercom":      cmd_intercom,
-        "maintenance":   cmd_maintenance,
-        "rcp":                cmd_rcp,
-        "token":              cmd_token,
-        "config":             cmd_config,
-        "rescan":             cmd_rescan,
-        "timestamp":          cmd_timestamp,
+        "rename": cmd_rename,
+        "profile": cmd_profile,
+        "account": cmd_account,
+        "intercom": cmd_intercom,
+        "maintenance": cmd_maintenance,
+        "rcp": cmd_rcp,
+        "token": cmd_token,
+        "config": cmd_config,
+        "rescan": cmd_rescan,
+        "timestamp": cmd_timestamp,
         "notification-types": cmd_notification_types,
-        "test-local":         cmd_test_local,
+        "test-local": cmd_test_local,
         # ── Diagnostic & Performance Commands (F1/F4/F6/F13) ───────────────
-        "snapshot-mjpeg":     cmd_snapshot_mjpeg,
-        "onvif-scopes":       cmd_onvif_scopes,
-        "rcp-version":        cmd_rcp_version,
-        "feature-flags":      cmd_feature_flags,
+        "snapshot-mjpeg": cmd_snapshot_mjpeg,
+        "onvif-scopes": cmd_onvif_scopes,
+        "rcp-version": cmd_rcp_version,
+        "feature-flags": cmd_feature_flags,
     }
     if cmd not in dispatch:
         print(t("err.unknown_command", cmd=cmd))

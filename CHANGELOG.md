@@ -1,5 +1,9 @@
 # Changelog
 
+## [v10.10.3] - 2026-06-18
+
+**Log hygiene: redact RTSP credentials in status/launch log lines (CLI-1, cross-port with HA `_redact_rtsp_creds`).** New `redact_rtsp_creds()` helper masks the `user:password@` userinfo to `***:***` (host/path/query kept) when an rtsp(s):// URL is printed as a status/progress line — the `live` command's "Launching ffplay/mpv …" and "RTSPS URL" lines. The deliverable URL output stays UNREDACTED on purpose: `test-local`'s "RTSP URL", `info`'s stream URLs and the no-player "Stream URL" fallback are the copyable URLs the user runs those commands to obtain. Regression tests in `tests/test_mig_cli1_rtsp_redaction.py`.
+
 ## [v10.10.2] - 2026-06-11
 
 **Security: verify TLS for Bosch cloud and proxy calls (CWE-295, GHSA-6qh5-x5m5-vj6v).** The cloud REST API (`bosch_cloud_ssl.py`) and the live video TLS proxy (`bosch_tls.py`) now validate the Bosch private CA instead of accepting any certificate (`verify=False`). This closes an adjacent-network MITM vector that could expose OAuth tokens and stream URLs to an attacker who can intercept TLS on the local network. Local camera LAN endpoints are unchanged — they remain TOFU-pinned via `CertPinningError` as before.
