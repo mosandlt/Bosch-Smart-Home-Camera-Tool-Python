@@ -8723,7 +8723,7 @@ def main() -> None:
     p_watch.add_argument(
         "--signal-recipients",
         metavar="NUMS",
-        help="Comma-separated Signal recipients (phone numbers, e.g. +491234567890)",
+        help="Comma-separated Signal recipients (phone numbers, e.g. +49 170 1234567)",
     )
     p_watch.add_argument(
         "--signal-sender",
