@@ -99,7 +99,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 CLOUD_API = "https://residential.cbs.boschsecurity.com"
-VERSION = "10.10.2"
+VERSION = "10.10.4"
 
 # SSRF guard: event snapshot/clip URLs come from the cloud API response, so they
 # must be validated against a Bosch-domain allowlist before we fetch them with
@@ -3360,6 +3360,21 @@ def _get_fcm_api_key() -> str:
 FCM_CRED_KEY = "_fcm_credentials"  # key in bosch_config.json settings
 
 
+def _effective_event_type(event: dict[str, Any]) -> str:
+    """Return the effective event type for display and routing.
+
+    Gen2 cameras send ``eventType=MOVEMENT`` with ``eventTags=["PERSON"]``
+    for human detections.  This helper promotes such events to ``"PERSON"``
+    so that icons, Signal messages, and webhook payloads are consistent
+    across Gen1 (which sends ``eventType=PERSON`` directly) and Gen2.
+    """
+    raw: str = event.get("eventType") or ""
+    tags: list[str] = event.get("eventTags") or []
+    if raw == "MOVEMENT" and "PERSON" in tags:
+        return "PERSON"
+    return raw
+
+
 def _send_signal_alert(
     signal_url: str,
     sender: str,
@@ -3525,7 +3540,7 @@ def _watch_fcm_push(
                 new_events.append(ev)
 
             for ev in reversed(new_events):
-                etype = ev.get("eventType", "EVENT")
+                etype = _effective_event_type(ev)
                 ts = ev.get("timestamp", "")[:19]
                 img_url = ev.get("imageUrl", "")
                 clip_url = ev.get("videoClipUrl", "")
@@ -4288,7 +4303,7 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
                 # Print new events (oldest first — events list is newest-first)
                 for ev in reversed(new_events):
-                    etype = ev.get("eventType", "EVENT")
+                    etype = _effective_event_type(ev)
                     ts = ev.get("timestamp", "")[:19]
                     img_url = ev.get("imageUrl", "")
                     clip_url = ev.get("videoClipUrl", "")
