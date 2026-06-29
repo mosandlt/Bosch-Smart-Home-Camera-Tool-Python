@@ -15,6 +15,7 @@ IMPORTANT — freezegun + fixtures:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from typing import Iterator
@@ -72,6 +73,15 @@ def expired_token() -> str:
 def near_expiry_token() -> str:
     """Return an unsigned JWT that expires 30s after FROZEN_EPOCH (within 60s buffer)."""
     return _make_jwt(FROZEN_EPOCH + 30)
+
+
+@pytest.fixture()
+def event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """Provide an asyncio event loop for tests (required by pytest_homeassistant_custom_component)."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    yield loop
+    loop.close()
 
 
 @pytest.fixture()

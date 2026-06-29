@@ -908,6 +908,7 @@ class TestRealFCMClosures:
             patch.object(bosch_camera, "api_mark_events_read"),
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config"),
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -1027,6 +1028,7 @@ class TestRealFCMClosures:
             patch.object(bosch_camera, "api_mark_events_read") as mock_mark,
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config"),
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -1073,6 +1075,7 @@ class TestRealFCMClosures:
             patch.object(bosch_camera, "api_mark_events_read"),
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config") as mock_save,
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -1110,6 +1113,7 @@ class TestRealFCMClosures:
             patch.object(bosch_camera, "api_mark_events_read"),
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config"),
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -1137,6 +1141,7 @@ class TestRealFCMClosures:
             patch.object(bosch_camera, "api_mark_events_read"),
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config"),
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -1530,6 +1535,7 @@ class TestRealFCMClosuresExtra:
             patch.object(bosch_camera, "save_config"),
             patch.object(bosch_camera, "_is_safe_bosch_url", return_value=True),
             patch.object(bosch_camera, "open_file"),
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -1567,6 +1573,7 @@ class TestRealFCMClosuresExtra:
             patch.object(bosch_camera, "api_mark_events_read"),
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config"),
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -1631,6 +1638,7 @@ class TestRealFCMClosuresExtra:
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config"),
             patch.object(bosch_camera, "_send_signal_alert") as mock_sig,
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -1747,6 +1755,7 @@ class TestOnNotificationRealExceptions:
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config"),
             patch.object(bosch_camera, "_is_safe_bosch_url", return_value=True),
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -1785,6 +1794,7 @@ class TestOnNotificationRealExceptions:
             patch.object(bosch_camera, "api_mark_events_read", side_effect=RuntimeError("mark fail")),
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config"),
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
             patch("bosch_camera.requests.post", return_value=mock_post_resp),
         ):
             bosch_camera._STOP_REQUESTED.clear()
