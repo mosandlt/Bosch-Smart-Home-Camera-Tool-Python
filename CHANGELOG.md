@@ -1,5 +1,9 @@
 # Changelog
 
+## [v10.10.4] - 2026-06-29
+
+- **Gen2 PERSON-tag fix:** icon, Signal notification, and webhook payload now correctly identify person events (was using the wrong tag key for Gen2 cameras)
+
 ## [v10.10.3] - 2026-06-18
 
 **Log hygiene: redact RTSP credentials in status/launch log lines (CLI-1, cross-port with HA `_redact_rtsp_creds`).** New `redact_rtsp_creds()` helper masks the `user:password@` userinfo to `***:***` (host/path/query kept) when an rtsp(s):// URL is printed as a status/progress line — the `live` command's "Launching ffplay/mpv …" and "RTSPS URL" lines. The deliverable URL output stays UNREDACTED on purpose: `test-local`'s "RTSP URL", `info`'s stream URLs and the no-player "Stream URL" fallback are the copyable URLs the user runs those commands to obtain. Regression tests in `tests/test_mig_cli1_rtsp_redaction.py`.
