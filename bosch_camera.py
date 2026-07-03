@@ -41,6 +41,7 @@ Usage (CLI):
   python3 bosch_camera.py privacy-sound [<cam-name>] [on|off]
   python3 bosch_camera.py audio     [<cam-name>] [--mic N] [--speaker N] [--json]
   python3 bosch_camera.py intrusion [<cam-name>] [--mode indoor|outdoor] [--sensitivity 0-7] [--distance 1-8] [--json]
+  python3 bosch_camera.py audio-detection [<cam-name>] [--glass-break on|off] [--fire-alarm on|off] [--json]
   python3 bosch_camera.py wifi      [<cam-name>] [--json]
   python3 bosch_camera.py rules    [<cam-name>] [add|edit|delete]
   python3 bosch_camera.py friends  [invite|share|unshare|resend|remove]
@@ -6379,6 +6380,140 @@ def cmd_privacy_sound(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
 
 
+def cmd_audio_detection(cfg: dict[str, Any], args: argparse.Namespace) -> None:
+    """Get or set glass-break + smoke/fire-alarm sound detection (Gen2 Audio-Plus).
+
+    Usage:
+      python3 bosch_camera.py audio-detection [<cam>]                      # show current config
+      python3 bosch_camera.py audio-detection [<cam>] --glass-break on|off
+      python3 bosch_camera.py audio-detection [<cam>] --fire-alarm on|off
+      python3 bosch_camera.py audio-detection [<cam>] --glass-break on --fire-alarm off
+      python3 bosch_camera.py audio-detection [<cam>] --json               # machine-readable output
+
+    API: GET/PUT /v11/video_inputs/{id}/audioDetectionConfig
+         Body: {"detectGlassBreak": bool, "detectFireAlarm": bool} — BOTH fields are
+         always sent on every PUT (read-modify-write), otherwise the field not
+         addressed by a flag would be reset by the camera.
+    Gating: only Gen2 cameras (HOME_Eyes_* / *_GEN2 hardwareVersion) with the Sound
+    (Audio-Plus) feature expose this endpoint — non-Gen2 cameras are skipped
+    client-side; Gen2-without-sound returns HTTP 442 from the API.
+    Note: Returns HTTP 443 when privacy mode is active (write rejected).
+    Source: cross-ported from HA v14.2.0 (2026-06-25).
+    """
+    import json as _json_mod
+
+    token = get_token(cfg)
+    session = make_session(token)
+    get_cameras(cfg, session)
+    cam_arg = getattr(args, "cam", None)
+    glass_break = getattr(args, "glass_break", None)
+    fire_alarm = getattr(args, "fire_alarm", None)
+    as_json = getattr(args, "json", False)
+
+    cams = resolve_cam(cfg, cam_arg)
+    results: list[dict[str, Any]] = []
+
+    for name, cam_info in cams.items():
+        cam_id = cam_info["id"]
+        # Config-based entries use "model"; live API responses use "hardwareVersion"
+        model = cam_info.get("model") or cam_info.get("hardwareVersion", "?")
+        is_gen2 = model.startswith("HOME_Eyes_") or model.endswith("_GEN2")
+        if not is_gen2:
+            if not as_json:
+                print(f"\n── Audio Detection: {name} ─────────────────────────────────")
+                print(
+                    f"  ⚠️   Glass-break/fire-alarm detection requires a Gen2 Audio-Plus "
+                    f"camera ({model})"
+                )
+            results.append({"cam": name, "error": "not_gen2"})
+            continue
+
+        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/audioDetectionConfig", timeout=10)
+        if r.status_code == 401:
+            print("  ❌  Token expired.")
+            return
+        if r.status_code == 442:
+            if not as_json:
+                print(f"\n── Audio Detection: {name} ─────────────────────────────────")
+                print("  ⚠️   Sound detection not supported on this camera model (HTTP 442)")
+            results.append({"cam": name, "error": "not_supported"})
+            continue
+        if r.status_code == 443:
+            if not as_json:
+                print(f"\n── Audio Detection: {name} ─────────────────────────────────")
+                print("  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+            results.append({"cam": name, "error": "privacy_mode"})
+            continue
+        if r.status_code != 200:
+            if not as_json:
+                print(f"\n── Audio Detection: {name} ─────────────────────────────────")
+                print(f"  ❌  Could not fetch audio detection config: HTTP {r.status_code}")
+            results.append({"cam": name, "error": f"http_{r.status_code}"})
+            continue
+
+        data = r.json()
+        cur_glass = data.get("detectGlassBreak", False)
+        cur_fire = data.get("detectFireAlarm", False)
+
+        entry: dict[str, Any] = {
+            "cam": name,
+            "detectGlassBreak": cur_glass,
+            "detectFireAlarm": cur_fire,
+        }
+
+        if not as_json:
+            print(f"\n── Audio Detection: {name} ─────────────────────────────────")
+            glass_icon = "✅" if cur_glass else "❌"
+            fire_icon = "✅" if cur_fire else "❌"
+            print(f"  {glass_icon}  Glass-break detection:  {'ON' if cur_glass else 'OFF'}")
+            print(f"  {fire_icon}  Fire-alarm detection:   {'ON' if cur_fire else 'OFF'}")
+
+        if glass_break is None and fire_alarm is None:
+            if not as_json:
+                print("\n  Run with --glass-break / --fire-alarm on|off to change. E.g.:")
+                print(
+                    f"    python3 bosch_camera.py audio-detection {name.lower()} --glass-break on"
+                )
+            results.append(entry)
+            continue
+
+        new_glass = (glass_break == "on") if glass_break is not None else cur_glass
+        new_fire = (fire_alarm == "on") if fire_alarm is not None else cur_fire
+        body = {"detectGlassBreak": new_glass, "detectFireAlarm": new_fire}
+
+        if not as_json:
+            print(
+                f"  🔄  Setting audio detection → glass-break={new_glass}  fire-alarm={new_fire}..."
+            )
+
+        pr = session.put(
+            f"{CLOUD_API}/v11/video_inputs/{cam_id}/audioDetectionConfig",
+            json=body,
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        if pr.status_code in (200, 201, 204):
+            if not as_json:
+                print(
+                    f"  ✅  Glass-break: {'ON' if new_glass else 'OFF'}  "
+                    f"Fire-alarm: {'ON' if new_fire else 'OFF'}"
+                )
+            entry.update({"detectGlassBreak": new_glass, "detectFireAlarm": new_fire})
+        elif pr.status_code == 443:
+            if not as_json:
+                print("  ⚠️   Not available (HTTP 443) — privacy mode may be active.")
+            entry["error"] = "privacy_mode"
+        else:
+            if not as_json:
+                print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
+            entry["error"] = f"put_http_{pr.status_code}"
+
+        results.append(entry)
+
+    if as_json:
+        print(_json_mod.dumps(results, indent=2))
+
+
 def cmd_rules(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Manage camera automation rules (time-based schedules).
 
@@ -9153,6 +9288,54 @@ def main() -> None:
         help="Enable or disable privacy sound",
     )
 
+    # ── audio-detection ──────────────────────────────────────────────────
+    p_adet = subparsers.add_parser(
+        "audio-detection",
+        help="Get/set glass-break + smoke/fire-alarm sound detection (Gen2 Audio-Plus)",
+        description=(
+            "🔔  audio-detection — Get or set glass-break + fire-alarm sound detection\n"
+            "\n"
+            "  Gen2 Audio-Plus cameras can listen for glass-break and smoke/fire-alarm\n"
+            "  sounds. Both flags are read-modify-write: a PUT always sends both\n"
+            "  fields, so setting one never resets the other.\n"
+            "  API: GET/PUT /v11/video_inputs/{id}/audioDetectionConfig\n"
+            '       Body: {"detectGlassBreak": bool, "detectFireAlarm": bool}'
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py audio-detection\n"
+            "    python3 bosch_camera.py audio-detection Garten\n"
+            "    python3 bosch_camera.py audio-detection Garten --glass-break on\n"
+            "    python3 bosch_camera.py audio-detection Garten --fire-alarm off\n"
+            "    python3 bosch_camera.py audio-detection Garten --glass-break on --fire-alarm on\n"
+            "    python3 bosch_camera.py audio-detection --json"
+        ),
+    )
+    p_adet.add_argument(
+        "cam",
+        nargs="?",
+        metavar="<camera>",
+        help="Camera name or partial match (omit = all cameras)",
+    )
+    p_adet.add_argument(
+        "--glass-break",
+        dest="glass_break",
+        metavar="on|off",
+        choices=["on", "off"],
+        help="Enable or disable glass-break sound detection",
+    )
+    p_adet.add_argument(
+        "--fire-alarm",
+        dest="fire_alarm",
+        metavar="on|off",
+        choices=["on", "off"],
+        help="Enable or disable smoke/fire-alarm sound detection",
+    )
+    p_adet.add_argument(
+        "--json", action="store_true", default=False, help="Machine-readable JSON output"
+    )
+
     # ── rules ─────────────────────────────────────────────────────────────
     p_rules = subparsers.add_parser(
         "rules",
@@ -9724,6 +9907,7 @@ def main() -> None:
         "siren": cmd_siren,
         "unread": cmd_unread,
         "privacy-sound": cmd_privacy_sound,
+        "audio-detection": cmd_audio_detection,
         "rules": cmd_rules,
         "friends": cmd_friends,
         "accept-invite": cmd_accept_invite,

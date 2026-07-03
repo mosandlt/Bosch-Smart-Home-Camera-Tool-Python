@@ -767,6 +767,58 @@ def test_dispatch_privacy_sound_off() -> None:
     assert args.action == "off"
 
 
+def test_dispatch_audio_detection() -> None:
+    """CLI-reachable regression: subparser + dispatch dict must both be wired."""
+    with _patch_cmd("cmd_audio_detection") as m:
+        _run(["audio-detection"])
+    m.assert_called_once()
+
+
+def test_dispatch_audio_detection_with_cam() -> None:
+    with _patch_cmd("cmd_audio_detection") as m:
+        _run(["audio-detection", "Terrasse"])
+    _, args = m.call_args[0]
+    assert args.cam == "Terrasse"
+
+
+def test_dispatch_audio_detection_glass_break_on() -> None:
+    with _patch_cmd("cmd_audio_detection") as m:
+        _run(["audio-detection", "--glass-break", "on"])
+    _, args = m.call_args[0]
+    assert args.glass_break == "on"
+
+
+def test_dispatch_audio_detection_fire_alarm_off() -> None:
+    with _patch_cmd("cmd_audio_detection") as m:
+        _run(["audio-detection", "--fire-alarm", "off"])
+    _, args = m.call_args[0]
+    assert args.fire_alarm == "off"
+
+
+def test_dispatch_audio_detection_both_flags() -> None:
+    with _patch_cmd("cmd_audio_detection") as m:
+        _run(["audio-detection", "Terrasse", "--glass-break", "on", "--fire-alarm", "off"])
+    _, args = m.call_args[0]
+    assert args.cam == "Terrasse"
+    assert args.glass_break == "on"
+    assert args.fire_alarm == "off"
+
+
+def test_dispatch_audio_detection_json() -> None:
+    with _patch_cmd("cmd_audio_detection") as m:
+        _run(["audio-detection", "--json"])
+    _, args = m.call_args[0]
+    assert args.json is True
+
+
+def test_dispatch_audio_detection_invalid_flag_value_exits_nonzero() -> None:
+    """Argparse choices=["on","off"] rejects garbage before cmd_audio_detection ever runs."""
+    with _patch_cmd("cmd_audio_detection") as m, pytest.raises(SystemExit) as exc:
+        _run(["audio-detection", "--glass-break", "maybe"])
+    assert exc.value.code != 0
+    m.assert_not_called()
+
+
 def test_dispatch_rules() -> None:
     with _patch_cmd("cmd_rules") as m:
         _run(["rules"])
