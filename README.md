@@ -54,9 +54,9 @@ Standalone Python CLI for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innen
   - [WiFi Info](#wifi-info)
   - [Auto-Follow](#auto-follow-camera_360-only)
   - [Intercom](#intercom)
-  - [Siren](#siren-camera_360-only)
+  - [Siren](#siren-gen2-indoor-ii-only)
   - [Unread Events](#unread-events)
-  - [Privacy Sound](#privacy-sound-camera_360-only)
+  - [Privacy Sound](#privacy-sound-indoor-cameras-only)
   - [Rules — Cloud Automation](#rules--cloud-automation)
   - [Camera Sharing & Friends](#friends--camera-sharing)
   - [Rename](#rename)
@@ -338,7 +338,7 @@ flowchart LR
 | **Recording options — sound on/off** | `recording [cam] [--sound-on\|--sound-off]` |
 | **Auto-follow — 360 camera motion tracking** | `autofollow [cam] [on\|off]` |
 | **Intercom — listen to camera audio** | `intercom [cam] [--duration N] [--speaker-level N]` |
-| **Siren — trigger acoustic alarm (360 only)** | `siren [cam]` |
+| **Siren — trigger acoustic alarm (Gen2 Indoor II only)** | `siren [cam]` |
 | **Unread events count** | `unread [cam]` |
 | **Push mode selection (auto/iOS/Android/polling)** | `watch --push --push-mode auto\|ios\|android\|polling` |
 | **Privacy sound — audible privacy indicator** | `privacy-sound [cam] [on\|off]` |
@@ -543,11 +543,13 @@ python3 bosch_camera.py intercom Outdoor --duration 120    # listen for 2 minute
 python3 bosch_camera.py intercom Indoor --speaker-level 80 # set camera speaker volume
 ```
 
-### Siren (CAMERA_360 Only)
+### Siren (Gen2 Indoor II Only)
 
 ```bash
-python3 bosch_camera.py siren Indoor             # trigger acoustic alarm
+python3 bosch_camera.py siren Indoor             # trigger the integrated 75 dB siren
 ```
+
+Only the Gen2 Eyes Indoor II (`HOME_Eyes_Indoor`) has working siren hardware — other models print a model-aware skip message instead of issuing a doomed request.
 
 ### Unread Events
 
@@ -556,7 +558,7 @@ python3 bosch_camera.py unread                   # show unread count for all cam
 python3 bosch_camera.py unread Outdoor            # show unread count for one camera
 ```
 
-### Privacy Sound (CAMERA_360 Only)
+### Privacy Sound (Indoor Cameras Only)
 
 ```bash
 python3 bosch_camera.py privacy-sound Indoor          # show current privacy sound state
@@ -1001,7 +1003,8 @@ HTTP 442 means "feature not supported on this camera model."
 | `GET/PUT` | `/v11/video_inputs/{id}/mounting_height` | Mounting height config (Gen2 cameras) |
 | `GET/PUT` | `/v11/video_inputs/{id}/timestamp` | Time/date overlay on video |
 | `GET/PUT` | `/v11/video_inputs/{id}/privacy_sound` | Audible privacy mode indicator |
-| `PUT` | `/v11/video_inputs/{id}/acoustic_alarm` | Trigger siren / acoustic alarm |
+| `PUT` | `/v11/video_inputs/{id}/panic_alarm` | Trigger siren (`{"status":"ON"\|"OFF"}`) — Gen2 Indoor II only. The documented `/acoustic_alarm` endpoint returns HTTP 404 in production on every model tested and is not used. |
+| `PUT` | `/v11/video_inputs/{id}/alarm_settings` | Siren duration/delay config (`alarmDelayInSeconds`, `alarmActivationDelaySeconds`) — Gen2 Indoor II only |
 
 ### Lighting (Outdoor Camera)
 
@@ -1149,10 +1152,10 @@ The Bosch Smart Camera app uses Firebase Cloud Messaging for push notifications.
 | `/lighting_override`, `/lighting_options` | read/write | 442 |
 | `/ambient_light_sensor_level` | read | 442 |
 | `/front_light_switch`, `/top_down_light_switch` | write | 442 |
-| `/acoustic_alarm` | 442 | write |
+| `/acoustic_alarm` | 404 | 404 |
 | All other endpoints | read/write | read/write |
 
-HTTP 442 = feature not supported on this camera model.
+HTTP 442 = feature not supported on this camera model. `/acoustic_alarm` returns HTTP 404 on both Gen1 models in production — siren is only functional on the Gen2 Eyes Indoor II via `/panic_alarm` (see [Siren](#siren-gen2-indoor-ii-only)).
 
 ### Privacy Mode
 
