@@ -1,5 +1,9 @@
 # Changelog
 
+## [v10.10.5] - 2026-07-03
+
+- **Docs:** refreshed sibling-repo version references in the README's "Related Projects" table (Home Assistant, ioBroker, MCP Server, Node-RED, Python Frontend) — several releases behind.
+
 ## [v10.10.4] - 2026-06-29
 
 - **Gen2 PERSON-tag fix:** icon, Signal notification, and webhook payload now correctly identify person events (was using the wrong tag key for Gen2 cameras)
