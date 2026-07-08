@@ -1,5 +1,9 @@
 # Changelog
 
+## [v10.10.6] - 2026-07-08
+
+- **CI fix:** the release workflow's `gh release edit --generate-notes` call crashed because `--generate-notes` is create-only and unsupported on `edit` — this is the same latent bug that actually crashed the HA repo's Publish-release job on a recent tag push. Also closed an awk/command-injection vector (the version string was interpolated directly into the awk program text instead of passed via `-v`), and a missing CHANGELOG.md section for the release version now hard-fails the workflow instead of silently falling back to auto-generated notes.
+
 ## [v10.10.5] - 2026-07-03
 
 - **Docs:** refreshed sibling-repo version references in the README's "Related Projects" table (Home Assistant, ioBroker, MCP Server, Node-RED, Python Frontend) — several releases behind.
