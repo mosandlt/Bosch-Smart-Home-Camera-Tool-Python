@@ -22,7 +22,8 @@ from bosch_camera import _build_stream_urls
 # ─────────────────────────────────────────────────────────────────────────────
 
 REMOTE_URL = "proxy-42.live.cbs.boschsecurity.com:42090/abc123hash"
-LOCAL_URL  = "192.168.1.100:443"
+LOCAL_URL = "192.168.1.100:443"
+
 
 def _conn_result_remote(inst_path: str = REMOTE_URL) -> dict[str, Any]:
     """Minimal PUT /connection REMOTE response."""
@@ -53,13 +54,14 @@ def _mock_cam(cam_id: str = "cam-001") -> dict[str, Any]:
 # _build_stream_urls — unit tests
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestBuildStreamUrlsRemote:
     def test_returns_two_distinct_urls(self) -> None:
         """_build_stream_urls must return two distinct URL strings."""
         main_url, sub_url = _build_stream_urls(_mock_cam(), _conn_result_remote(), inst=1)
         assert main_url != sub_url
         assert main_url != ""
-        assert sub_url  != ""
+        assert sub_url != ""
 
     def test_main_url_uses_inst1(self) -> None:
         """Main URL with inst=1 must contain inst=1 query param."""
@@ -91,7 +93,7 @@ class TestBuildStreamUrlsRemote:
         conn = {"urls": [], "user": "", "password": ""}
         main_url, sub_url = _build_stream_urls(_mock_cam(), conn, inst=1)
         assert main_url == ""
-        assert sub_url  == ""
+        assert sub_url == ""
 
     def test_urls_contain_enableaudio(self) -> None:
         """Both URLs must include enableaudio=1 for audio support."""
@@ -104,8 +106,11 @@ class TestBuildStreamUrlsLocal:
     def test_local_mode_returns_rtsp_not_rtsps(self) -> None:
         """LOCAL mode (use_tls_proxy=True) must return rtsp:// not rtsps://."""
         main_url, sub_url = _build_stream_urls(
-            _mock_cam(), _conn_result_local(),
-            inst=1, use_tls_proxy=True, proxy_port=12345,
+            _mock_cam(),
+            _conn_result_local(),
+            inst=1,
+            use_tls_proxy=True,
+            proxy_port=12345,
         )
         assert main_url.startswith("rtsp://")
         assert sub_url.startswith("rtsp://")
@@ -113,8 +118,11 @@ class TestBuildStreamUrlsLocal:
     def test_local_mode_uses_proxy_port(self) -> None:
         """LOCAL URL must point to 127.0.0.1 with the given proxy_port."""
         main_url, sub_url = _build_stream_urls(
-            _mock_cam(), _conn_result_local(),
-            inst=1, use_tls_proxy=True, proxy_port=54321,
+            _mock_cam(),
+            _conn_result_local(),
+            inst=1,
+            use_tls_proxy=True,
+            proxy_port=54321,
         )
         assert "127.0.0.1:54321" in main_url
         assert "127.0.0.1:54321" in sub_url
@@ -122,8 +130,11 @@ class TestBuildStreamUrlsLocal:
     def test_local_mode_embeds_credentials(self) -> None:
         """LOCAL URL must URL-encode credentials into the auth prefix."""
         main_url, sub_url = _build_stream_urls(
-            _mock_cam(), _conn_result_local(),
-            inst=1, use_tls_proxy=True, proxy_port=9999,
+            _mock_cam(),
+            _conn_result_local(),
+            inst=1,
+            use_tls_proxy=True,
+            proxy_port=9999,
         )
         assert "admin:secret@" in main_url
         assert "admin:secret@" in sub_url
@@ -131,8 +142,11 @@ class TestBuildStreamUrlsLocal:
     def test_local_mode_two_distinct_urls(self) -> None:
         """LOCAL mode must also return two distinct URLs (inst=1 vs inst=2)."""
         main_url, sub_url = _build_stream_urls(
-            _mock_cam(), _conn_result_local(),
-            inst=1, use_tls_proxy=True, proxy_port=7777,
+            _mock_cam(),
+            _conn_result_local(),
+            inst=1,
+            use_tls_proxy=True,
+            proxy_port=7777,
         )
         assert main_url != sub_url
 
@@ -171,9 +185,12 @@ class TestGen1SubStreamBehaviorNote:
 # cmd_info — outputs both URLs
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdInfoOutputsBothUrls:
     def test_cmd_info_outputs_main_and_sub_url(
-        self, capsys: pytest.CaptureFixture[str], tmp_path: pytest.TempPathFactory,
+        self,
+        capsys: pytest.CaptureFixture[str],
+        tmp_path: pytest.TempPathFactory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """cmd_info must print both Main Stream URL and Sub Stream URL lines."""
@@ -184,24 +201,26 @@ class TestCmdInfoOutputsBothUrls:
         monkeypatch.setattr(bc, "CONFIG_FILE", str(tmp_path / "cfg.json"))
 
         # Minimal camera payload from GET /v11/video_inputs
-        cam_payload = [{
-            "id": "cam-test",
-            "title": "TestCam",
-            "connectionStatus": "ONLINE",
-            "hardwareVersion": "OUTDOOR",
-            "firmwareVersion": "7.91.56",
-            "macAddress": "AA:BB:CC:DD:EE:FF",
-            "privacyMode": False,
-            "recordingOn": False,
-            "numberOfUnreadEvents": 0,
-            "timeZone": "UTC",
-            "alarmType": "NONE",
-            "notificationsEnabledStatus": "ON",
-            "notifications": {},
-            "featureSupport": {},
-            "featureStatus": {},
-            "soundIsOnForRecording": False,
-        }]
+        cam_payload = [
+            {
+                "id": "cam-test",
+                "title": "TestCam",
+                "connectionStatus": "ONLINE",
+                "hardwareVersion": "OUTDOOR",
+                "firmwareVersion": "7.91.56",
+                "macAddress": "AA:BB:CC:DD:EE:FF",
+                "privacyMode": False,
+                "recordingOn": False,
+                "numberOfUnreadEvents": 0,
+                "timeZone": "UTC",
+                "alarmType": "NONE",
+                "notificationsEnabledStatus": "ON",
+                "notifications": {},
+                "featureSupport": {},
+                "featureStatus": {},
+                "soundIsOnForRecording": False,
+            }
+        ]
 
         conn_payload = {
             "urls": ["proxy-42.live.cbs.boschsecurity.com:42090/abc123hash"],
@@ -232,21 +251,24 @@ class TestCmdInfoOutputsBothUrls:
 
         args = argparse.Namespace(full=False)
 
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=mock_session), \
-             patch.object(bc, "check_token_age", return_value="0 min"):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=mock_session),
+            patch.object(bc, "check_token_age", return_value="0 min"),
+        ):
             bc.cmd_info(cfg, args)
 
         captured = capsys.readouterr().out
         assert "Main Stream URL" in captured
-        assert "Sub Stream URL"  in captured
-        assert "inst=1" in captured   # main
-        assert "inst=2" in captured   # sub
+        assert "Sub Stream URL" in captured
+        assert "inst=1" in captured  # main
+        assert "inst=2" in captured  # sub
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_live — PIN_EVERY_MODE
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _make_live_args(**kwargs: Any) -> argparse.Namespace:
     defaults: dict[str, Any] = {
@@ -268,6 +290,7 @@ def _setup_live_mocks(
 ) -> tuple[MagicMock, dict]:
     """Wire up the minimum mocks for cmd_live and return (mock_session, cfg)."""
     import bosch_camera as bc
+
     monkeypatch.setattr(bc, "BASE_DIR", str(tmp_path))
     monkeypatch.setattr(bc, "CONFIG_FILE", str(tmp_path / "cfg.json"))
 
@@ -309,13 +332,15 @@ class TestCmdLiveSubFlag:
         def _fake_open(url: str, cam_name: str, snap_url: str = "", use_vlc: bool = False) -> None:
             opened_urls.append(url)
 
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=mock_session), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream", side_effect=_fake_open):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=mock_session),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream", side_effect=_fake_open),
+        ):
             bc.cmd_live(cfg, args)
 
         assert len(opened_urls) == 1
@@ -344,13 +369,15 @@ class TestCmdLiveSubFlag:
         def _fake_open(url: str, cam_name: str, snap_url: str = "", use_vlc: bool = False) -> None:
             opened_urls.append(url)
 
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=mock_session), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream", side_effect=_fake_open):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=mock_session),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream", side_effect=_fake_open),
+        ):
             bc.cmd_live(cfg, args)
 
         assert len(opened_urls) == 1
@@ -370,13 +397,15 @@ class TestCmdLiveSubFlag:
         mock_session, cfg = _setup_live_mocks(monkeypatch, tmp_path)
         args = _make_live_args(sub=True)
 
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=mock_session), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream"):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=mock_session),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream"),
+        ):
             bc.cmd_live(cfg, args)
 
         captured = capsys.readouterr().out

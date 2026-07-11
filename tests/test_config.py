@@ -16,6 +16,7 @@ import bosch_camera
 
 # ── _create_default_config ────────────────────────────────────────────────────
 
+
 class TestCreateDefaultConfig:
     def test_creates_valid_json_file(self, tmp_config_dir: str) -> None:
         """_create_default_config() writes a parseable JSON file at CONFIG_FILE."""
@@ -52,6 +53,7 @@ class TestCreateDefaultConfig:
 
 # ── _merge_defaults ───────────────────────────────────────────────────────────
 
+
 class TestMergeDefaults:
     def test_adds_missing_top_level_key(self) -> None:
         """Missing key in cfg gets filled from defaults."""
@@ -70,8 +72,8 @@ class TestMergeDefaults:
         cfg = {"account": {"username": "alice"}}
         defaults = {"account": {"username": "default", "password": ""}}
         bosch_camera._merge_defaults(cfg, defaults)
-        assert cfg["account"]["username"] == "alice"   # preserved
-        assert cfg["account"]["password"] == ""        # added
+        assert cfg["account"]["username"] == "alice"  # preserved
+        assert cfg["account"]["password"] == ""  # added
 
     def test_non_dict_default_not_deep_merged(self) -> None:
         """If cfg[key] exists and is not a dict, it is left alone even if default is dict."""
@@ -95,6 +97,7 @@ class TestMergeDefaults:
 
 
 # ── load_config ───────────────────────────────────────────────────────────────
+
 
 class TestLoadConfig:
     def test_creates_config_if_missing(self, tmp_config_dir: str) -> None:
@@ -141,6 +144,7 @@ class TestLoadConfig:
 
 # ── save_config ───────────────────────────────────────────────────────────────
 
+
 class TestSaveConfig:
     def test_writes_json(self, tmp_config_dir: str) -> None:
         """save_config() writes parseable JSON."""
@@ -158,8 +162,12 @@ class TestSaveConfig:
 
     def test_overwrites_previous_content(self, tmp_config_dir: str) -> None:
         """save_config() replaces previous file content completely."""
-        bosch_camera.save_config({"account": {"bearer_token": "old"}, "cameras": {}, "settings": {}})
-        bosch_camera.save_config({"account": {"bearer_token": "new"}, "cameras": {}, "settings": {}})
+        bosch_camera.save_config(
+            {"account": {"bearer_token": "old"}, "cameras": {}, "settings": {}}
+        )
+        bosch_camera.save_config(
+            {"account": {"bearer_token": "new"}, "cameras": {}, "settings": {}}
+        )
         with open(bosch_camera.CONFIG_FILE) as f:
             data = json.load(f)
         assert data["account"]["bearer_token"] == "new"

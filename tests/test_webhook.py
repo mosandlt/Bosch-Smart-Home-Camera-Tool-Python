@@ -37,6 +37,7 @@ SAMPLE_EVENT: dict[str, Any] = {
 # Tests for _post_event_webhook (unit level)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestPostEventWebhook:
     """Unit tests for the _post_event_webhook() helper."""
 
@@ -53,7 +54,12 @@ class TestPostEventWebhook:
             webhook_url = ""
             if webhook_url:
                 bosch_camera._post_event_webhook(
-                    webhook_url, "Testcam", "CAM-001", "MOVEMENT", "2026-05-20T10:00:00Z", SAMPLE_EVENT
+                    webhook_url,
+                    "Testcam",
+                    "CAM-001",
+                    "MOVEMENT",
+                    "2026-05-20T10:00:00Z",
+                    SAMPLE_EVENT,
                 )
             mock_requests.post.assert_not_called()
 
@@ -64,8 +70,12 @@ class TestPostEventWebhook:
 
         with patch("bosch_camera.requests.post", return_value=mock_resp) as mock_post:
             bosch_camera._post_event_webhook(
-                HOOK_URL, "Garten", "AABBCCDD-DEAD-BEEF-FACE-000000000001",
-                "MOVEMENT", "2026-05-20T10:00:00Z", SAMPLE_EVENT,
+                HOOK_URL,
+                "Garten",
+                "AABBCCDD-DEAD-BEEF-FACE-000000000001",
+                "MOVEMENT",
+                "2026-05-20T10:00:00Z",
+                SAMPLE_EVENT,
             )
 
         mock_post.assert_called_once()
@@ -90,7 +100,12 @@ class TestPostEventWebhook:
 
         with patch("bosch_camera.requests.post", return_value=mock_resp) as mock_post:
             bosch_camera._post_event_webhook(
-                HOOK_URL, "Innenbereich", "CAM-AUDIO", "AUDIO_ALARM", "2026-05-20T11:00:00Z", audio_event,
+                HOOK_URL,
+                "Innenbereich",
+                "CAM-AUDIO",
+                "AUDIO_ALARM",
+                "2026-05-20T11:00:00Z",
+                audio_event,
             )
 
         payload = mock_post.call_args.kwargs["json"]
@@ -105,7 +120,12 @@ class TestPostEventWebhook:
 
         with patch("bosch_camera.requests.post", return_value=mock_resp) as mock_post:
             bosch_camera._post_event_webhook(
-                HOOK_URL, "Terrasse", "CAM-PERSON", "PERSON", "2026-05-20T12:00:00Z", person_event,
+                HOOK_URL,
+                "Terrasse",
+                "CAM-PERSON",
+                "PERSON",
+                "2026-05-20T12:00:00Z",
+                person_event,
             )
 
         payload = mock_post.call_args.kwargs["json"]
@@ -120,7 +140,12 @@ class TestPostEventWebhook:
         with patch("bosch_camera.requests.post", return_value=mock_resp):
             # Must not raise
             bosch_camera._post_event_webhook(
-                HOOK_URL, "Garten", "CAM-001", "MOVEMENT", "2026-05-20T10:00:00Z", SAMPLE_EVENT,
+                HOOK_URL,
+                "Garten",
+                "CAM-001",
+                "MOVEMENT",
+                "2026-05-20T10:00:00Z",
+                SAMPLE_EVENT,
             )
 
         captured = capsys.readouterr()
@@ -135,7 +160,12 @@ class TestPostEventWebhook:
         with patch("bosch_camera.requests.post", side_effect=_req.ConnectionError("refused")):
             # Must not raise
             bosch_camera._post_event_webhook(
-                HOOK_URL, "Garten", "CAM-001", "MOVEMENT", "2026-05-20T10:00:00Z", SAMPLE_EVENT,
+                HOOK_URL,
+                "Garten",
+                "CAM-001",
+                "MOVEMENT",
+                "2026-05-20T10:00:00Z",
+                SAMPLE_EVENT,
             )
 
         captured = capsys.readouterr()
@@ -149,7 +179,12 @@ class TestPostEventWebhook:
 
         with patch("bosch_camera.requests.post", return_value=mock_resp) as mock_post:
             bosch_camera._post_event_webhook(
-                HOOK_URL, "Cam", "CAM-X", "MOVEMENT", "2026-05-20T10:00:00Z", sparse_event,
+                HOOK_URL,
+                "Cam",
+                "CAM-X",
+                "MOVEMENT",
+                "2026-05-20T10:00:00Z",
+                sparse_event,
             )
 
         payload = mock_post.call_args.kwargs["json"]

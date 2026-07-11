@@ -88,6 +88,7 @@ def _setup_live_mocks(
 # _build_go2rtc_config
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestBuildGo2rtcConfig:
     def test_yaml_has_rtsps_source(self) -> None:
         """Config must include the full RTSPS URL as the stream source."""
@@ -125,6 +126,7 @@ class TestBuildGo2rtcConfig:
 # _start_go2rtc_with_camera — error paths
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestStartGo2rtcErrors:
     def test_binary_not_found_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When go2rtc binary is not in PATH (and not a direct path), raise Go2rtcError."""
@@ -144,13 +146,17 @@ class TestStartGo2rtcErrors:
         class _FakeSocket:
             def __init__(self, *a, **kw):
                 pass
+
             def setsockopt(self, *a, **kw):
                 pass
+
             def bind(self, addr):
                 err = OSError(errno.EADDRINUSE, "Address already in use")
                 raise err
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *a):
                 pass
 
@@ -167,12 +173,16 @@ class TestStartGo2rtcErrors:
         class _FakeSocketAllowBind:
             def __init__(self, *a, **kw):
                 pass
+
             def setsockopt(self, *a, **kw):
                 pass
+
             def bind(self, addr):
                 pass  # bind succeeds = port is free
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *a):
                 pass
 
@@ -186,17 +196,22 @@ class TestStartGo2rtcErrors:
         def _always_fail(*a, **kw):
             raise OSError("refused")
 
-        with patch("subprocess.Popen", return_value=mock_proc), \
-             patch("socket.create_connection", side_effect=_always_fail), \
-             patch("time.sleep"), \
-             patch("time.time", side_effect=[
-                 0,    # deadline = 0 + 2
-                 0,    # first loop iteration: time.time() < deadline=2 → True
-                 0,    # poll returns None (running)
-                 0,    # create_connection attempt
-                 3,    # second loop iteration: time.time() >= deadline=2 → exit loop
-                 3,    # "time.time() < deadline" re-check after loop → port_ready=False
-             ]):
+        with (
+            patch("subprocess.Popen", return_value=mock_proc),
+            patch("socket.create_connection", side_effect=_always_fail),
+            patch("time.sleep"),
+            patch(
+                "time.time",
+                side_effect=[
+                    0,  # deadline = 0 + 2
+                    0,  # first loop iteration: time.time() < deadline=2 → True
+                    0,  # poll returns None (running)
+                    0,  # create_connection attempt
+                    3,  # second loop iteration: time.time() >= deadline=2 → exit loop
+                    3,  # "time.time() < deadline" re-check after loop → port_ready=False
+                ],
+            ),
+        ):
             with pytest.raises(Go2rtcError, match="2"):
                 _start_go2rtc_with_camera(
                     REMOTE_RTSPS,
@@ -211,12 +226,16 @@ class TestStartGo2rtcErrors:
         class _FakeSocketAllowBind:
             def __init__(self, *a, **kw):
                 pass
+
             def setsockopt(self, *a, **kw):
                 pass
+
             def bind(self, addr):
                 pass
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *a):
                 pass
 
@@ -229,13 +248,16 @@ class TestStartGo2rtcErrors:
         class _FakeConn:
             def __enter__(self):
                 return self
+
             def __exit__(self, *a):
                 pass
 
-        with patch("subprocess.Popen", return_value=mock_proc), \
-             patch("socket.create_connection", return_value=_FakeConn()), \
-             patch("builtins.open", MagicMock()), \
-             patch("os.unlink"):
+        with (
+            patch("subprocess.Popen", return_value=mock_proc),
+            patch("socket.create_connection", return_value=_FakeConn()),
+            patch("builtins.open", MagicMock()),
+            patch("os.unlink"),
+        ):
             proc, url = _start_go2rtc_with_camera(
                 REMOTE_RTSPS,
                 go2rtc_bin="go2rtc",
@@ -253,12 +275,16 @@ class TestStartGo2rtcErrors:
         class _FakeSocket:
             def __init__(self, *a, **kw):
                 pass
+
             def setsockopt(self, *a, **kw):
                 pass
+
             def bind(self, addr):
                 pass
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *a):
                 pass
 
@@ -268,13 +294,18 @@ class TestStartGo2rtcErrors:
         mock_proc.poll.return_value = None
 
         class _FakeConn:
-            def __enter__(self): return self
-            def __exit__(self, *a): pass
+            def __enter__(self):
+                return self
 
-        with patch("subprocess.Popen", return_value=mock_proc), \
-             patch("socket.create_connection", return_value=_FakeConn()), \
-             patch("builtins.open", MagicMock()), \
-             patch("os.unlink"):
+            def __exit__(self, *a):
+                pass
+
+        with (
+            patch("subprocess.Popen", return_value=mock_proc),
+            patch("socket.create_connection", return_value=_FakeConn()),
+            patch("builtins.open", MagicMock()),
+            patch("os.unlink"),
+        ):
             _, url = _start_go2rtc_with_camera(
                 REMOTE_RTSPS,
                 go2rtc_bin="go2rtc",
@@ -288,6 +319,7 @@ class TestStartGo2rtcErrors:
 # Cleanup: terminate + unlink
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestGo2rtcCleanup:
     def test_cleanup_terminates_subprocess(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_open_webrtc_stream must call proc.terminate() on KeyboardInterrupt."""
@@ -296,16 +328,19 @@ class TestGo2rtcCleanup:
         mock_proc = MagicMock()
         mock_proc.wait.side_effect = KeyboardInterrupt
 
-        with patch.object(bc, "_start_go2rtc_with_camera",
-                          return_value=(mock_proc, "http://localhost:1984/stream.html?src=bosch_cam")), \
-             patch("webbrowser.open"):
+        with (
+            patch.object(
+                bc,
+                "_start_go2rtc_with_camera",
+                return_value=(mock_proc, "http://localhost:1984/stream.html?src=bosch_cam"),
+            ),
+            patch("webbrowser.open"),
+        ):
             bc._open_webrtc_stream(REMOTE_RTSPS, "TestCam", port=1984, go2rtc_bin="go2rtc")
 
         mock_proc.terminate.assert_called_once()
 
-    def test_cleanup_unlinks_temp_config(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path
-    ) -> None:
+    def test_cleanup_unlinks_temp_config(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
         """_open_webrtc_stream must unlink the temp config file on exit."""
         import bosch_camera as bc
 
@@ -318,9 +353,14 @@ class TestGo2rtcCleanup:
         # Attach cfg path attribute as the real code does
         mock_proc._go2rtc_cfg_path = str(cfg_file)
 
-        with patch.object(bc, "_start_go2rtc_with_camera",
-                          return_value=(mock_proc, "http://localhost:1984/stream.html?src=bosch_cam")), \
-             patch("webbrowser.open"):
+        with (
+            patch.object(
+                bc,
+                "_start_go2rtc_with_camera",
+                return_value=(mock_proc, "http://localhost:1984/stream.html?src=bosch_cam"),
+            ),
+            patch("webbrowser.open"),
+        ):
             bc._open_webrtc_stream(REMOTE_RTSPS, "TestCam", port=1984, go2rtc_bin="go2rtc")
 
         assert not cfg_file.exists(), "Temp config must be deleted after go2rtc stops"
@@ -329,6 +369,7 @@ class TestGo2rtcCleanup:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_live — PIN_EVERY_MODE: webrtc on/off
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdLiveWebrtcDispatch:
     def test_cmd_live_webrtc_flag_dispatches_to_go2rtc_path(
@@ -347,14 +388,16 @@ class TestCmdLiveWebrtcDispatch:
         def _fake_webrtc(rtsps_url, cam_name, *, port, go2rtc_bin):
             webrtc_calls.append({"url": rtsps_url, "port": port, "bin": go2rtc_bin})
 
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=mock_session), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_webrtc_stream", side_effect=_fake_webrtc), \
-             patch.object(bc, "_open_rtsps_stream") as mock_rtsps:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=mock_session),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_webrtc_stream", side_effect=_fake_webrtc),
+            patch.object(bc, "_open_rtsps_stream") as mock_rtsps,
+        ):
             bc.cmd_live(cfg, args)
 
         assert len(webrtc_calls) == 1, "Expected exactly one _open_webrtc_stream call"
@@ -372,14 +415,16 @@ class TestCmdLiveWebrtcDispatch:
         mock_session, cfg = _setup_live_mocks(monkeypatch, tmp_path)
         args = _make_live_args(webrtc=False)
 
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=mock_session), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_webrtc_stream") as mock_webrtc, \
-             patch.object(bc, "_open_rtsps_stream") as mock_rtsps:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=mock_session),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_webrtc_stream") as mock_webrtc,
+            patch.object(bc, "_open_rtsps_stream") as mock_rtsps,
+        ):
             bc.cmd_live(cfg, args)
 
         mock_rtsps.assert_called_once()
@@ -401,13 +446,15 @@ class TestCmdLiveWebrtcDispatch:
         def _fake_webrtc(rtsps_url, cam_name, *, port, go2rtc_bin):
             received_port.append(port)
 
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=mock_session), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_webrtc_stream", side_effect=_fake_webrtc):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=mock_session),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_webrtc_stream", side_effect=_fake_webrtc),
+        ):
             bc.cmd_live(cfg, args)
 
         assert received_port == [8080]
@@ -428,13 +475,15 @@ class TestCmdLiveWebrtcDispatch:
         def _fake_webrtc(rtsps_url, cam_name, *, port, go2rtc_bin):
             received_bin.append(go2rtc_bin)
 
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=mock_session), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_webrtc_stream", side_effect=_fake_webrtc):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=mock_session),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "get_cameras", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "resolve_cam", return_value={"TestCam": {"id": "cam-001"}}),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_webrtc_stream", side_effect=_fake_webrtc),
+        ):
             bc.cmd_live(cfg, args)
 
         assert received_bin == ["/opt/go2rtc"]

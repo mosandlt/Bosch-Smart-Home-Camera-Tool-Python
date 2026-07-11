@@ -67,7 +67,12 @@ def _cam_json(
         "alarmType": None,
         "notificationsEnabledStatus": "ENABLED",
         "notifications": {"motion": True, "audio": False},
-        "featureSupport": {"light": has_light, "sound": True, "viewingAngle": 110, "panLimit": pan_limit},
+        "featureSupport": {
+            "light": has_light,
+            "sound": True,
+            "viewingAngle": 110,
+            "panLimit": pan_limit,
+        },
         "featureStatus": {
             "scheduleStatus": "OFF",
             "generalLightOnTime": "20:00",
@@ -103,16 +108,28 @@ def _mock_session(
                 "ipAddress": FAKE_IP,
                 "macAddress": FAKE_MAC,
             }
-        elif "video_inputs" in url and all(
-            s not in url
-            for s in [
-                "commissioned", "firmware", "lighting_override", "motion",
-                "recording_options", "ambient_light_sensor_level",
-                "intrusionDetectionConfig", "credentials", "rules",
-                "timestamp", "privacy_sound_override", "feature_flags",
-                "wifiinfo",
-            ]
-        ) and url.endswith("video_inputs"):
+        elif (
+            "video_inputs" in url
+            and all(
+                s not in url
+                for s in [
+                    "commissioned",
+                    "firmware",
+                    "lighting_override",
+                    "motion",
+                    "recording_options",
+                    "ambient_light_sensor_level",
+                    "intrusionDetectionConfig",
+                    "credentials",
+                    "rules",
+                    "timestamp",
+                    "privacy_sound_override",
+                    "feature_flags",
+                    "wifiinfo",
+                ]
+            )
+            and url.endswith("video_inputs")
+        ):
             r.status_code = inputs_status
             r.json.return_value = inputs_data
         elif "protocol_support" in url:
@@ -415,8 +432,10 @@ class TestCmdInfo:
             elif "wifiinfo" in url:
                 r.status_code = 200
                 r.json.return_value = {
-                    "ssid": "FakeSSID", "signalStrength": 75,
-                    "ipAddress": FAKE_IP, "macAddress": FAKE_MAC,
+                    "ssid": "FakeSSID",
+                    "signalStrength": 75,
+                    "ipAddress": FAKE_IP,
+                    "macAddress": FAKE_MAC,
                 }
             else:
                 r.status_code = 200
@@ -474,7 +493,9 @@ class TestCmdInfo:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run(sess)
         out = capsys.readouterr().out
         assert "UPDATING_FW" in out
@@ -538,7 +559,9 @@ class TestCmdInfo:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run(sess)
         out = capsys.readouterr().out
         assert "503" in out
@@ -623,8 +646,12 @@ class TestCmdInfo:
                 r.json.return_value = {"ambientLightSensorLevel": 0.5}
             elif "intrusionDetectionConfig" in url:
                 r.status_code = 200
-                r.json.return_value = {"enabled": True, "detectionMode": "STANDARD",
-                                       "sensitivity": 3, "distance": 5}
+                r.json.return_value = {
+                    "enabled": True,
+                    "detectionMode": "STANDARD",
+                    "sensitivity": 3,
+                    "distance": 5,
+                }
             elif "credentials" in url:
                 r.status_code = 200
                 r.json.return_value = {"userToken": "fake-user-token"}
@@ -643,8 +670,10 @@ class TestCmdInfo:
             elif "wifiinfo" in url:
                 r.status_code = 200
                 r.json.return_value = {
-                    "ssid": "FakeSSID", "signalStrength": 75,
-                    "ipAddress": FAKE_IP, "macAddress": FAKE_MAC,
+                    "ssid": "FakeSSID",
+                    "signalStrength": 75,
+                    "ipAddress": FAKE_IP,
+                    "macAddress": FAKE_MAC,
                 }
             elif "commissioned" in url:
                 r.status_code = 200
@@ -658,10 +687,12 @@ class TestCmdInfo:
         sess.get.side_effect = _get
         sess.put.return_value = MagicMock(
             status_code=200,
-            json=MagicMock(return_value={
-                "urls": ["proxy-01.live.cbs.boschsecurity.com:42090/fakehash"],
-                "imageUrlScheme": "https://{url}/snap.jpg",
-            }),
+            json=MagicMock(
+                return_value={
+                    "urls": ["proxy-01.live.cbs.boschsecurity.com:42090/fakehash"],
+                    "imageUrlScheme": "https://{url}/snap.jpg",
+                }
+            ),
         )
         self._run(sess, full=True)
         out = capsys.readouterr().out
@@ -695,7 +726,9 @@ class TestCmdInfo:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run(sess, full=True)
         out = capsys.readouterr().out
         assert "webrtc" in out or "Feature Flags" in out
@@ -723,7 +756,9 @@ class TestCmdInfo:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run(sess, full=True)
         out = capsys.readouterr().out
         assert "403" in out
@@ -754,13 +789,16 @@ class TestCmdInfo:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run(sess, full=True)
         out = capsys.readouterr().out
         assert "not supported" in out or "442" in out
 
     def test_empty_camera_list(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Empty camera list → only header prints, no cam-level output."""
+
         def _get(url: str, **kw: Any) -> MagicMock:
             r = MagicMock()
             if url.endswith("video_inputs"):
@@ -804,7 +842,9 @@ class TestCmdInfo:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         # Should NOT raise
         self._run(sess)
 
@@ -857,7 +897,9 @@ class TestCmdInfo:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run(sess)
         out = capsys.readouterr().out
         assert "NONE" in out
@@ -882,7 +924,9 @@ class TestCmdInfo:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run(sess)
         out = capsys.readouterr().out
         # Should show model name (may be mapped via HW_DISPLAY_NAMES or raw)
@@ -1391,7 +1435,9 @@ class TestCmdInfoExceptionBranches:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run_full(sess)
         out = capsys.readouterr().out
         # Should still print camera info (protocol exception silenced)
@@ -1424,7 +1470,9 @@ class TestCmdInfoExceptionBranches:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run_full(sess)
         # Should complete without raising
 
@@ -1447,10 +1495,19 @@ class TestCmdInfoExceptionBranches:
                 r.json.return_value = {}
             elif any(
                 s in url
-                for s in ["firmware", "lighting_override", "motion", "recording_options",
-                          "ambient_light_sensor_level", "intrusionDetectionConfig",
-                          "credentials", "rules", "timestamp", "privacy_sound_override",
-                          "commissioned"]
+                for s in [
+                    "firmware",
+                    "lighting_override",
+                    "motion",
+                    "recording_options",
+                    "ambient_light_sensor_level",
+                    "intrusionDetectionConfig",
+                    "credentials",
+                    "rules",
+                    "timestamp",
+                    "privacy_sound_override",
+                    "commissioned",
+                ]
             ):
                 raise exc
             else:
@@ -1460,7 +1517,9 @@ class TestCmdInfoExceptionBranches:
 
         sess = MagicMock()
         sess.get.side_effect = _get
-        sess.put.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"urls": []}))
+        sess.put.return_value = MagicMock(
+            status_code=200, json=MagicMock(return_value={"urls": []})
+        )
         self._run_full(sess)
         out = capsys.readouterr().out
         assert "Camera Info" in out
@@ -1582,9 +1641,7 @@ class TestWatchNewEvents:
             CAM_NAME: {"id": CAM_ID, "name": CAM_NAME, "local_ip": "", "has_light": False}
         }
 
-        fake_events = [
-            {"id": "ev-004", "eventType": "PERSON", "timestamp": "2024-06-01T12:00:00Z"}
-        ]
+        fake_events = [{"id": "ev-004", "eventType": "PERSON", "timestamp": "2024-06-01T12:00:00Z"}]
 
         api_calls: list[int] = [0]
         sess = MagicMock()

@@ -34,9 +34,7 @@ class TestGetStreamUrlLocal:
     def test_hq_selects_main_stream_inst1(self) -> None:
         data = {"urls": ["192.168.2.50:443"], "user": "", "password": ""}
         with patch.object(bosch_camera.requests, "put", return_value=_resp(200, data)):
-            r = bosch_camera.get_stream_url(
-                {"id": "cam1"}, "tok", hq=True, conn_type="LOCAL"
-            )
+            r = bosch_camera.get_stream_url({"id": "cam1"}, "tok", hq=True, conn_type="LOCAL")
         assert r is not None
         # hq=True → inst=1 (main stream); sub-stream params stay inst=2
         assert "inst=1&" in r["url"]
@@ -62,8 +60,7 @@ class TestGetStreamUrlRemote:
         assert r is not None
         assert r["type"] == "REMOTE"
         assert r["url"] == (
-            f"rtsps://proxy-7.live.cbs.boschsecurity.com:443/abc123hash"
-            f"/rtsp_tunnel?{_RTSP_PARAMS}"
+            f"rtsps://proxy-7.live.cbs.boschsecurity.com:443/abc123hash/rtsp_tunnel?{_RTSP_PARAMS}"
         )
 
 
@@ -73,28 +70,18 @@ class TestGetStreamUrlGuards:
 
     def test_non_200_returns_none(self) -> None:
         with patch.object(bosch_camera.requests, "put", return_value=_resp(500, {})):
-            assert (
-                bosch_camera.get_stream_url({"id": "c"}, "tok", conn_type="LOCAL")
-                is None
-            )
+            assert bosch_camera.get_stream_url({"id": "c"}, "tok", conn_type="LOCAL") is None
 
     def test_empty_urls_returns_none(self) -> None:
-        with patch.object(
-            bosch_camera.requests, "put", return_value=_resp(200, {"urls": []})
-        ):
-            assert (
-                bosch_camera.get_stream_url({"id": "c"}, "tok", conn_type="LOCAL")
-                is None
-            )
+        with patch.object(bosch_camera.requests, "put", return_value=_resp(200, {"urls": []})):
+            assert bosch_camera.get_stream_url({"id": "c"}, "tok", conn_type="LOCAL") is None
 
 
 class TestGetStreamUrlCandidateLoop:
     def test_falls_back_remote_then_local(self) -> None:
         # Default order is REMOTE, LOCAL — REMOTE fails (500), LOCAL succeeds.
         local_ok = _resp(200, {"urls": ["192.168.0.9:443"], "user": "", "password": ""})
-        with patch.object(
-            bosch_camera.requests, "put", side_effect=[_resp(500, {}), local_ok]
-        ):
+        with patch.object(bosch_camera.requests, "put", side_effect=[_resp(500, {}), local_ok]):
             r = bosch_camera.get_stream_url({"id": "c"}, "tok")
         assert r is not None
         assert r["type"] == "LOCAL"
@@ -111,9 +98,7 @@ class TestGetStreamUrl401Refresh:
     def test_401_then_refresh_succeeds(self) -> None:
         ok = _resp(200, {"urls": ["192.168.0.9:443"], "user": "u", "password": "p"})
         with (
-            patch.object(
-                bosch_camera.requests, "put", side_effect=[_resp(401, {}), ok]
-            ),
+            patch.object(bosch_camera.requests, "put", side_effect=[_resp(401, {}), ok]),
             patch.object(bosch_camera, "get_token", return_value="fresh-token"),
             patch.object(bosch_camera, "make_session"),
         ):

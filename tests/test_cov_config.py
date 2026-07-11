@@ -44,9 +44,11 @@ def _jwt() -> str:
     import json as _j
 
     hdr = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
-    pay = base64.urlsafe_b64encode(
-        _j.dumps({"exp": int(time.time()) + 3600}).encode()
-    ).rstrip(b"=").decode()
+    pay = (
+        base64.urlsafe_b64encode(_j.dumps({"exp": int(time.time()) + 3600}).encode())
+        .rstrip(b"=")
+        .decode()
+    )
     return f"{hdr}.{pay}.sig"
 
 
@@ -250,9 +252,7 @@ class TestCmdRescan:
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=sess),
-            patch.object(
-                bosch_camera, "discover_cameras", return_value=cfg["cameras"]
-            ),
+            patch.object(bosch_camera, "discover_cameras", return_value=cfg["cameras"]),
         ):
             cmd_rescan(cfg, _args())
         out = capsys.readouterr().out
@@ -279,9 +279,7 @@ class TestCmdRescan:
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=fake_sess),
-            patch.object(
-                bosch_camera, "discover_cameras", return_value={}
-            ) as mock_discover,
+            patch.object(bosch_camera, "discover_cameras", return_value={}) as mock_discover,
         ):
             cmd_rescan(cfg, _args())
         args_passed = mock_discover.call_args[0]
@@ -309,9 +307,7 @@ class TestCmdRescan:
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
-            patch.object(
-                bosch_camera, "discover_cameras", return_value=cfg["cameras"]
-            ),
+            patch.object(bosch_camera, "discover_cameras", return_value=cfg["cameras"]),
         ):
             cmd_rescan(cfg, _args())
         out = capsys.readouterr().out
@@ -344,9 +340,7 @@ class TestCmdAutofollow:
         sess.put.return_value = MagicMock(status_code=204, text="")
         return sess
 
-    def test_skips_when_no_pan_limit(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_skips_when_no_pan_limit(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Camera with pan_limit=0 → 'does not support' printed, no PUT."""
         cfg = self._cfg_no_pan()
         sess = self._sess()
@@ -360,9 +354,7 @@ class TestCmdAutofollow:
         assert "auto-follow" in out.lower() or "panLimit" in out or "support" in out.lower()
         sess.put.assert_not_called()
 
-    def test_get_shows_current_state_enabled(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_get_shows_current_state_enabled(self, capsys: pytest.CaptureFixture[str]) -> None:
         """No action arg → current state (ENABLED) is shown."""
         cfg = self._cfg_pan()
         sess = self._sess(current=True)
@@ -375,9 +367,7 @@ class TestCmdAutofollow:
         out = capsys.readouterr().out
         assert "ENABLED" in out or "enabled" in out.lower()
 
-    def test_get_shows_current_state_disabled(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_get_shows_current_state_disabled(self, capsys: pytest.CaptureFixture[str]) -> None:
         """No action arg → current state (DISABLED) is shown."""
         cfg = self._cfg_pan()
         sess = self._sess(current=False)
@@ -420,9 +410,7 @@ class TestCmdAutofollow:
         body = call_kwargs[1].get("json") or call_kwargs[0][1]
         assert body == {"result": False}
 
-    def test_action_on_already_enabled_no_put(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_action_on_already_enabled_no_put(self, capsys: pytest.CaptureFixture[str]) -> None:
         """action='on' when already ENABLED → no PUT (idempotent)."""
         cfg = self._cfg_pan()
         sess = self._sess(current=True)
@@ -436,9 +424,7 @@ class TestCmdAutofollow:
         out = capsys.readouterr().out
         assert "Already" in out or "already" in out.lower()
 
-    def test_action_off_already_disabled_no_put(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_action_off_already_disabled_no_put(self, capsys: pytest.CaptureFixture[str]) -> None:
         """action='off' when already DISABLED → no PUT (idempotent)."""
         cfg = self._cfg_pan()
         sess = self._sess(current=False)
@@ -450,9 +436,7 @@ class TestCmdAutofollow:
             cmd_autofollow(cfg, _args(action="off"))
         sess.put.assert_not_called()
 
-    def test_get_http_error_handled(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_get_http_error_handled(self, capsys: pytest.CaptureFixture[str]) -> None:
         """GET /autofollow returns non-200 → error message, no crash."""
         cfg = self._cfg_pan()
         sess = MagicMock()
@@ -470,9 +454,7 @@ class TestCmdAutofollow:
         """PUT /autofollow non-204 → failure message printed."""
         cfg = self._cfg_pan()
         sess = MagicMock()
-        sess.get.return_value = MagicMock(
-            status_code=200, json=lambda: {"result": False}
-        )
+        sess.get.return_value = MagicMock(status_code=200, json=lambda: {"result": False})
         sess.put.return_value = MagicMock(status_code=500, text="Server Error")
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -483,9 +465,7 @@ class TestCmdAutofollow:
         out = capsys.readouterr().out
         assert "500" in out or "Failed" in out or "failed" in out.lower()
 
-    def test_cam_positional_arg_parsed_as_action(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_cam_positional_arg_parsed_as_action(self, capsys: pytest.CaptureFixture[str]) -> None:
         """cam='on' with no action → treated as action='on' for all cameras."""
         cfg = self._cfg_pan()
         sess = self._sess(current=False)
@@ -521,9 +501,7 @@ class TestCmdRules:
         if rules is None:
             rules = [FAKE_RULE]
         sess = MagicMock()
-        sess.get.return_value = MagicMock(
-            status_code=200, json=lambda r=rules: r
-        )
+        sess.get.return_value = MagicMock(status_code=200, json=lambda r=rules: r)
         sess.post.return_value = MagicMock(
             status_code=201,
             json=lambda: {"id": "new-rule-42"},
@@ -561,9 +539,7 @@ class TestCmdRules:
         out = capsys.readouterr().out
         assert "no rules" in out.lower() or "rules" in out.lower()
 
-    def test_list_401_prints_token_expired(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_list_401_prints_token_expired(self, capsys: pytest.CaptureFixture[str]) -> None:
         """GET /rules returns 401 → 'Token expired' line."""
         cfg = _make_cfg()
         sess = MagicMock()
@@ -673,9 +649,7 @@ class TestCmdRules:
         assert body["endTime"] == "23:59:00"
         assert body["weekdays"] == [0, 1, 2, 3, 4, 5, 6]
 
-    def test_add_prints_rule_id_on_success(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_add_prints_rule_id_on_success(self, capsys: pytest.CaptureFixture[str]) -> None:
         """POST /rules 201 → new rule ID printed."""
         cfg = _make_cfg()
         sess = self._sess_list()
@@ -786,9 +760,7 @@ class TestCmdRules:
         assert "not found" in out.lower() or "nonexistent" in out
         sess.put.assert_not_called()
 
-    def test_edit_get_failure_handled(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_edit_get_failure_handled(self, capsys: pytest.CaptureFixture[str]) -> None:
         """sub='edit' → GET /rules non-200 → error message."""
         cfg = _make_cfg()
         sess = MagicMock()
@@ -802,9 +774,7 @@ class TestCmdRules:
         out = capsys.readouterr().out
         assert "500" in out or "Could not" in out.lower() or "failed" in out.lower()
 
-    def test_edit_put_failure_reported(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_edit_put_failure_reported(self, capsys: pytest.CaptureFixture[str]) -> None:
         """sub='edit' → PUT /rules non-204 → failure message."""
         cfg = _make_cfg()
         sess = self._sess_list()
@@ -833,9 +803,7 @@ class TestCmdRules:
 
     # ── delete ────────────────────────────────────────────────────────────────
 
-    def test_delete_requires_rule_id(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_delete_requires_rule_id(self, capsys: pytest.CaptureFixture[str]) -> None:
         """sub='delete' without --id → error message, no DELETE."""
         cfg = _make_cfg()
         sess = self._sess_list()
@@ -864,9 +832,7 @@ class TestCmdRules:
         assert CAM_ID in url_called
         assert RULE_ID in url_called
 
-    def test_delete_success_prints_confirmation(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_delete_success_prints_confirmation(self, capsys: pytest.CaptureFixture[str]) -> None:
         """sub='delete' → 204 → success message printed."""
         cfg = _make_cfg()
         sess = self._sess_list()
@@ -879,9 +845,7 @@ class TestCmdRules:
         out = capsys.readouterr().out
         assert "deleted" in out.lower() or "success" in out.lower()
 
-    def test_delete_failure_reported(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_delete_failure_reported(self, capsys: pytest.CaptureFixture[str]) -> None:
         """sub='delete' → 500 → failure message printed."""
         cfg = _make_cfg()
         sess = MagicMock()
@@ -895,9 +859,7 @@ class TestCmdRules:
         out = capsys.readouterr().out
         assert "500" in out or "Failed" in out or "failed" in out.lower()
 
-    def test_delete_444_camera_offline(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_delete_444_camera_offline(self, capsys: pytest.CaptureFixture[str]) -> None:
         """sub='delete' → 444 → offline warning printed."""
         cfg = _make_cfg()
         sess = MagicMock()
@@ -936,9 +898,7 @@ class TestCmdRules:
 class TestCmdTestLocal:
     """Tests for cmd_test_local — probes LOCAL/REMOTE connection, snap timing."""
 
-    def _snap_response(
-        self, status: int = 200, content: bytes = b"\xff\xd8\x00" * 5
-    ) -> MagicMock:
+    def _snap_response(self, status: int = 200, content: bytes = b"\xff\xd8\x00" * 5) -> MagicMock:
         m = MagicMock()
         m.status_code = status
         m.content = content
@@ -997,8 +957,7 @@ class TestCmdTestLocal:
             mock_requests.get.return_value = self._snap_response()
             cmd_test_local(cfg, _args())
         types_used = [
-            c[1].get("json", {}).get("type") or c[0][1].get("type")
-            for c in sess.put.call_args_list
+            c[1].get("json", {}).get("type") or c[0][1].get("type") for c in sess.put.call_args_list
         ]
         assert "LOCAL" in types_used
         assert "REMOTE" in types_used
@@ -1009,9 +968,7 @@ class TestCmdTestLocal:
         """PUT /connection non-200 → response body shown, loop continues (no crash)."""
         cfg = _make_cfg()
         sess = MagicMock()
-        sess.put.return_value = MagicMock(
-            status_code=503, text="Service Unavailable"
-        )
+        sess.put.return_value = MagicMock(status_code=503, text="Service Unavailable")
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=sess),
@@ -1022,9 +979,7 @@ class TestCmdTestLocal:
         out = capsys.readouterr().out
         assert "503" in out or "Service Unavailable" in out
 
-    def test_no_urls_in_response_prints_warning(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_no_urls_in_response_prints_warning(self, capsys: pytest.CaptureFixture[str]) -> None:
         """PUT /connection 200 but urls=[] → warning message, no snap attempt."""
         cfg = _make_cfg()
         sess = MagicMock()
@@ -1129,9 +1084,7 @@ class TestCmdTestLocal:
         out = capsys.readouterr().out
         assert "error" in out.lower() or "snap" in out.lower()
 
-    def test_remote_url_builds_rtsps(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_remote_url_builds_rtsps(self, capsys: pytest.CaptureFixture[str]) -> None:
         """REMOTE url with /hash → printed RTSP URL starts with rtsps://."""
         cfg = _make_cfg()
         sess = MagicMock()

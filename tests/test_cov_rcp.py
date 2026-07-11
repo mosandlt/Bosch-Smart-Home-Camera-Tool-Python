@@ -42,9 +42,11 @@ SESSION_ID = "0xdeadbeef"
 
 def _jwt() -> str:
     hdr = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
-    pay = base64.urlsafe_b64encode(
-        json.dumps({"exp": int(time.time()) + 3600}).encode()
-    ).rstrip(b"=").decode()
+    pay = (
+        base64.urlsafe_b64encode(json.dumps({"exp": int(time.time()) + 3600}).encode())
+        .rstrip(b"=")
+        .decode()
+    )
     return f"{hdr}.{pay}.sig"
 
 
@@ -115,6 +117,7 @@ def _setup_rcp_patches(
     Callers embed these in patch() contexts.
     rcp_read_map: dict[opcode -> bytes] used to drive rcp_read side effects.
     """
+
     def _rcp_read_se(
         rcp_url: str,
         command: str,
@@ -132,6 +135,7 @@ def _setup_rcp_patches(
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: shared patch context for cmd_rcp
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class _RcpCtx:
     """Context manager that wires up the standard cmd_rcp mock stack."""
@@ -197,6 +201,7 @@ class _RcpCtx:
 # cmd_rcp — no subcommand / usage print
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpNoSubcommand:
     def test_no_sub_prints_usage(self, capsys: pytest.CaptureFixture[str]) -> None:
         """No subcommand → print usage help, do NOT call _rcp_setup."""
@@ -223,7 +228,9 @@ class TestCmdRcpNoSubcommand:
                 patch.object(bosch_camera, "get_token", return_value="tok"),
                 patch.object(bosch_camera, "make_session", return_value=MagicMock()),
                 patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
-                patch.object(bosch_camera, "_rcp_setup", return_value=(f"{PROXY_BASE}/rcp.xml", SESSION_ID)),
+                patch.object(
+                    bosch_camera, "_rcp_setup", return_value=(f"{PROXY_BASE}/rcp.xml", SESSION_ID)
+                ),
                 patch.object(bosch_camera, "rcp_read", return_value=None),
                 patch.object(bosch_camera, "open_file"),
             ):
@@ -237,14 +244,15 @@ class TestCmdRcpNoSubcommand:
 # cmd_rcp — _rcp_setup failure
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpSetupFailure:
-    def test_rcp_setup_runtime_error_continues(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_rcp_setup_runtime_error_continues(self, capsys: pytest.CaptureFixture[str]) -> None:
         """RuntimeError from _rcp_setup → 'failed' printed, no crash, continues to next cam."""
         cfg = _make_cfg()
         with _RcpCtx(
-            cfg, sub="info", cam=None,
+            cfg,
+            sub="info",
+            cam=None,
             rcp_setup_raises=RuntimeError("proxy unreachable"),
         ) as ctx:
             ctx.run()
@@ -255,6 +263,7 @@ class TestCmdRcpSetupFailure:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_rcp — info subcommand
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdRcpInfo:
     def test_info_prints_product_name(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -325,6 +334,7 @@ class TestCmdRcpInfo:
 # cmd_rcp — clock subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpClock:
     def test_clock_valid_data(self, capsys: pytest.CaptureFixture[str]) -> None:
         """clock: 8-byte data parses to a formatted datetime string."""
@@ -350,10 +360,9 @@ class TestCmdRcpClock:
 # cmd_rcp — snapshot subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpSnapshot:
-    def test_snapshot_jpeg_saved(
-        self, capsys: pytest.CaptureFixture[str], tmp_path: Any
-    ) -> None:
+    def test_snapshot_jpeg_saved(self, capsys: pytest.CaptureFixture[str], tmp_path: Any) -> None:
         """snapshot: JPEG magic bytes → file written, path printed."""
         cfg = _make_cfg()
         fake_jpeg = b"\xff\xd8" + b"\xab" * 200
@@ -414,6 +423,7 @@ class TestCmdRcpSnapshot:
 # cmd_rcp — alarms subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpAlarms:
     def test_alarms_decoded_utf16be(self, capsys: pytest.CaptureFixture[str]) -> None:
         """alarms: UTF-16-BE encoded strings are decoded and listed."""
@@ -448,6 +458,7 @@ class TestCmdRcpAlarms:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_rcp — privacy subcommand
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdRcpPrivacy:
     def test_privacy_on_state(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -487,6 +498,7 @@ class TestCmdRcpPrivacy:
 # cmd_rcp — dimmer subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpDimmer:
     def test_dimmer_value_parsed(self, capsys: pytest.CaptureFixture[str]) -> None:
         """dimmer: T_WORD 2-byte big-endian → integer value printed."""
@@ -518,6 +530,7 @@ class TestCmdRcpDimmer:
 # cmd_rcp — motion subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpMotion:
     def test_motion_two_zones(self, capsys: pytest.CaptureFixture[str]) -> None:
         """motion: 16-byte payload → 2 zones printed."""
@@ -525,9 +538,7 @@ class TestCmdRcpMotion:
         # 2 zones of 8 bytes each: (x1=100,y1=200,x2=300,y2=400), (x1=0,y1=0,x2=5000,y2=5000)
         zone1 = struct.pack(">HHHH", 100, 200, 300, 400)
         zone2 = struct.pack(">HHHH", 0, 0, 5000, 5000)
-        with _RcpCtx(
-            cfg, sub="motion", cam=None, rcp_data={"0x0c0a": zone1 + zone2}
-        ) as ctx:
+        with _RcpCtx(cfg, sub="motion", cam=None, rcp_data={"0x0c0a": zone1 + zone2}) as ctx:
             ctx.run()
         out = capsys.readouterr().out
         assert "Zone 0" in out
@@ -558,6 +569,7 @@ class TestCmdRcpMotion:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_rcp — services subcommand
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdRcpServices:
     def test_services_parsed(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -591,6 +603,7 @@ class TestCmdRcpServices:
 # cmd_rcp — frame subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpFrame:
     def test_frame_yuv_exact_size_no_numpy(
         self, capsys: pytest.CaptureFixture[str], tmp_path: Any
@@ -607,9 +620,7 @@ class TestCmdRcpFrame:
         out = capsys.readouterr().out
         assert "YUV422" in out or "yuv" in out.lower()
 
-    def test_frame_unexpected_size(
-        self, capsys: pytest.CaptureFixture[str], tmp_path: Any
-    ) -> None:
+    def test_frame_unexpected_size(self, capsys: pytest.CaptureFixture[str], tmp_path: Any) -> None:
         """frame: size != 115200 → saved as .bin."""
         cfg = _make_cfg()
         with (
@@ -632,6 +643,7 @@ class TestCmdRcpFrame:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_rcp — script subcommand
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdRcpScript:
     def test_script_gzip_decompressed(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -665,6 +677,7 @@ class TestCmdRcpScript:
 # cmd_rcp — iva subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpIva:
     def test_iva_rule_names_listed(self, capsys: pytest.CaptureFixture[str]) -> None:
         """iva: null-separated ASCII rule types are listed."""
@@ -681,7 +694,9 @@ class TestCmdRcpIva:
         cfg = _make_cfg()
         config_text = b"sensitivity=50\nthreshold=3\n"
         with _RcpCtx(
-            cfg, sub="iva", cam=None,
+            cfg,
+            sub="iva",
+            cam=None,
             rcp_data={"0x0ba9": b"FieldDetector\x00", "0x0a1b": config_text},
         ) as ctx:
             ctx.run()
@@ -701,15 +716,14 @@ class TestCmdRcpIva:
 # cmd_rcp — bitrate subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpBitrate:
     def test_bitrate_ladder_printed(self, capsys: pytest.CaptureFixture[str]) -> None:
         """bitrate: series of big-endian uint32 kbps values → labeled tiers."""
         cfg = _make_cfg()
         # 5 tiers: 500, 1000, 2000, 3000, 6000 kbps
         bitrate_bytes = struct.pack(">IIIII", 500, 1000, 2000, 3000, 6000)
-        with _RcpCtx(
-            cfg, sub="bitrate", cam=None, rcp_data={"0x0c81": bitrate_bytes}
-        ) as ctx:
+        with _RcpCtx(cfg, sub="bitrate", cam=None, rcp_data={"0x0c81": bitrate_bytes}) as ctx:
             ctx.run()
         out = capsys.readouterr().out
         assert "500" in out
@@ -721,9 +735,7 @@ class TestCmdRcpBitrate:
         """bitrate: 4-byte payload (one tier) → one row printed."""
         cfg = _make_cfg()
         bitrate_bytes = struct.pack(">I", 4000)
-        with _RcpCtx(
-            cfg, sub="bitrate", cam=None, rcp_data={"0x0c81": bitrate_bytes}
-        ) as ctx:
+        with _RcpCtx(cfg, sub="bitrate", cam=None, rcp_data={"0x0c81": bitrate_bytes}) as ctx:
             ctx.run()
         out = capsys.readouterr().out
         assert "4,000" in out or "4000" in out
@@ -731,9 +743,7 @@ class TestCmdRcpBitrate:
     def test_bitrate_too_short(self, capsys: pytest.CaptureFixture[str]) -> None:
         """bitrate: < 4 bytes → 'not available'."""
         cfg = _make_cfg()
-        with _RcpCtx(
-            cfg, sub="bitrate", cam=None, rcp_data={"0x0c81": b"\x00\x01\x02"}
-        ) as ctx:
+        with _RcpCtx(cfg, sub="bitrate", cam=None, rcp_data={"0x0c81": b"\x00\x01\x02"}) as ctx:
             ctx.run()
         out = capsys.readouterr().out
         assert "not available" in out.lower()
@@ -751,6 +761,7 @@ class TestCmdRcpBitrate:
 # cmd_rcp — all subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpAll:
     def test_all_runs_every_section(self, capsys: pytest.CaptureFixture[str]) -> None:
         """all: all section headers printed."""
@@ -758,8 +769,20 @@ class TestCmdRcpAll:
         with _RcpCtx(cfg, sub="all", cam=None) as ctx:
             ctx.run()
         out = capsys.readouterr().out
-        for section in ("Identity", "Clock", "Snapshot", "Alarm", "Privacy",
-                        "Dimmer", "Motion", "Services", "Frame", "Script", "IVA", "Bitrate"):
+        for section in (
+            "Identity",
+            "Clock",
+            "Snapshot",
+            "Alarm",
+            "Privacy",
+            "Dimmer",
+            "Motion",
+            "Services",
+            "Frame",
+            "Script",
+            "IVA",
+            "Bitrate",
+        ):
             assert section in out or section.lower() in out.lower(), (
                 f"Section '{section}' not found in output"
             )
@@ -788,6 +811,7 @@ class TestCmdRcpAll:
 # cmd_rcp — camera-name selection
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpCameraSelection:
     def test_specific_cam_arg_used(self, capsys: pytest.CaptureFixture[str]) -> None:
         """When cam=<name> is given, only that camera is processed."""
@@ -811,6 +835,7 @@ class TestCmdRcpCameraSelection:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_menu — quit/exit paths
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdMenuQuit:
     """cmd_menu exits with SystemExit on q/quit/exit/0."""
@@ -846,6 +871,7 @@ class TestCmdMenuQuit:
 # cmd_menu — invalid / empty / EOFError input
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdMenuInvalidInput:
     def _run_menu_no_exit(self, choices: list[str], cfg: dict[str, Any]) -> str:
         """Run menu once, capture output, no SystemExit expected (returns early)."""
@@ -857,17 +883,13 @@ class TestCmdMenuInvalidInput:
         ):
             cmd_menu(cfg)
 
-    def test_empty_input_returns_without_error(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_empty_input_returns_without_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Empty Enter → menu returns without crash (ValueError path)."""
         cfg = _make_cfg()
         self._run_menu_no_exit([""], cfg)
         # No exception raised
 
-    def test_garbage_string_returns_without_error(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_garbage_string_returns_without_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Non-numeric string → menu returns without crash."""
         cfg = _make_cfg()
         self._run_menu_no_exit(["notanumber"], cfg)
@@ -886,9 +908,7 @@ class TestCmdMenuInvalidInput:
             except (SystemExit, EOFError):
                 pass  # either is acceptable
 
-    def test_out_of_range_choice_prints_unknown(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_out_of_range_choice_prints_unknown(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Numeric choice out of range → 'Unknown choice' printed, press-Enter prompt follows."""
         cfg = _make_cfg()
         with (
@@ -905,6 +925,7 @@ class TestCmdMenuInvalidInput:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_menu — dispatch: option 1 (status)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdMenuDispatchStatus:
     def test_choice_1_calls_cmd_status(self) -> None:
@@ -925,6 +946,7 @@ class TestCmdMenuDispatchStatus:
 # cmd_menu — dispatch: option 2 (info)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdMenuDispatchInfo:
     def test_choice_2_calls_cmd_info(self) -> None:
         """Menu choice 2 → cmd_info is called."""
@@ -943,6 +965,7 @@ class TestCmdMenuDispatchInfo:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_menu — dispatch: option 3 (snapshot per camera)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdMenuDispatchSnapshot:
     def test_choice_3_calls_cmd_snapshot_for_first_cam(self) -> None:
@@ -981,6 +1004,7 @@ class TestCmdMenuDispatchSnapshot:
 # cmd_menu — dispatch: privacy (on/off per camera)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdMenuDispatchPrivacy:
     def _privacy_start(self, cfg: dict[str, Any]) -> int:
         """Compute privacy_start for a cfg with 1 camera and no pan/light."""
@@ -995,7 +1019,9 @@ class TestCmdMenuDispatchPrivacy:
         # live_vlc_start = 4+3n; n choices
         # live_local_start = 4+4n; n choices
         # privacy_start = 4+5n (choices 3..4+4n last = 3+4n)
-        return 3 + 5 * n + 1  # = 3 + n (event-snap) + 1 (all) + n (liveshot) + n (live) + n (vlc) + n (local) = 3+n+1+4n = 4+5n
+        return (
+            3 + 5 * n + 1
+        )  # = 3 + n (event-snap) + 1 (all) + n (liveshot) + n (live) + n (vlc) + n (local) = 3+n+1+4n = 4+5n
 
     def test_privacy_on_called(self) -> None:
         """First privacy-on choice → cmd_privacy called with action='on'."""
@@ -1040,6 +1066,7 @@ class TestCmdMenuDispatchPrivacy:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_menu — dispatch: light (only for has_light cameras)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdMenuDispatchLight:
     def _compute_offsets(self, cfg: dict[str, Any]) -> tuple[int, int]:
@@ -1087,10 +1114,9 @@ class TestCmdMenuDispatchLight:
 # cmd_menu — dispatch: pan (only for pan_limit > 0)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdMenuDispatchPan:
-    def test_no_pan_section_when_pan_limit_zero(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_no_pan_section_when_pan_limit_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Camera with pan_limit=0 → no Pan section in menu."""
         cfg = _make_cfg(pan_limit=0)
         with (
@@ -1104,9 +1130,7 @@ class TestCmdMenuDispatchPan:
         out = capsys.readouterr().out
         assert "Pan " not in out or "── Pan" not in out
 
-    def test_pan_section_shown_for_pan_cam(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_pan_section_shown_for_pan_cam(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Camera with pan_limit=120 → Pan section printed with actions."""
         cfg = _make_cfg(pan_limit=120)
         with (
@@ -1125,6 +1149,7 @@ class TestCmdMenuDispatchPan:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_menu — dispatch: notifications
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdMenuDispatchNotifications:
     def test_notifications_on_called(self) -> None:
@@ -1153,6 +1178,7 @@ class TestCmdMenuDispatchNotifications:
 # cmd_menu — dispatch: siren / wifi / unread / maintenance / token / rescan
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdMenuDispatchMisc:
     def _run_with_choice(
         self,
@@ -1176,8 +1202,7 @@ class TestCmdMenuDispatchMisc:
         cam_names = list(cfg["cameras"].keys())
         n = len(cam_names)
         gen2_cams = [
-            nm for nm in cam_names
-            if cfg["cameras"][nm].get("model", "").startswith("HOME_")
+            nm for nm in cam_names if cfg["cameras"][nm].get("model", "").startswith("HOME_")
         ]
         ng2 = len(gen2_cams)
 
@@ -1291,10 +1316,9 @@ class TestCmdMenuDispatchMisc:
 # cmd_menu — dispatch: audio / intrusion (Gen2 only)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdMenuDispatchGen2:
-    def test_audio_section_shown_for_gen2(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_audio_section_shown_for_gen2(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Gen2 (HOME_*) camera → Audio section printed."""
         cfg = _make_cfg(model="HOME_Eyes_Outdoor")
         with (
@@ -1308,9 +1332,7 @@ class TestCmdMenuDispatchGen2:
         out = capsys.readouterr().out
         assert "Audio" in out
 
-    def test_audio_section_not_shown_for_gen1(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_audio_section_not_shown_for_gen1(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Gen1 (CAMERA_*) camera → no Audio section."""
         cfg = _make_cfg(model="CAMERA_360")
         with (
@@ -1333,9 +1355,9 @@ class TestCmdMenuDispatchGen2:
         offset = 3 + n + 1 + 4 * n
         offset += n * 2  # privacy
         offset += n * 2  # notif
-        offset += n      # intercom
-        offset += n      # siren
-        offset += n      # wifi
+        offset += n  # intercom
+        offset += n  # siren
+        offset += n  # wifi
         audio_start = offset
 
         with (
@@ -1359,10 +1381,10 @@ class TestCmdMenuDispatchGen2:
         offset = 3 + n + 1 + 4 * n
         offset += n * 2  # privacy
         offset += n * 2  # notif
-        offset += n      # intercom
-        offset += n      # siren
-        offset += n      # wifi
-        offset += n      # audio (all gen2 here)
+        offset += n  # intercom
+        offset += n  # siren
+        offset += n  # wifi
+        offset += n  # audio (all gen2 here)
         intrusion_start = offset
 
         with (
@@ -1381,6 +1403,7 @@ class TestCmdMenuDispatchGen2:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_menu — dispatch: live stream (ffplay/vlc/local)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdMenuDispatchLive:
     def _live_offsets(self, cfg: dict[str, Any]) -> tuple[int, int, int]:
@@ -1445,10 +1468,9 @@ class TestCmdMenuDispatchLive:
 # cmd_menu — no cameras in config
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdMenuNoCameras:
-    def test_no_cameras_shows_warning(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_no_cameras_shows_warning(self, capsys: pytest.CaptureFixture[str]) -> None:
         """No cameras in config → warning about 'No cameras' printed."""
         cfg: dict[str, Any] = {
             "account": {"bearer_token": _jwt(), "refresh_token": "", "username": ""},
@@ -1490,6 +1512,7 @@ class TestCmdMenuNoCameras:
 # cmd_menu — token auto-renewal on expired token
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdMenuTokenRenewal:
     def test_expired_token_triggers_get_token(self) -> None:
         """Expired bearer token → get_token() called before printing menu."""
@@ -1510,10 +1533,9 @@ class TestCmdMenuTokenRenewal:
 # cmd_rcp — additional branch coverage
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdRcpBranchCoverage:
-    def test_alarms_no_strings_decoded_fallback(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_alarms_no_strings_decoded_fallback(self, capsys: pytest.CaptureFixture[str]) -> None:
         """alarms: data present but rcp_parse_utf16be_strings returns [] → raw hex fallback."""
         cfg = _make_cfg()
         # Single odd byte — rcp_parse_utf16be_strings loops in 2-byte steps → no output
@@ -1528,9 +1550,7 @@ class TestCmdRcpBranchCoverage:
         cfg = _make_cfg()
         zone1 = struct.pack(">HHHH", 10, 20, 30, 40)
         remainder = b"\xab"
-        with _RcpCtx(
-            cfg, sub="motion", cam=None, rcp_data={"0x0c0a": zone1 + remainder}
-        ) as ctx:
+        with _RcpCtx(cfg, sub="motion", cam=None, rcp_data={"0x0c0a": zone1 + remainder}) as ctx:
             ctx.run()
         out = capsys.readouterr().out
         assert "Zone 0" in out
@@ -1541,16 +1561,12 @@ class TestCmdRcpBranchCoverage:
     ) -> None:
         """services: null-only bytes → empty list → raw hex fallback."""
         cfg = _make_cfg()
-        with _RcpCtx(
-            cfg, sub="services", cam=None, rcp_data={"0x0c62": b"\x00\x00\x00"}
-        ) as ctx:
+        with _RcpCtx(cfg, sub="services", cam=None, rcp_data={"0x0c62": b"\x00\x00\x00"}) as ctx:
             ctx.run()
         out = capsys.readouterr().out
         assert "Services" in out  # either raw or available
 
-    def test_script_gzip_decompress_error(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_script_gzip_decompress_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         """script: data starts with gzip magic but is corrupt → Decompress error printed."""
         cfg = _make_cfg()
         # gzip magic but then garbage
@@ -1560,14 +1576,10 @@ class TestCmdRcpBranchCoverage:
         out = capsys.readouterr().out
         assert "Decompress error" in out or "error" in out.lower()
 
-    def test_iva_rule_names_raw_fallback(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_iva_rule_names_raw_fallback(self, capsys: pytest.CaptureFixture[str]) -> None:
         """iva: 0x0ba9 returns single null byte → no rule_names → raw hex printed."""
         cfg = _make_cfg()
-        with _RcpCtx(
-            cfg, sub="iva", cam=None, rcp_data={"0x0ba9": b"\x00"}
-        ) as ctx:
+        with _RcpCtx(cfg, sub="iva", cam=None, rcp_data={"0x0ba9": b"\x00"}) as ctx:
             ctx.run()
         out = capsys.readouterr().out
         assert "IVA" in out  # raw fallback or not available
@@ -1577,14 +1589,12 @@ class TestCmdRcpBranchCoverage:
 # cmd_menu — dispatch: all-snapshot, liveshot, pan, autofollow, intercom
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdMenuDispatchExtra:
     def _compute_all_offsets(self, cfg: dict[str, Any]) -> dict[str, int]:
         cam_names = list(cfg["cameras"].keys())
         n = len(cam_names)
-        pan_cams = [
-            nm for nm in cam_names
-            if cfg["cameras"][nm].get("pan_limit", 0) > 0
-        ]
+        pan_cams = [nm for nm in cam_names if cfg["cameras"][nm].get("pan_limit", 0) > 0]
         npan = len(pan_cams)
         pan_actions_count = 6  # left/center/right/home/back-left/back-right
 
@@ -1596,9 +1606,7 @@ class TestCmdMenuDispatchExtra:
         offset += n  # live_vlc
         offset += n  # live_local
         offset += n * 2  # privacy
-        light_cams = [
-            nm for nm in cam_names if cfg["cameras"][nm].get("has_light", False)
-        ]
+        light_cams = [nm for nm in cam_names if cfg["cameras"][nm].get("has_light", False)]
         offset += len(light_cams) * 2
         offset += n * 2  # notif
         pan_start = offset

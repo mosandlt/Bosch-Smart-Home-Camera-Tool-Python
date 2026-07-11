@@ -58,6 +58,7 @@ def _patch_cmd(name: str) -> MagicMock:
 # Fixtures
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def fake_cfg() -> dict[str, Any]:
     return _make_cfg()
@@ -140,10 +141,12 @@ def test_no_args_first_run_discovers(fake_cfg: dict[str, Any]) -> None:
     def _menu_raise(cfg: dict[str, Any]) -> None:
         raise KeyboardInterrupt
 
-    with patch.object(bosch_camera, "get_token", return_value="tok") as m_tok, \
-         patch.object(bosch_camera, "make_session", return_value=MagicMock()) as m_sess, \
-         patch.object(bosch_camera, "discover_cameras", return_value=cam_mock) as m_disc, \
-         patch.object(bosch_camera, "cmd_menu", side_effect=_menu_raise):
+    with (
+        patch.object(bosch_camera, "get_token", return_value="tok") as m_tok,
+        patch.object(bosch_camera, "make_session", return_value=MagicMock()) as m_sess,
+        patch.object(bosch_camera, "discover_cameras", return_value=cam_mock) as m_disc,
+        patch.object(bosch_camera, "cmd_menu", side_effect=_menu_raise),
+    ):
         with pytest.raises(KeyboardInterrupt):
             _run([])
     m_tok.assert_called_once()
@@ -158,8 +161,7 @@ def test_no_args_first_run_discovers(fake_cfg: dict[str, Any]) -> None:
 
 def test_global_lang_flag_calls_set_lang() -> None:
     """--lang de must be parsed and set_lang('de') called."""
-    with patch.object(bosch_camera, "set_lang") as m_lang, \
-         _patch_cmd("cmd_status") as m_cmd:
+    with patch.object(bosch_camera, "set_lang") as m_lang, _patch_cmd("cmd_status") as m_cmd:
         _run(["--lang", "de", "status"])
     m_lang.assert_called_once_with("de")
     m_cmd.assert_called_once()
@@ -898,10 +900,20 @@ def test_dispatch_privacy_masks_set() -> None:
 def test_dispatch_lighting_schedule_set() -> None:
     """lighting-schedule <cam> set --on/--off/--motion/--threshold all parse."""
     with _patch_cmd("cmd_lighting_schedule") as m:
-        _run([
-            "lighting-schedule", "Garten", "set",
-            "--on", "18:00", "--off", "23:00", "--motion", "--threshold", "0.4",
-        ])
+        _run(
+            [
+                "lighting-schedule",
+                "Garten",
+                "set",
+                "--on",
+                "18:00",
+                "--off",
+                "23:00",
+                "--motion",
+                "--threshold",
+                "0.4",
+            ]
+        )
     m.assert_called_once()
     _, args = m.call_args[0]
     assert args.cam == "Garten"

@@ -1,0 +1,22 @@
+# gitleaks config — extends the built-in default ruleset (JWTs, API keys,
+# private keys, generic tokens). Domain-specific PII (real camera MACs/LAN
+# IPs/Bosch cloud-IDs) is covered by the local pre-push hook (CLAUDE.md
+# SECRETS_SCAN), which holds the exact literal patterns; we deliberately do
+# not duplicate those values here.
+
+title = "bosch-smart-home-camera-tool gitleaks config"
+
+[extend]
+useDefault = true
+
+# Generated / local-only artifact directories — never hold committed secrets,
+# and all are gitignored anyway. Defensive: keeps a stray local filesystem
+# scan quiet without blinding the scanner to tracked source.
+[[allowlists]]
+paths = [
+  '''captures/.*''',
+  '''backups/.*''',
+  '''dist/.*''',
+  '''coverage\.json''',
+  '''bosch_config\.json''',
+]

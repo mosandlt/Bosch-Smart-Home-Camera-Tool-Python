@@ -25,7 +25,7 @@ import responses as responses_lib
 
 # Fixed epoch shared by conftest fixtures and test modules.
 # All token exp values are computed relative to this timestamp.
-FROZEN_EPOCH: int = 1_717_243_200   # 2024-06-01 12:00:00 UTC
+FROZEN_EPOCH: int = 1_717_243_200  # 2024-06-01 12:00:00 UTC
 
 
 def _make_jwt(exp: int) -> str:
@@ -51,6 +51,7 @@ def tmp_config_dir(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyP
     bosch_config.json sitting next to the script.
     """
     import bosch_camera
+
     config_path = str(tmp_path / "bosch_config.json")
     monkeypatch.setattr(bosch_camera, "BASE_DIR", str(tmp_path))
     monkeypatch.setattr(bosch_camera, "CONFIG_FILE", config_path)

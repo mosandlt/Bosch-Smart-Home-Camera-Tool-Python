@@ -29,9 +29,11 @@ if str(_PROJECT_ROOT) not in sys.path:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _fresh_i18n():
     """Return a freshly imported (or re-imported) bosch_i18n module with cleared cache."""
     import bosch_i18n as i18n
+
     # Clear module-level caches so tests don't bleed into each other.
     i18n._CACHE.clear()
     i18n._translations = {}
@@ -42,6 +44,7 @@ def _fresh_i18n():
 # ---------------------------------------------------------------------------
 # load_translations
 # ---------------------------------------------------------------------------
+
 
 class TestLoadTranslations:
     def test_load_translations_returns_dict(self) -> None:
@@ -76,6 +79,7 @@ class TestLoadTranslations:
 # ---------------------------------------------------------------------------
 # t()
 # ---------------------------------------------------------------------------
+
 
 class TestT:
     def test_t_returns_translation_for_known_key(self) -> None:
@@ -129,8 +133,7 @@ class TestT:
         assert len(result_partial) > 0
         warning_texts = [str(w.message) for w in caught]
         assert any(
-            "format error" in txt.lower() or "cli.cam.not_found" in txt
-            for txt in warning_texts
+            "format error" in txt.lower() or "cli.cam.not_found" in txt for txt in warning_texts
         ), f"Expected a format-error warning, got: {warning_texts}"
 
     def test_t_no_kwargs_returns_plain_string(self) -> None:
@@ -144,6 +147,7 @@ class TestT:
 # ---------------------------------------------------------------------------
 # detect_lang()
 # ---------------------------------------------------------------------------
+
 
 class TestDetectLang:
     def test_detect_lang_config_takes_priority(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -179,7 +183,9 @@ class TestDetectLang:
         result = i18n.detect_lang({})
         assert result == "en"
 
-    def test_detect_lang_invalid_lang_falls_back_to_en(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_detect_lang_invalid_lang_falls_back_to_en(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """An unknown language tag returns 'en'."""
         i18n = _fresh_i18n()
         monkeypatch.delenv("BOSCH_CAMERA_LANG", raising=False)
@@ -216,6 +222,7 @@ class TestDetectLang:
 # set_lang()
 # ---------------------------------------------------------------------------
 
+
 class TestSetLang:
     def test_set_lang_loads_translations(self) -> None:
         """set_lang('en') causes _translations to be non-empty."""
@@ -245,6 +252,7 @@ class TestSetLang:
 # ---------------------------------------------------------------------------
 # COMPLIANCE: all t("...") call sites in bosch_camera.py have a key in en.json
 # ---------------------------------------------------------------------------
+
 
 class TestEnJsonCoversAllTCallSites:
     def test_en_json_covers_all_known_t_call_sites(self) -> None:

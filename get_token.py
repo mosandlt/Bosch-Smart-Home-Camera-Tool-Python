@@ -42,61 +42,63 @@ import requests
 # All requests in this module use verify=True (no self-signed certs here).
 
 # ─────────────────────────────────────────────────────────────────────────────
-BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "bosch_config.json")
 
 KEYCLOAK_BASE = (
-    "https://smarthome.authz.bosch.com"
-    "/auth/realms/home_auth_provider/protocol/openid-connect"
+    "https://smarthome.authz.bosch.com/auth/realms/home_auth_provider/protocol/openid-connect"
 )
-CLIENT_ID     = "oss_residential_app"
+CLIENT_ID = "oss_residential_app"
 
 CLIENT_SECRET = base64.b64decode("RjFqWnpzRzVOdHc3eDJWVmM4SjZxZ3NuaXNNT2ZhWmc=").decode()
-SCOPES        = "email offline_access profile openid"
-REDIRECT_URI  = "http://localhost:8321/callback"
+SCOPES = "email offline_access profile openid"
+REDIRECT_URI = "http://localhost:8321/callback"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 # ══════════════════════════ CONFIG ════════════════════════════════════════════
+
 
 def load_config() -> dict[str, Any]:
     if not os.path.exists(CONFIG_FILE):
         print(f"❌  Config not found: {CONFIG_FILE}")
         print("    Run bosch_camera.py first to create it.")
         sys.exit(1)
-    with open(CONFIG_FILE) as f:
+    with open(CONFIG_FILE, encoding="utf-8") as f:
         return json.load(f)  # type: ignore[no-any-return]
 
 
 def save_config(cfg: dict[str, Any]) -> None:
-    with open(CONFIG_FILE, "w") as f:
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
     os.chmod(CONFIG_FILE, 0o600)
 
 
 # ══════════════════════════ PKCE ══════════════════════════════════════════════
 
+
 def _pkce_pair() -> tuple[str, str]:
-    verifier  = secrets.token_urlsafe(64)
-    digest    = hashlib.sha256(verifier.encode()).digest()
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode()).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
     return verifier, challenge
 
 
 def _build_auth_url(code_challenge: str, state: str) -> str:
     params = {
-        "client_id":             CLIENT_ID,
-        "response_type":         "code",
-        "scope":                 SCOPES,
-        "redirect_uri":          REDIRECT_URI,
-        "code_challenge":        code_challenge,
+        "client_id": CLIENT_ID,
+        "response_type": "code",
+        "scope": SCOPES,
+        "redirect_uri": REDIRECT_URI,
+        "code_challenge": code_challenge,
         "code_challenge_method": "S256",
-        "state":                 state,
+        "state": state,
     }
     return f"{KEYCLOAK_BASE}/auth?" + urlencode(params)
 
 
 # ══════════════════════════ CALLBACK SERVER ═══════════════════════════════════
+
 
 def _wait_for_callback(timeout: int = 120) -> str | None:
     """
@@ -122,7 +124,9 @@ def _wait_for_callback(timeout: int = 120) -> str | None:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(f"<html><body><h2>Login Error</h2><p>{error_msg}</p></body></html>".encode())
+                self.wfile.write(
+                    f"<html><body><h2>Login Error</h2><p>{error_msg}</p></body></html>".encode()
+                )
                 return
 
             auth_code = qs.get("code", [None])[0]
@@ -204,18 +208,20 @@ def _wait_for_callback_manual() -> str | None:
 
 # ══════════════════════════ TOKEN EXCHANGE ════════════════════════════════════
 
+
 def _exchange_code(auth_code: str, code_verifier: str) -> dict[str, Any] | None:
     r = requests.post(
         f"{KEYCLOAK_BASE}/token",
         data={
-            "client_id":     CLIENT_ID,
+            "client_id": CLIENT_ID,
             "client_secret": CLIENT_SECRET,
-            "grant_type":    "authorization_code",
-            "code":          auth_code,
-            "redirect_uri":  REDIRECT_URI,
+            "grant_type": "authorization_code",
+            "code": auth_code,
+            "redirect_uri": REDIRECT_URI,
             "code_verifier": code_verifier,
         },
-        verify=True, timeout=15,
+        verify=True,
+        timeout=15,
     )
     if r.status_code == 200:
         result: dict[str, Any] = r.json()
@@ -229,12 +235,13 @@ def _do_refresh(refresh: str) -> dict[str, Any] | None:
     r = requests.post(
         f"{KEYCLOAK_BASE}/token",
         data={
-            "client_id":     CLIENT_ID,
+            "client_id": CLIENT_ID,
             "client_secret": CLIENT_SECRET,
-            "grant_type":    "refresh_token",
+            "grant_type": "refresh_token",
             "refresh_token": refresh,
         },
-        verify=True, timeout=15,
+        verify=True,
+        timeout=15,
     )
     if r.status_code == 200:
         result: dict[str, Any] = r.json()
@@ -244,6 +251,7 @@ def _do_refresh(refresh: str) -> dict[str, Any] | None:
 
 
 # ══════════════════════════ MAIN FLOW ═════════════════════════════════════════
+
 
 def get_token_auto(cfg: dict[str, Any], force_browser: bool = False) -> str | None:
     """
@@ -259,9 +267,9 @@ def get_token_auto(cfg: dict[str, Any], force_browser: bool = False) -> str | No
         print("  🔄  Renewing token via saved refresh_token...")
         tokens = _do_refresh(saved_refresh)
         if tokens:
-            access: str  = str(tokens.get("access_token", ""))
+            access: str = str(tokens.get("access_token", ""))
             refresh: str = str(tokens.get("refresh_token", saved_refresh))
-            acct["bearer_token"]  = access
+            acct["bearer_token"] = access
             acct["refresh_token"] = refresh
             save_config(cfg)
             print(f"  ✅  Token renewed ({len(access)} chars) — saved to bosch_config.json")
@@ -276,7 +284,7 @@ def get_token_auto(cfg: dict[str, Any], force_browser: bool = False) -> str | No
     print()
 
     verifier, challenge = _pkce_pair()
-    state    = secrets.token_urlsafe(16)
+    state = secrets.token_urlsafe(16)
     auth_url = _build_auth_url(challenge, state)
 
     webbrowser.open(auth_url)
@@ -292,10 +300,10 @@ def get_token_auto(cfg: dict[str, Any], force_browser: bool = False) -> str | No
     if not tokens:
         return None
 
-    access_val: str  = str(tokens.get("access_token", ""))
+    access_val: str = str(tokens.get("access_token", ""))
     refresh_val: str = str(tokens.get("refresh_token", ""))
 
-    acct["bearer_token"]  = access_val
+    acct["bearer_token"] = access_val
     acct["refresh_token"] = refresh_val
     save_config(cfg)
 
@@ -309,8 +317,8 @@ def get_token_auto(cfg: dict[str, Any], force_browser: bool = False) -> str | No
 
 
 def show_token_info(cfg: dict[str, Any]) -> None:
-    acct    = cfg.get("account", {})
-    token   = acct.get("bearer_token", "")
+    acct = cfg.get("account", {})
+    token = acct.get("bearer_token", "")
     refresh = acct.get("refresh_token", "")
 
     print("\n── Token Status ───────────────────────────────────────────────")
@@ -318,13 +326,14 @@ def show_token_info(cfg: dict[str, Any]) -> None:
         print(f"  Access token:  {token[:30]}...  ({len(token)} chars)")
         try:
             import datetime
-            pad  = len(token.split(".")[1]) % 4
+
+            pad = len(token.split(".")[1]) % 4
             body = base64.urlsafe_b64decode(token.split(".")[1] + "=" * pad)
             info = json.loads(body)
-            exp  = info.get("exp", 0)
+            exp = info.get("exp", 0)
             exp_dt = datetime.datetime.fromtimestamp(exp)
-            diff   = exp_dt - datetime.datetime.now()
-            mins   = int(diff.total_seconds() / 60)
+            diff = exp_dt - datetime.datetime.now()
+            mins = int(diff.total_seconds() / 60)
             status = f"valid ~{mins}m ✅" if mins > 0 else f"EXPIRED {abs(mins)}m ago ❌"
             print(f"  Email:         {info.get('email', '')}")
             print(f"  Expires:       {exp_dt.strftime('%Y-%m-%d %H:%M')}  ({status})")
@@ -341,11 +350,12 @@ def show_token_info(cfg: dict[str, Any]) -> None:
 
 # ══════════════════════════ CLI ═══════════════════════════════════════════════
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bosch camera token manager")
-    parser.add_argument("--browser",  action="store_true", help="Force new browser login")
-    parser.add_argument("--refresh",  action="store_true", help="Force refresh_token renewal")
-    parser.add_argument("--show",     action="store_true", help="Show current token status")
+    parser.add_argument("--browser", action="store_true", help="Force new browser login")
+    parser.add_argument("--refresh", action="store_true", help="Force refresh_token renewal")
+    parser.add_argument("--show", action="store_true", help="Show current token status")
     args = parser.parse_args()
 
     cfg = load_config()
@@ -361,7 +371,7 @@ def main() -> None:
             sys.exit(1)
         tokens = _do_refresh(refresh)
         if tokens:
-            cfg["account"]["bearer_token"]  = tokens.get("access_token", "")
+            cfg["account"]["bearer_token"] = tokens.get("access_token", "")
             cfg["account"]["refresh_token"] = tokens.get("refresh_token", refresh)
             save_config(cfg)
             print("  ✅  Token refreshed.")

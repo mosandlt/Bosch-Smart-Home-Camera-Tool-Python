@@ -22,7 +22,17 @@ _translations: dict[str, str] = {}
 _CACHE: dict[str, dict[str, str]] = {}
 
 AVAILABLE_LANGS: tuple[str, ...] = (
-    "en", "de", "fr", "es", "it", "nl", "pl", "pt", "ru", "uk", "zh-Hans",
+    "en",
+    "de",
+    "fr",
+    "es",
+    "it",
+    "nl",
+    "pl",
+    "pt",
+    "ru",
+    "uk",
+    "zh-Hans",
 )
 
 _TRANSLATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "translations")

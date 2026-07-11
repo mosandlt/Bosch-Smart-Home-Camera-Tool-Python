@@ -115,7 +115,8 @@ class TestRcpSession:
     def test_success_via_sessionid_element(self) -> None:
         """Normal path: HELLO returns <sessionid>, SESSION_INIT succeeds."""
         with patch.object(
-            bosch_camera, "requests_get_bosch_cloud",
+            bosch_camera,
+            "requests_get_bosch_cloud",
             side_effect=[self._hello_resp(), self._init_resp()],
         ):
             result = rcp_session(PROXY_BASE)
@@ -127,7 +128,8 @@ class TestRcpSession:
         inner = "0x1a2b3c4d".encode()
         hex_val = inner.hex()
         with patch.object(
-            bosch_camera, "requests_get_bosch_cloud",
+            bosch_camera,
+            "requests_get_bosch_cloud",
             side_effect=[self._hello_resp_str_field(hex_val), self._init_resp()],
         ):
             result = rcp_session(PROXY_BASE)
@@ -136,7 +138,8 @@ class TestRcpSession:
     def test_hello_http_error_raises(self) -> None:
         """Non-200 HELLO response → RuntimeError raised."""
         with patch.object(
-            bosch_camera, "requests_get_bosch_cloud",
+            bosch_camera,
+            "requests_get_bosch_cloud",
             return_value=MagicMock(status_code=503, text="err"),
         ):
             with pytest.raises(RuntimeError, match="RCP HELLO returned HTTP 503"):
@@ -163,7 +166,8 @@ class TestRcpSession:
         """SESSION_INIT (0xff0d) returns non-200 → RuntimeError raised."""
         bad_init = MagicMock(status_code=401, text="Unauthorized")
         with patch.object(
-            bosch_camera, "requests_get_bosch_cloud",
+            bosch_camera,
+            "requests_get_bosch_cloud",
             side_effect=[self._hello_resp(), bad_init],
         ):
             with pytest.raises(RuntimeError, match="RCP SESSION_INIT returned HTTP 401"):
@@ -238,7 +242,8 @@ class TestRcpRead:
     def test_network_exception_returns_none(self) -> None:
         """Connection error → None returned (no exception propagated)."""
         with patch.object(
-            bosch_camera, "requests_get_bosch_cloud",
+            bosch_camera,
+            "requests_get_bosch_cloud",
             side_effect=ConnectionError("timeout"),
         ):
             result = rcp_read(RCP_URL, "0x0a0f", SESSION_ID)
@@ -268,9 +273,7 @@ class TestRcpRead:
     def test_type_and_num_forwarded(self) -> None:
         """type_ and num parameters are passed in the request params."""
         ok = self._ok("aabb")
-        with patch.object(
-            bosch_camera, "requests_get_bosch_cloud", return_value=ok
-        ) as mock_get:
+        with patch.object(bosch_camera, "requests_get_bosch_cloud", return_value=ok) as mock_get:
             rcp_read(RCP_URL, "0x0c22", SESSION_ID, type_="T_WORD", num=2)
         call_params = mock_get.call_args[1]["params"]
         assert call_params["type"] == "T_WORD"
@@ -317,9 +320,7 @@ class TestSendSignalAlert:
 
     def test_network_exception_prints_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         """POST raises ConnectionError → error line printed, no crash."""
-        with patch.object(
-            bosch_camera.requests, "post", side_effect=ConnectionError("refused")
-        ):
+        with patch.object(bosch_camera.requests, "post", side_effect=ConnectionError("refused")):
             _send_signal_alert(
                 SIGNAL_URL, SIGNAL_SENDER, SIGNAL_RECIPIENTS, "Terrasse", "MOVEMENT", "15:00"
             )
@@ -342,29 +343,42 @@ class TestSendSignalAlert:
             captured_body.update(json or {})
             return post_resp
 
-        with patch.object(bosch_camera.requests, "get", return_value=img_resp), \
-             patch.object(bosch_camera.requests, "post", side_effect=_fake_post):
+        with (
+            patch.object(bosch_camera.requests, "get", return_value=img_resp),
+            patch.object(bosch_camera.requests, "post", side_effect=_fake_post),
+        ):
             _send_signal_alert(
-                SIGNAL_URL, SIGNAL_SENDER, SIGNAL_RECIPIENTS,
-                "Terrasse", "PERSON", "16:00",
-                image_url="http://192.0.2.1/snap.jpg", token="faketoken",
+                SIGNAL_URL,
+                SIGNAL_SENDER,
+                SIGNAL_RECIPIENTS,
+                "Terrasse",
+                "PERSON",
+                "16:00",
+                image_url="http://192.0.2.1/snap.jpg",
+                token="faketoken",
             )
         assert "base64_attachments" in captured_body
         assert len(captured_body["base64_attachments"]) == 1
 
-    def test_image_download_failure_still_sends(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_image_download_failure_still_sends(self, capsys: pytest.CaptureFixture[str]) -> None:
         """image download raises exception → warning printed but signal still sent."""
         post_resp = MagicMock(status_code=200, text="")
 
-        with patch.object(
-            bosch_camera.requests, "get", side_effect=ConnectionError("img unreachable")
-        ), patch.object(bosch_camera.requests, "post", return_value=post_resp):
+        with (
+            patch.object(
+                bosch_camera.requests, "get", side_effect=ConnectionError("img unreachable")
+            ),
+            patch.object(bosch_camera.requests, "post", return_value=post_resp),
+        ):
             _send_signal_alert(
-                SIGNAL_URL, SIGNAL_SENDER, SIGNAL_RECIPIENTS,
-                "Terrasse", "MOVEMENT", "17:00",
-                image_url="http://192.0.2.2/snap.jpg", token="faketoken",
+                SIGNAL_URL,
+                SIGNAL_SENDER,
+                SIGNAL_RECIPIENTS,
+                "Terrasse",
+                "MOVEMENT",
+                "17:00",
+                image_url="http://192.0.2.2/snap.jpg",
+                token="faketoken",
             )
         out = capsys.readouterr().out
         # Image download warning printed
@@ -388,26 +402,38 @@ class TestSendSignalAlert:
             captured_body.update(json or {})
             return post_resp
 
-        with patch.object(bosch_camera.requests, "get", return_value=non_img), \
-             patch.object(bosch_camera.requests, "post", side_effect=_fake_post):
+        with (
+            patch.object(bosch_camera.requests, "get", return_value=non_img),
+            patch.object(bosch_camera.requests, "post", side_effect=_fake_post),
+        ):
             _send_signal_alert(
-                SIGNAL_URL, SIGNAL_SENDER, SIGNAL_RECIPIENTS,
-                "Terrasse", "PERSON", "18:00",
-                image_url="http://192.0.2.3/snap.jpg", token="faketoken",
+                SIGNAL_URL,
+                SIGNAL_SENDER,
+                SIGNAL_RECIPIENTS,
+                "Terrasse",
+                "PERSON",
+                "18:00",
+                image_url="http://192.0.2.3/snap.jpg",
+                token="faketoken",
             )
         assert "base64_attachments" not in captured_body
 
-    def test_no_image_when_missing_url_or_token(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_no_image_when_missing_url_or_token(self, capsys: pytest.CaptureFixture[str]) -> None:
         """image_url or token absent → GET never called."""
         post_resp = MagicMock(status_code=200, text="")
-        with patch.object(bosch_camera.requests, "get") as mock_get, \
-             patch.object(bosch_camera.requests, "post", return_value=post_resp):
+        with (
+            patch.object(bosch_camera.requests, "get") as mock_get,
+            patch.object(bosch_camera.requests, "post", return_value=post_resp),
+        ):
             _send_signal_alert(
-                SIGNAL_URL, SIGNAL_SENDER, SIGNAL_RECIPIENTS,
-                "Terrasse", "MOVEMENT", "19:00",
-                image_url="", token="",
+                SIGNAL_URL,
+                SIGNAL_SENDER,
+                SIGNAL_RECIPIENTS,
+                "Terrasse",
+                "MOVEMENT",
+                "19:00",
+                image_url="",
+                token="",
             )
         mock_get.assert_not_called()
 
@@ -432,27 +458,27 @@ class TestCmdFriends444ExceptBranches:
         return r
 
     # invite 444-except (lines 6134-6135)
-    def test_invite_444_json_raises_prints_text(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_invite_444_json_raises_prints_text(self, capsys: pytest.CaptureFixture[str]) -> None:
         """invite 444 + json() raises → r.text printed instead."""
         sess = self._sess_with_method("post", self._444_resp_json_raises())
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session", return_value=sess), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             cmd_friends(_make_cfg(), _args(sub="invite", sub_arg=FRIEND_EMAIL))
         out = capsys.readouterr().out
         assert "raw-offline-text" in out or "offline" in out.lower()
 
     # share 444-except (lines 6172-6176)
-    def test_share_444_json_raises_prints_text(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_share_444_json_raises_prints_text(self, capsys: pytest.CaptureFixture[str]) -> None:
         """share 444 + json() raises → r.text printed instead."""
         sess = self._sess_with_method("put", self._444_resp_json_raises())
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session", return_value=sess), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             cmd_friends(
                 _make_cfg(),
                 _args(sub="share", sub_arg=FRIEND_ID, share_cam=CAM_NAME),
@@ -461,53 +487,53 @@ class TestCmdFriends444ExceptBranches:
         assert "raw-offline-text" in out or "offline" in out.lower()
 
     # unshare 444-except (lines 6195-6202)
-    def test_unshare_444_json_raises_prints_text(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_unshare_444_json_raises_prints_text(self, capsys: pytest.CaptureFixture[str]) -> None:
         """unshare 444 + json() raises → r.text printed instead."""
         sess = self._sess_with_method("put", self._444_resp_json_raises())
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session", return_value=sess), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             cmd_friends(_make_cfg(), _args(sub="unshare", sub_arg=FRIEND_ID))
         out = capsys.readouterr().out
         assert "raw-offline-text" in out or "offline" in out.lower()
 
     # resend 444-except (lines 6219-6226)
-    def test_resend_444_json_raises_prints_text(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_resend_444_json_raises_prints_text(self, capsys: pytest.CaptureFixture[str]) -> None:
         """resend 444 + json() raises → r.text printed instead."""
         sess = self._sess_with_method("put", self._444_resp_json_raises())
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session", return_value=sess), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             cmd_friends(_make_cfg(), _args(sub="resend", sub_arg=FRIEND_ID))
         out = capsys.readouterr().out
         assert "raw-offline-text" in out or "offline" in out.lower()
 
     # remove 444-except (lines 6239-6243)
-    def test_remove_444_json_raises_prints_text(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_remove_444_json_raises_prints_text(self, capsys: pytest.CaptureFixture[str]) -> None:
         """remove 444 + json() raises → r.text printed instead."""
         sess = self._sess_with_method("delete", self._444_resp_json_raises())
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session", return_value=sess), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             cmd_friends(_make_cfg(), _args(sub="remove", sub_arg=FRIEND_ID))
         out = capsys.readouterr().out
         assert "raw-offline-text" in out or "offline" in out.lower()
 
     # list 444-except (lines 6257-6258)
-    def test_list_444_json_raises_prints_text(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_list_444_json_raises_prints_text(self, capsys: pytest.CaptureFixture[str]) -> None:
         """list 444 + json() raises → r.text printed instead."""
         sess = self._sess_with_method("get", self._444_resp_json_raises())
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session", return_value=sess), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             cmd_friends(_make_cfg(), _args())
         out = capsys.readouterr().out
         assert "raw-offline-text" in out or "offline" in out.lower()
@@ -520,9 +546,11 @@ class TestCmdFriendsErrorBranches:
         """unshare 500 → HTTP status printed."""
         sess = MagicMock()
         sess.put.return_value = MagicMock(status_code=500, text="server error")
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session", return_value=sess), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             cmd_friends(_make_cfg(), _args(sub="unshare", sub_arg=FRIEND_ID))
         out = capsys.readouterr().out
         assert "500" in out
@@ -531,9 +559,11 @@ class TestCmdFriendsErrorBranches:
         """resend 500 → HTTP status printed."""
         sess = MagicMock()
         sess.put.return_value = MagicMock(status_code=500, text="server error")
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session", return_value=sess), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             cmd_friends(_make_cfg(), _args(sub="resend", sub_arg=FRIEND_ID))
         out = capsys.readouterr().out
         assert "500" in out
@@ -542,15 +572,15 @@ class TestCmdFriendsErrorBranches:
 class TestCmdFriendsShareNoCamFound:
     """share sub with a camera name that resolves to empty dict → early return (line 6149)."""
 
-    def test_share_unknown_cam_returns_early(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_share_unknown_cam_returns_early(self, capsys: pytest.CaptureFixture[str]) -> None:
         """resolve_cam returns {} → function returns without calling session.put."""
         sess = MagicMock()
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session", return_value=sess), \
-             patch.object(bosch_camera, "get_cameras"), \
-             patch.object(bosch_camera, "resolve_cam", return_value={}):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=sess),
+            patch.object(bosch_camera, "get_cameras"),
+            patch.object(bosch_camera, "resolve_cam", return_value={}),
+        ):
             cmd_friends(
                 _make_cfg(),
                 _args(sub="share", sub_arg=FRIEND_ID, share_cam="NonExistent"),
