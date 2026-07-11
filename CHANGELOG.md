@@ -1,5 +1,10 @@
 # Changelog
 
+## [v10.11.0] - 2026-07-11
+
+- **New `firmware-update` command:** view firmware status (installed/latest/up-to-date) or install a pending update (`firmware-update [cam] install`), cross-ported from the HA integration and hitting the same endpoint the official Bosch app's "Update now" button uses. Installing a fleet-wide update (no camera name given, multiple cameras configured) now requires explicit y/N confirmation — each install reboots a physical camera for 3-7 minutes, so a bare `firmware-update install` no longer silently fires on every camera at once (found by a 3-agent bug-hunt pass, `--yes` skips the prompt for scripting).
+- **CI uplift:** new pylint, codespell, and pip-audit gates, plus CodeQL/secret-scan/dependency-review workflows, matching the HA integration's quality bar. Two real bugs fixed along the way rather than lint-suppressed: `bosch_tls.py`'s `bosch_get/post/put` LAN wrappers now default to a 10s timeout (previously unbounded), and `get_token.py`/`bosch_camera.py`'s config file I/O now specifies `encoding="utf-8"` explicitly.
+
 ## [v10.10.6] - 2026-07-08
 
 - **CI fix:** the release workflow's `gh release edit --generate-notes` call crashed because `--generate-notes` is create-only and unsupported on `edit` — this is the same latent bug that actually crashed the HA repo's Publish-release job on a recent tag push. Also closed an awk/command-injection vector (the version string was interpolated directly into the awk program text instead of passed via `-v`), and a missing CHANGELOG.md section for the release version now hard-fails the workflow instead of silently falling back to auto-generated notes.
