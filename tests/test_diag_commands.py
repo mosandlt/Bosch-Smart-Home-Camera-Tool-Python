@@ -32,8 +32,8 @@ from bosch_camera import (
 # Fixtures / helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-CAM_ID_GEN2  = "AABBCCDD-0000-1111-2222-333344445555"
-CAM_ID_GEN1  = "FFFF0000-CAFE-BABE-DEAD-BEEFDEADBEEF"
+CAM_ID_GEN2 = "AABBCCDD-0000-1111-2222-333344445555"
+CAM_ID_GEN1 = "FFFF0000-CAFE-BABE-DEAD-BEEFDEADBEEF"
 CAM_NAME_GEN2 = "Terrasse"
 CAM_NAME_GEN1 = "Kamera"
 
@@ -42,10 +42,13 @@ def _jwt() -> str:
     import base64
     import time
     import json as _j
+
     hdr = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
-    pay = base64.urlsafe_b64encode(
-        _j.dumps({"exp": int(time.time()) + 3600}).encode()
-    ).rstrip(b"=").decode()
+    pay = (
+        base64.urlsafe_b64encode(_j.dumps({"exp": int(time.time()) + 3600}).encode())
+        .rstrip(b"=")
+        .decode()
+    )
     return f"{hdr}.{pay}.sig"
 
 
@@ -132,9 +135,7 @@ class TestFetchRcpLan:
 
     def test_returns_none_on_network_exception(self) -> None:
         """Network exception (ConnectionError) → None returned."""
-        with patch.object(
-            bosch_camera.requests, "get", side_effect=ConnectionError("timeout")
-        ):
+        with patch.object(bosch_camera.requests, "get", side_effect=ConnectionError("timeout")):
             result = fetch_rcp_lan("192.168.1.1", "user", "pass", "0x0a98")
         assert result is None
 
@@ -158,12 +159,14 @@ class TestFetchRcpLan:
             status_code=200,
             text="<reply><str>aa</str></reply>",
         )
-        with patch.object(
-            bosch_camera.requests, "get", return_value=fake_response
-        ) as mock_get:
+        with patch.object(bosch_camera.requests, "get", return_value=fake_response) as mock_get:
             fetch_rcp_lan("10.0.0.1", "u", "p", "0x0a98")
         call_kwargs = mock_get.call_args
-        params = call_kwargs[1].get("params") or call_kwargs[0][1] if len(call_kwargs[0]) > 1 else call_kwargs[1]["params"]
+        params = (
+            call_kwargs[1].get("params") or call_kwargs[0][1]
+            if len(call_kwargs[0]) > 1
+            else call_kwargs[1]["params"]
+        )
         assert params["command"] == "0x0a98"
         assert params["direction"] == "READ"
 
@@ -175,9 +178,7 @@ class TestFetchRcpLan:
             status_code=200,
             text="<reply><str>01</str></reply>",
         )
-        with patch.object(
-            bosch_camera.requests, "get", return_value=fake_response
-        ) as mock_get:
+        with patch.object(bosch_camera.requests, "get", return_value=fake_response) as mock_get:
             fetch_rcp_lan("10.0.0.1", "myuser", "mypass", "0x0a98")
         call_kwargs = mock_get.call_args
         auth = call_kwargs[1].get("auth")
@@ -333,7 +334,8 @@ class TestCmdSnapshotMjpeg:
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(
-                subprocess, "run",
+                subprocess,
+                "run",
                 side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=15),
             ),
         ):
@@ -351,7 +353,8 @@ class TestCmdSnapshotMjpeg:
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(
-                subprocess, "run",
+                subprocess,
+                "run",
                 return_value=MagicMock(returncode=1, stdout=b"", stderr=b"error msg"),
             ),
         ):
@@ -372,7 +375,8 @@ class TestCmdSnapshotMjpeg:
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(
-                subprocess, "run",
+                subprocess,
+                "run",
                 return_value=MagicMock(returncode=0, stdout=b"NOTJPEG", stderr=b""),
             ),
         ):
@@ -394,13 +398,15 @@ class TestCmdSnapshotMjpeg:
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(
-                subprocess, "run",
+                subprocess,
+                "run",
                 return_value=MagicMock(returncode=0, stdout=fake_jpeg, stderr=b""),
             ),
             patch.object(bosch_camera, "open_file"),
         ):
             cmd_snapshot_mjpeg(cfg, _args(cam=CAM_NAME_GEN2, output=out_file))
         import os
+
         assert os.path.isfile(out_file)
         with open(out_file, "rb") as fh:
             written = fh.read()
@@ -429,7 +435,8 @@ class TestCmdSnapshotMjpeg:
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(
-                subprocess, "run",
+                subprocess,
+                "run",
                 return_value=MagicMock(returncode=0, stdout=fake_jpeg, stderr=b""),
             ) as mock_run,
             patch.object(bosch_camera, "open_file"),
@@ -456,7 +463,9 @@ class TestCmdOnvifScopes:
         sess = MagicMock()
         sess.put.return_value = _local_conn_response()
         # null-terminated ASCII: "onvif://www.onvif.org/type/video_encoder" + null + another scope
-        payload = b"onvif://www.onvif.org/type/video_encoder\x00onvif://www.onvif.org/hardware/Camera\x00"
+        payload = (
+            b"onvif://www.onvif.org/type/video_encoder\x00onvif://www.onvif.org/hardware/Camera\x00"
+        )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=sess),
@@ -564,9 +573,7 @@ class TestCmdOnvifScopes:
         out = capsys.readouterr().out
         assert "single-scope" in out
 
-    def test_payload_all_nulls_shows_raw_info(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_payload_all_nulls_shows_raw_info(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Payload of all null bytes → no scope strings shown, raw bytes info shown."""
         cfg = _make_cfg_gen2()
         sess = MagicMock()
@@ -602,7 +609,9 @@ class TestCmdRcpVersion:
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
-            patch.object(bosch_camera, "_rcp_setup", return_value=("https://proxy/rcp.xml", "0xsess")),
+            patch.object(
+                bosch_camera, "_rcp_setup", return_value=("https://proxy/rcp.xml", "0xsess")
+            ),
             patch.object(bosch_camera, "rcp_read", return_value=ver_bytes),
         ):
             cmd_rcp_version(cfg, _args(cam=CAM_NAME_GEN2))
@@ -618,7 +627,9 @@ class TestCmdRcpVersion:
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
-            patch.object(bosch_camera, "_rcp_setup", return_value=("https://proxy/rcp.xml", "0xsess")),
+            patch.object(
+                bosch_camera, "_rcp_setup", return_value=("https://proxy/rcp.xml", "0xsess")
+            ),
             patch.object(bosch_camera, "rcp_read", return_value=None),
         ):
             cmd_rcp_version(cfg, _args(cam=CAM_NAME_GEN2))
@@ -633,7 +644,8 @@ class TestCmdRcpVersion:
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(
-                bosch_camera, "_rcp_setup",
+                bosch_camera,
+                "_rcp_setup",
                 side_effect=RuntimeError("PUT /connection returned HTTP 503"),
             ),
         ):
@@ -648,7 +660,9 @@ class TestCmdRcpVersion:
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
-            patch.object(bosch_camera, "_rcp_setup", return_value=("https://proxy/rcp.xml", "0xsess")),
+            patch.object(
+                bosch_camera, "_rcp_setup", return_value=("https://proxy/rcp.xml", "0xsess")
+            ),
             patch.object(bosch_camera, "rcp_read", return_value=bytes([0, 0, 0, 0])),
         ):
             cmd_rcp_version(cfg, _args(cam=CAM_NAME_GEN2))
@@ -662,7 +676,9 @@ class TestCmdRcpVersion:
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
-            patch.object(bosch_camera, "_rcp_setup", return_value=("https://proxy/rcp.xml", "0xsess")),
+            patch.object(
+                bosch_camera, "_rcp_setup", return_value=("https://proxy/rcp.xml", "0xsess")
+            ),
             patch.object(bosch_camera, "rcp_read", return_value=bytes([255, 255, 255, 255])),
         ):
             cmd_rcp_version(cfg, _args(cam=CAM_NAME_GEN2))

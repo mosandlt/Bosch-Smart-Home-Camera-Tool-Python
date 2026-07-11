@@ -19,6 +19,7 @@ import bosch_camera
 
 # ── PAN_PRESET_MAP constant tests ─────────────────────────────────────────────
 
+
 class TestPanPresetMap:
     """Verify canonical preset→angle mapping values."""
 
@@ -39,14 +40,20 @@ class TestPanPresetMap:
 
     def test_all_five_presets_defined(self) -> None:
         assert set(bosch_camera.PAN_PRESET_MAP.keys()) == {
-            "home", "left", "right", "back-left", "back-right"
+            "home",
+            "left",
+            "right",
+            "back-left",
+            "back-right",
         }
 
 
 # ── cmd_pan dispatch tests ────────────────────────────────────────────────────
 
-def _make_args(preset: str | None = None, action: str | None = None,
-               cam: str | None = None) -> types.SimpleNamespace:
+
+def _make_args(
+    preset: str | None = None, action: str | None = None, cam: str | None = None
+) -> types.SimpleNamespace:
     """Build a minimal argparse Namespace for cmd_pan."""
     return types.SimpleNamespace(cam=cam, action=action, preset=preset)
 
@@ -110,8 +117,10 @@ class TestCmdPanPresetDispatch:
         cfg = _make_cfg()
         session = _mock_session(current=current)
         args = _make_args(preset=preset)
-        with mock.patch("bosch_camera.get_token", return_value="tok"), \
-             mock.patch("bosch_camera.make_session", return_value=session):
+        with (
+            mock.patch("bosch_camera.get_token", return_value="tok"),
+            mock.patch("bosch_camera.make_session", return_value=session),
+        ):
             bosch_camera.cmd_pan(cfg, args)
         return session
 
@@ -151,8 +160,10 @@ class TestCmdPanPresetDispatch:
         cfg = _make_cfg()
         session = _mock_session(current=0)
         args = _make_args(preset=None, action="diagonal")
-        with mock.patch("bosch_camera.get_token", return_value="tok"), \
-             mock.patch("bosch_camera.make_session", return_value=session):
+        with (
+            mock.patch("bosch_camera.get_token", return_value="tok"),
+            mock.patch("bosch_camera.make_session", return_value=session),
+        ):
             bosch_camera.cmd_pan(cfg, args)
         out = capsys.readouterr().out
         assert "Unknown action" in out or "❌" in out
@@ -163,8 +174,10 @@ class TestCmdPanPresetDispatch:
         cfg = _make_cfg()
         session = _mock_session(current=0)
         args = _make_args(preset=None, action="45")
-        with mock.patch("bosch_camera.get_token", return_value="tok"), \
-             mock.patch("bosch_camera.make_session", return_value=session):
+        with (
+            mock.patch("bosch_camera.get_token", return_value="tok"),
+            mock.patch("bosch_camera.make_session", return_value=session),
+        ):
             bosch_camera.cmd_pan(cfg, args)
         body = session.put.call_args[1]["json"]
         assert body["absolutePosition"] == 45

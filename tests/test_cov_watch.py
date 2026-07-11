@@ -40,9 +40,7 @@ def _jwt(exp_offset: int = 3600) -> str:
     """Build a minimal unsigned JWT with exp = now + offset."""
     hdr = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     pay = (
-        base64.urlsafe_b64encode(
-            json.dumps({"exp": int(time.time()) + exp_offset}).encode()
-        )
+        base64.urlsafe_b64encode(json.dumps({"exp": int(time.time()) + exp_offset}).encode())
         .rstrip(b"=")
         .decode()
     )
@@ -147,8 +145,20 @@ class TestCmdWatchPolling:
     def test_poll_new_event_printed(self, capsys: pytest.CaptureFixture[str]) -> None:
         """New events found in polling loop — printed to stdout."""
         cfg = _make_cfg()
-        baseline_ev = {"id": "ev-old", "eventType": "MOVEMENT", "timestamp": "2024-01-01T00:00:00", "imageUrl": "", "videoClipUrl": ""}
-        new_ev = {"id": "ev-new", "eventType": "MOVEMENT", "timestamp": "2024-01-01T00:01:00", "imageUrl": "", "videoClipUrl": ""}
+        baseline_ev = {
+            "id": "ev-old",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:00:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
+        new_ev = {
+            "id": "ev-new",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
 
         call_count = [0]
 
@@ -190,8 +200,20 @@ class TestCmdWatchPolling:
     def test_poll_audio_event_icon(self, capsys: pytest.CaptureFixture[str]) -> None:
         """AUDIO_ALARM events use the audio icon path."""
         cfg = _make_cfg()
-        baseline_ev = {"id": "b0", "eventType": "AUDIO_ALARM", "timestamp": "2024-01-01T00:00:00", "imageUrl": "", "videoClipUrl": ""}
-        new_ev = {"id": "n1", "eventType": "AUDIO_ALARM", "timestamp": "2024-01-01T00:01:00", "imageUrl": "", "videoClipUrl": ""}
+        baseline_ev = {
+            "id": "b0",
+            "eventType": "AUDIO_ALARM",
+            "timestamp": "2024-01-01T00:00:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
+        new_ev = {
+            "id": "n1",
+            "eventType": "AUDIO_ALARM",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
 
         # api_get_events call counts: 1 = baseline per cam, 2+ = poll iterations
         call_count = [0]
@@ -231,8 +253,20 @@ class TestCmdWatchPolling:
     def test_poll_person_event(self, capsys: pytest.CaptureFixture[str]) -> None:
         """PERSON event type is covered."""
         cfg = _make_cfg()
-        baseline_ev = {"id": "b0", "eventType": "PERSON", "timestamp": "2024-01-01T00:00:00", "imageUrl": "", "videoClipUrl": ""}
-        new_ev = {"id": "n1", "eventType": "PERSON", "timestamp": "2024-01-01T00:01:00", "imageUrl": "", "videoClipUrl": ""}
+        baseline_ev = {
+            "id": "b0",
+            "eventType": "PERSON",
+            "timestamp": "2024-01-01T00:00:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
+        new_ev = {
+            "id": "n1",
+            "eventType": "PERSON",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
 
         call_count = [0]
 
@@ -278,11 +312,15 @@ class TestCmdWatchPolling:
             patch.object(bosch_camera, "_is_token_near_expiry", return_value=False),
             patch.object(bosch_camera, "api_get_events", return_value=[]),
             patch.object(bosch_camera, "_install_stop_handlers"),
-            patch("time.time", side_effect=[
-                1000.0, 1000.0,  # start_time, first duration check (not expired)
-                1000.0,          # inside sleep loop
-                1100.0,          # second duration check (expired)
-            ]),
+            patch(
+                "time.time",
+                side_effect=[
+                    1000.0,
+                    1000.0,  # start_time, first duration check (not expired)
+                    1000.0,  # inside sleep loop
+                    1100.0,  # second duration check (expired)
+                ],
+            ),
             patch("time.sleep"),
         ):
             bosch_camera._STOP_REQUESTED.clear()
@@ -336,8 +374,20 @@ class TestCmdWatchPolling:
     def test_poll_webhook_delivery(self) -> None:
         """webhook_url causes _post_event_webhook to be called."""
         cfg = _make_cfg()
-        baseline_ev = {"id": "b0", "eventType": "MOVEMENT", "timestamp": "2024-01-01", "imageUrl": "", "videoClipUrl": ""}
-        new_ev = {"id": "n1", "eventType": "MOVEMENT", "timestamp": "2024-01-01", "imageUrl": "", "videoClipUrl": ""}
+        baseline_ev = {
+            "id": "b0",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
+        new_ev = {
+            "id": "n1",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
 
         call_count = [0]
 
@@ -484,12 +534,18 @@ class TestCmdWatchPolling:
         cfg = _make_cfg()
         img_url = "https://residential.cbs.boschsecurity.com/v11/images/snap.jpg"
         baseline_ev = {
-            "id": "b0", "eventType": "MOVEMENT", "timestamp": "2024-01-01T00:00:00",
-            "imageUrl": img_url, "videoClipUrl": "",
+            "id": "b0",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:00:00",
+            "imageUrl": img_url,
+            "videoClipUrl": "",
         }
         new_ev = {
-            "id": "n1", "eventType": "MOVEMENT", "timestamp": "2024-01-01T00:01:00",
-            "imageUrl": img_url, "videoClipUrl": "",
+            "id": "n1",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": img_url,
+            "videoClipUrl": "",
         }
         call_count = [0]
 
@@ -624,6 +680,7 @@ class TestOnNotification:
 
         def on_notification(notification: Any, persistent_id: Any, obj: Any = None) -> None:
             import datetime
+
             now_str = datetime.datetime.now().strftime("%H:%M:%S")
             tok = cfg["account"].get("bearer_token", token)
             if _bc._is_token_near_expiry(tok):
@@ -646,12 +703,14 @@ class TestOnNotification:
                     new_events.append(ev)
 
                 for ev in reversed(new_events):
-                    etype   = ev.get("eventType", "EVENT")
-                    ts      = ev.get("timestamp", "")[:19]
+                    etype = ev.get("eventType", "EVENT")
+                    ts = ev.get("timestamp", "")[:19]
                     img_url = ev.get("imageUrl", "")
                     clip_url = ev.get("videoClipUrl", "")
-                    icon    = "🔊" if "AUDIO" in etype else ("👤" if etype == "PERSON" else "🚨")
-                    print(f"\n  [{now_str}] {icon} {etype:<15s}  cam={name:<12s}  {ts}  (via FCM push)")
+                    icon = "🔊" if "AUDIO" in etype else ("👤" if etype == "PERSON" else "🚨")
+                    print(
+                        f"\n  [{now_str}] {icon} {etype:<15s}  cam={name:<12s}  {ts}  (via FCM push)"
+                    )
                     if img_url:
                         print(f"             📸 {img_url}")
                     if clip_url:
@@ -660,14 +719,22 @@ class TestOnNotification:
 
                     if signal_url and signal_sender and signal_recipients:
                         _bc._send_signal_alert(
-                            signal_url, signal_sender, signal_recipients,
-                            name, etype, ts, img_url, tok,
+                            signal_url,
+                            signal_sender,
+                            signal_recipients,
+                            name,
+                            etype,
+                            ts,
+                            img_url,
+                            tok,
                         )
 
                     if auto_snap and img_url and _bc._is_safe_bosch_url(img_url):
                         try:
                             r = sess.get(img_url, timeout=15)
-                            if r.status_code == 200 and "image" in r.headers.get("Content-Type", ""):
+                            if r.status_code == 200 and "image" in r.headers.get(
+                                "Content-Type", ""
+                            ):
                                 fname = f"event_{name}_{ts.replace(':', '-')}.jpg"
                                 fpath = _bc.os.path.join(_bc.BASE_DIR, fname)
                                 with open(fpath, "wb") as f:
@@ -732,7 +799,13 @@ class TestOnNotification:
         cfg = _make_cfg()
         on_notification, last_seen, _ = self._make_on_notification(cfg)
         last_seen[CAM_NAME] = "old"
-        new_ev = {"id": "nev1", "eventType": "MOVEMENT", "timestamp": "2024-01-01T00:00:00", "imageUrl": "", "videoClipUrl": ""}
+        new_ev = {
+            "id": "nev1",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:00:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
 
         with (
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
@@ -771,7 +844,13 @@ class TestOnNotification:
             signal_recipients=["+20000000001"],
         )
         last_seen[CAM_NAME] = "old"
-        new_ev = {"id": "nev2", "eventType": "MOVEMENT", "timestamp": "2024-01-01T00:00:00", "imageUrl": "", "videoClipUrl": ""}
+        new_ev = {
+            "id": "nev2",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:00:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
 
         with (
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
@@ -790,8 +869,11 @@ class TestOnNotification:
         on_notification, last_seen, total_new = self._make_on_notification(cfg)
         last_seen[CAM_NAME] = "old"
         new_ev = {
-            "id": "audio-1", "eventType": "AUDIO_ALARM",
-            "timestamp": "2024-01-01T00:00:00", "imageUrl": "", "videoClipUrl": "",
+            "id": "audio-1",
+            "eventType": "AUDIO_ALARM",
+            "timestamp": "2024-01-01T00:00:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
         }
 
         with (
@@ -838,6 +920,7 @@ class TestOnCredsUpdated:
         new_creds = {"token": "fake-fcm-cred"}
 
         with patch.object(bosch_camera, "save_config") as mock_save:
+
             def on_creds_updated(creds: Any) -> None:
                 cfg["settings"][bosch_camera.FCM_CRED_KEY] = creds
                 bosch_camera.save_config(cfg)
@@ -853,6 +936,7 @@ class TestOnCredsUpdated:
         cfg["settings"] = {bosch_camera.FCM_CRED_KEY: {"old": True}}
 
         with patch.object(bosch_camera, "save_config"):
+
             def on_creds_updated(creds: Any) -> None:
                 cfg["settings"][bosch_camera.FCM_CRED_KEY] = creds
                 bosch_camera.save_config(cfg)
@@ -901,9 +985,12 @@ class TestRealFCMClosures:
         with (
             patch.dict("sys.modules", {"firebase_messaging": fake_fb}),
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
-            patch.object(bosch_camera, "api_get_events",
-                         return_value=[] if events_return is None else events_return,
-                         side_effect=events_side_effect),
+            patch.object(
+                bosch_camera,
+                "api_get_events",
+                return_value=[] if events_return is None else events_return,
+                side_effect=events_side_effect,
+            ),
             patch.object(bosch_camera, "_is_token_near_expiry", return_value=False),
             patch.object(bosch_camera, "api_mark_events_read"),
             patch.object(bosch_camera, "_install_stop_handlers"),
@@ -914,8 +1001,11 @@ class TestRealFCMClosures:
             bosch_camera._STOP_REQUESTED.clear()
             try:
                 bosch_camera._watch_fcm_push(
-                    cfg, _jwt(), cams,
-                    duration=0, auto_snap=auto_snap,
+                    cfg,
+                    _jwt(),
+                    cams,
+                    duration=0,
+                    auto_snap=auto_snap,
                     signal_url=signal_url,
                     signal_sender=signal_sender,
                     signal_recipients=signal_recipients or [],
@@ -936,8 +1026,11 @@ class TestRealFCMClosures:
         """Real on_notification prints new event from api_get_events."""
         cfg = _make_cfg()
         new_ev = {
-            "id": "ev-fcm-1", "eventType": "MOVEMENT",
-            "timestamp": "2024-01-01T00:01:00", "imageUrl": "", "videoClipUrl": "",
+            "id": "ev-fcm-1",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
         }
         # First call (baseline) → empty, second call (on_notification) → event
         call_count = [0]
@@ -954,8 +1047,11 @@ class TestRealFCMClosures:
         """Real on_notification handles AUDIO_ALARM icon branch."""
         cfg = _make_cfg()
         new_ev = {
-            "id": "ev-audio-1", "eventType": "AUDIO_ALARM",
-            "timestamp": "2024-01-01T00:01:00", "imageUrl": "", "videoClipUrl": "",
+            "id": "ev-audio-1",
+            "eventType": "AUDIO_ALARM",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
         }
         call_count = [0]
 
@@ -971,8 +1067,11 @@ class TestRealFCMClosures:
         """Real on_notification handles PERSON icon branch."""
         cfg = _make_cfg()
         new_ev = {
-            "id": "ev-per-1", "eventType": "PERSON",
-            "timestamp": "2024-01-01T00:01:00", "imageUrl": "", "videoClipUrl": "",
+            "id": "ev-per-1",
+            "eventType": "PERSON",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
         }
         call_count = [0]
 
@@ -988,7 +1087,8 @@ class TestRealFCMClosures:
         """Real on_notification prints clip URL when present."""
         cfg = _make_cfg()
         new_ev = {
-            "id": "ev-clip-1", "eventType": "MOVEMENT",
+            "id": "ev-clip-1",
+            "eventType": "MOVEMENT",
             "timestamp": "2024-01-01T00:01:00",
             "imageUrl": "",
             "videoClipUrl": "https://residential.cbs.boschsecurity.com/v11/clips/c.mp4",
@@ -1007,8 +1107,11 @@ class TestRealFCMClosures:
         """Real on_notification calls api_mark_events_read for new events."""
         cfg = _make_cfg()
         new_ev = {
-            "id": "ev-mark-1", "eventType": "MOVEMENT",
-            "timestamp": "2024-01-01T00:01:00", "imageUrl": "", "videoClipUrl": "",
+            "id": "ev-mark-1",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
         }
         call_count = [0]
 
@@ -1034,8 +1137,11 @@ class TestRealFCMClosures:
             bosch_camera._STOP_REQUESTED.clear()
             try:
                 bosch_camera._watch_fcm_push(
-                    cfg, _jwt(), cfg["cameras"],
-                    duration=0, auto_snap=False,
+                    cfg,
+                    _jwt(),
+                    cfg["cameras"],
+                    duration=0,
+                    auto_snap=False,
                 )
             finally:
                 bosch_camera._STOP_REQUESTED.clear()
@@ -1081,8 +1187,11 @@ class TestRealFCMClosures:
             bosch_camera._STOP_REQUESTED.clear()
             try:
                 bosch_camera._watch_fcm_push(
-                    cfg, _jwt(), cfg["cameras"],
-                    duration=0, auto_snap=False,
+                    cfg,
+                    _jwt(),
+                    cfg["cameras"],
+                    duration=0,
+                    auto_snap=False,
                 )
             finally:
                 bosch_camera._STOP_REQUESTED.clear()
@@ -1118,7 +1227,9 @@ class TestRealFCMClosures:
         ):
             bosch_camera._STOP_REQUESTED.clear()
             try:
-                bosch_camera._watch_fcm_push(cfg, _jwt(), cfg["cameras"], duration=0, auto_snap=False)
+                bosch_camera._watch_fcm_push(
+                    cfg, _jwt(), cfg["cameras"], duration=0, auto_snap=False
+                )
             finally:
                 bosch_camera._STOP_REQUESTED.clear()
 
@@ -1146,7 +1257,9 @@ class TestRealFCMClosures:
         ):
             bosch_camera._STOP_REQUESTED.clear()
             try:
-                bosch_camera._watch_fcm_push(cfg, _jwt(), cfg["cameras"], duration=60, auto_snap=False)
+                bosch_camera._watch_fcm_push(
+                    cfg, _jwt(), cfg["cameras"], duration=60, auto_snap=False
+                )
             finally:
                 bosch_camera._STOP_REQUESTED.clear()
 
@@ -1168,8 +1281,11 @@ class TestWatchFcmPushImportError:
         saved = sys.modules.pop("firebase_messaging", None)
         try:
             bosch_camera._watch_fcm_push(
-                cfg, _jwt(), cfg["cameras"],
-                duration=0, auto_snap=False,
+                cfg,
+                _jwt(),
+                cfg["cameras"],
+                duration=0,
+                auto_snap=False,
             )
         finally:
             if saved is not None:
@@ -1318,7 +1434,7 @@ class TestProxyThread:
         captured_target: list[Any] = []
 
         def _capture_thread(**kwargs: Any) -> MagicMock:
-            if kwargs.get("target") and "proxy" in (kwargs.get("target") or {}) .__name__:  # type: ignore[union-attr]
+            if kwargs.get("target") and "proxy" in (kwargs.get("target") or {}).__name__:  # type: ignore[union-attr]
                 captured_target.append(kwargs["target"])
             t = MagicMock()
             t.start = MagicMock()
@@ -1541,8 +1657,11 @@ class TestRealFCMClosuresExtra:
             bosch_camera._STOP_REQUESTED.clear()
             try:
                 bosch_camera._watch_fcm_push(
-                    cfg, _jwt(), cfg["cameras"],
-                    duration=0, auto_snap=auto_snap,
+                    cfg,
+                    _jwt(),
+                    cfg["cameras"],
+                    duration=0,
+                    auto_snap=auto_snap,
                 )
             finally:
                 bosch_camera._STOP_REQUESTED.clear()
@@ -1551,7 +1670,13 @@ class TestRealFCMClosuresExtra:
 
     def test_baseline_with_event_sets_last_seen(self) -> None:
         """Baseline fetch returning an event → line 3158 (last_seen set) is covered."""
-        baseline_ev = {"id": "base-ev-1", "eventType": "MOVEMENT", "timestamp": "2024-01-01", "imageUrl": "", "videoClipUrl": ""}
+        baseline_ev = {
+            "id": "base-ev-1",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01",
+            "imageUrl": "",
+            "videoClipUrl": "",
+        }
         # on_notification sees no new events beyond baseline
         _, _ = self._run_fcm_with_baseline_event([baseline_ev], [baseline_ev])
         # Just checking no crash; coverage of line 3158 is the goal.
@@ -1579,8 +1704,11 @@ class TestRealFCMClosuresExtra:
             bosch_camera._STOP_REQUESTED.clear()
             try:
                 bosch_camera._watch_fcm_push(
-                    cfg, _jwt(), cfg["cameras"],
-                    duration=0, auto_snap=False,
+                    cfg,
+                    _jwt(),
+                    cfg["cameras"],
+                    duration=0,
+                    auto_snap=False,
                 )
             finally:
                 bosch_camera._STOP_REQUESTED.clear()
@@ -1594,8 +1722,11 @@ class TestRealFCMClosuresExtra:
         """on_notification prints image URL when event has imageUrl."""
         img_url = "https://residential.cbs.boschsecurity.com/v11/images/snap.jpg"
         new_ev = {
-            "id": "ev-img-1", "eventType": "MOVEMENT",
-            "timestamp": "2024-01-01T00:01:00", "imageUrl": img_url, "videoClipUrl": "",
+            "id": "ev-img-1",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": img_url,
+            "videoClipUrl": "",
         }
         self._run_fcm_with_baseline_event([], [new_ev])
         out = capsys.readouterr().out
@@ -1605,8 +1736,11 @@ class TestRealFCMClosuresExtra:
         """on_notification auto_snap=True downloads and saves the event image."""
         img_url = "https://residential.cbs.boschsecurity.com/v11/images/snap.jpg"
         new_ev = {
-            "id": "ev-snap-1", "eventType": "MOVEMENT",
-            "timestamp": "2024-01-01T00:01:00", "imageUrl": img_url, "videoClipUrl": "",
+            "id": "ev-snap-1",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": img_url,
+            "videoClipUrl": "",
         }
         with patch.object(bosch_camera, "BASE_DIR", str(tmp_path)):
             _, mock_sess = self._run_fcm_with_baseline_event([], [new_ev], auto_snap=True)
@@ -1620,8 +1754,11 @@ class TestRealFCMClosuresExtra:
         mock_post_resp = MagicMock()
         mock_post_resp.status_code = 200
         new_ev = {
-            "id": "sig-ev", "eventType": "MOVEMENT",
-            "timestamp": "2024-01-01T00:01:00", "imageUrl": "", "videoClipUrl": "",
+            "id": "sig-ev",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
         }
         call_count = [0]
 
@@ -1644,8 +1781,11 @@ class TestRealFCMClosuresExtra:
             bosch_camera._STOP_REQUESTED.clear()
             try:
                 bosch_camera._watch_fcm_push(
-                    cfg, _jwt(), cfg["cameras"],
-                    duration=0, auto_snap=False,
+                    cfg,
+                    _jwt(),
+                    cfg["cameras"],
+                    duration=0,
+                    auto_snap=False,
                     signal_url="http://192.0.2.2:8080",
                     signal_sender="+10000000000",
                     signal_recipients=["+20000000001"],
@@ -1681,8 +1821,12 @@ class TestCmdWatchExtraBranches:
             try:
                 bosch_camera.cmd_watch(
                     cfg,
-                    _args(interval=1, signal="http://192.0.2.2:8080",
-                          signal_sender="+10000000000", signal_recipients="+20000000001"),
+                    _args(
+                        interval=1,
+                        signal="http://192.0.2.2:8080",
+                        signal_sender="+10000000000",
+                        signal_recipients="+20000000001",
+                    ),
                 )
             finally:
                 bosch_camera._STOP_REQUESTED.clear()
@@ -1729,8 +1873,11 @@ class TestOnNotificationRealExceptions:
         cfg = _make_cfg()
         img_url = "https://residential.cbs.boschsecurity.com/v11/images/snap.jpg"
         new_ev = {
-            "id": "snap-exc", "eventType": "MOVEMENT",
-            "timestamp": "2024-01-01T00:01:00", "imageUrl": img_url, "videoClipUrl": "",
+            "id": "snap-exc",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": img_url,
+            "videoClipUrl": "",
         }
         call_count = [0]
 
@@ -1761,8 +1908,11 @@ class TestOnNotificationRealExceptions:
             bosch_camera._STOP_REQUESTED.clear()
             try:
                 bosch_camera._watch_fcm_push(
-                    cfg, _jwt(), cfg["cameras"],
-                    duration=0, auto_snap=True,
+                    cfg,
+                    _jwt(),
+                    cfg["cameras"],
+                    duration=0,
+                    auto_snap=True,
                 )
             finally:
                 bosch_camera._STOP_REQUESTED.clear()
@@ -1773,8 +1923,11 @@ class TestOnNotificationRealExceptions:
         """api_mark_events_read raising → exception swallowed (lines 3231-3232)."""
         cfg = _make_cfg()
         new_ev = {
-            "id": "mark-exc", "eventType": "MOVEMENT",
-            "timestamp": "2024-01-01T00:01:00", "imageUrl": "", "videoClipUrl": "",
+            "id": "mark-exc",
+            "eventType": "MOVEMENT",
+            "timestamp": "2024-01-01T00:01:00",
+            "imageUrl": "",
+            "videoClipUrl": "",
         }
         call_count = [0]
 
@@ -1791,7 +1944,9 @@ class TestOnNotificationRealExceptions:
             patch.object(bosch_camera, "make_session", return_value=MagicMock()),
             patch.object(bosch_camera, "api_get_events", side_effect=_events),
             patch.object(bosch_camera, "_is_token_near_expiry", return_value=False),
-            patch.object(bosch_camera, "api_mark_events_read", side_effect=RuntimeError("mark fail")),
+            patch.object(
+                bosch_camera, "api_mark_events_read", side_effect=RuntimeError("mark fail")
+            ),
             patch.object(bosch_camera, "_install_stop_handlers"),
             patch.object(bosch_camera, "save_config"),
             patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=mock_post_resp),
@@ -1800,8 +1955,11 @@ class TestOnNotificationRealExceptions:
             bosch_camera._STOP_REQUESTED.clear()
             try:
                 bosch_camera._watch_fcm_push(
-                    cfg, _jwt(), cfg["cameras"],
-                    duration=0, auto_snap=False,
+                    cfg,
+                    _jwt(),
+                    cfg["cameras"],
+                    duration=0,
+                    auto_snap=False,
                 )
             finally:
                 bosch_camera._STOP_REQUESTED.clear()
@@ -2056,9 +2214,7 @@ class TestProxyThreadPipe:
         # Verify that TCP_KEEPIDLE setsockopt was called on mock_raw.
         mock_raw.setsockopt.assert_called()
 
-    def _build_proxy_with_pipe_targets(
-        self, port_seed: int = 19890
-    ) -> tuple[list[Any], Any, Any]:
+    def _build_proxy_with_pipe_targets(self, port_seed: int = 19890) -> tuple[list[Any], Any, Any]:
         """
         Run _start_tls_proxy_sync and _proxy_thread, collecting _pipe targets.
         Returns (pipe_targets, mock_raw, mock_tls).
@@ -2244,9 +2400,7 @@ class TestProxyThreadPipe:
         mock_src.close.assert_called()
         mock_dst.close.assert_called()
 
-    def _build_proxy_with_reset_targets(
-        self, port_seed: int = 19894
-    ) -> list[Any]:
+    def _build_proxy_with_reset_targets(self, port_seed: int = 19894) -> list[Any]:
         """Run _start_tls_proxy_sync + _proxy_thread, collecting _reset_on_stable targets."""
         import ssl as ssl_module
         import socket as socket_module

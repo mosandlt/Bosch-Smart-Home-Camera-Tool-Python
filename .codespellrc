@@ -1,0 +1,5 @@
+[codespell]
+# Bosch API field names (upToDate, lod) + intentional English variants
+# (pre-emptive, re-use, unparseable) that codespell otherwise flags as typos.
+skip = ./.git,*.json,*.min.js,dist,build,captures,backups,.venv,.venv-test,*.lock
+ignore-words-list = uptodate,lod,pre-emptive,re-use,unparseable

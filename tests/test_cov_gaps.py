@@ -46,9 +46,7 @@ FAKE_SNAP = b"\xff\xd8\xab\xcd"
 def _jwt(exp_offset: int = 3600) -> str:
     hdr = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     pay = (
-        base64.urlsafe_b64encode(
-            _json.dumps({"exp": int(time.time()) + exp_offset}).encode()
-        )
+        base64.urlsafe_b64encode(_json.dumps({"exp": int(time.time()) + exp_offset}).encode())
         .rstrip(b"=")
         .decode()
     )
@@ -179,9 +177,7 @@ class TestSnapFromEvents:
         snap_resp.status_code = 200
         snap_resp.content = FAKE_SNAP
         session.get.return_value = snap_resp
-        events = [
-            {"id": "ev1", "imageUrl": BOSCH_IMG_URL, "timestamp": "2024-06-01T10:00:00Z"}
-        ]
+        events = [{"id": "ev1", "imageUrl": BOSCH_IMG_URL, "timestamp": "2024-06-01T10:00:00Z"}]
         with patch.object(bosch_camera, "api_get_events", return_value=events):
             data, ts = bosch_camera.snap_from_events(session, {"id": CAM_ID})
         assert data == FAKE_SNAP
@@ -190,7 +186,11 @@ class TestSnapFromEvents:
     def test_event_with_unsafe_url_skipped(self) -> None:
         session = MagicMock()
         events = [
-            {"id": "ev1", "imageUrl": "http://evil.com/img.jpg", "timestamp": "2024-06-01T10:00:00Z"}
+            {
+                "id": "ev1",
+                "imageUrl": "http://evil.com/img.jpg",
+                "timestamp": "2024-06-01T10:00:00Z",
+            }
         ]
         with patch.object(bosch_camera, "api_get_events", return_value=events):
             data, ts = bosch_camera.snap_from_events(session, {"id": CAM_ID})
@@ -254,7 +254,9 @@ class TestRequestWithRetry:
             patch("time.sleep"),
             patch.object(bosch_camera, "_maybe_print_maintenance_hint"),
         ):
-            resp = bosch_camera._request_with_retry(session, "GET", "https://example.com/x", max_attempts=2)
+            resp = bosch_camera._request_with_retry(
+                session, "GET", "https://example.com/x", max_attempts=2
+            )
         assert resp.status_code == 503
 
     def test_success_on_first_attempt(self) -> None:
@@ -265,19 +267,25 @@ class TestRequestWithRetry:
 
     def test_timeout_retries_then_raises(self) -> None:
         import requests as req_lib
+
         session = MagicMock()
         session.request.side_effect = req_lib.exceptions.Timeout("timed out")
         with patch("time.sleep"):
             with pytest.raises(req_lib.exceptions.Timeout):
-                bosch_camera._request_with_retry(session, "GET", "https://example.com/z", max_attempts=2)
+                bosch_camera._request_with_retry(
+                    session, "GET", "https://example.com/z", max_attempts=2
+                )
 
     def test_connection_error_retries_then_raises(self) -> None:
         import requests as req_lib
+
         session = MagicMock()
         session.request.side_effect = req_lib.exceptions.ConnectionError("refused")
         with patch("time.sleep"):
             with pytest.raises(req_lib.exceptions.ConnectionError):
-                bosch_camera._request_with_retry(session, "GET", "https://example.com/w", max_attempts=2)
+                bosch_camera._request_with_retry(
+                    session, "GET", "https://example.com/w", max_attempts=2
+                )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -440,9 +448,7 @@ class TestCmdWatchMotionEdges:
             patch.object(bosch_camera.MotionEdgeTracker, "update", _fake_update),
             patch.object(bosch_camera, "snap_from_proxy", return_value=FAKE_SNAP),
             patch.object(bosch_camera, "BASE_DIR", str(tmp_path)),
-            patch.object(
-                bosch_camera, "_motion_snapshot_dir", return_value=str(tmp_path)
-            ),
+            patch.object(bosch_camera, "_motion_snapshot_dir", return_value=str(tmp_path)),
             patch.object(bosch_camera, "_motion_snapshot_cleanup"),
         ):
             self._run_watch_two_iterations(
@@ -458,9 +464,7 @@ class TestCmdWatchMotionEdges:
         captured = capsys.readouterr()
         assert "Watching" in captured.out
 
-    def test_auto_snapshot_no_data_logs_failed(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_auto_snapshot_no_data_logs_failed(self, capsys: pytest.CaptureFixture[str]) -> None:
         """auto_snapshot=True + rising edge + no snap data → failure message."""
         cfg = _make_cfg()
         update_calls: list[str | None] = ["rising", None]
@@ -513,9 +517,7 @@ class TestCmdRename:
             bosch_camera.cmd_rename(cfg, args)
         return cfg
 
-    def test_missing_cam_or_name_prints_usage(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_missing_cam_or_name_prints_usage(self, capsys: pytest.CaptureFixture[str]) -> None:
         cfg = _make_cfg()
         session = MagicMock()
         with (
@@ -539,18 +541,14 @@ class TestCmdRename:
         capsys.readouterr()
         # No crash; key is the function ran
 
-    def test_offline_444_prints_warning(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_offline_444_prints_warning(self, capsys: pytest.CaptureFixture[str]) -> None:
         args = argparse.Namespace(cam=CAM_NAME, new_name="Pool")
         resp = _mock_response(444, json_data={"error": "offline"})
         self._run_rename(args, resp)
         out = capsys.readouterr().out
         assert "⚠️" in out or "444" in out or "offline" in out
 
-    def test_failure_other_status_prints_error(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_failure_other_status_prints_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         args = argparse.Namespace(cam=CAM_NAME, new_name="Garage")
         self._run_rename(args, _mock_response(500, text="internal error"))
         out = capsys.readouterr().out
@@ -655,10 +653,15 @@ class TestCmdProfile:
         """login_problems list non-empty → displayed in output."""
         data = {
             "userInformation": {
-                "firstName": "T", "lastName": "U", "displayName": "TU",
-                "email": "t@example.com", "language": "en",
-                "locale": "en_US", "timeZone": "UTC",
-                "marketingContact": False, "iotThingsIntegration": True,
+                "firstName": "T",
+                "lastName": "U",
+                "displayName": "TU",
+                "email": "t@example.com",
+                "language": "en",
+                "locale": "en_US",
+                "timeZone": "UTC",
+                "marketingContact": False,
+                "iotThingsIntegration": True,
             },
             "lastLoginTime": "2024-06-01T00:00:00Z",
             "tokenExpirationTime": "2024-12-31T00:00:00Z",
@@ -676,9 +679,7 @@ class TestCmdProfile:
 
 
 class TestCmdAccount:
-    def _run_account(
-        self, responses: list[MagicMock], capsys: pytest.CaptureFixture[str]
-    ) -> str:
+    def _run_account(self, responses: list[MagicMock], capsys: pytest.CaptureFixture[str]) -> str:
         cfg = _make_cfg()
         session = MagicMock()
         call_iter = iter(responses)
@@ -700,7 +701,12 @@ class TestCmdAccount:
 
     def test_all_200_success(self, capsys: pytest.CaptureFixture[str]) -> None:
         flags = {"premium": True, "clips": False}
-        contracts = {"tacVersion": "1.2", "tacURL": "https://bosch.com/tac", "dpnVersion": "1.0", "dpnURL": "https://bosch.com/dpn"}
+        contracts = {
+            "tacVersion": "1.2",
+            "tacURL": "https://bosch.com/tac",
+            "dpnVersion": "1.0",
+            "dpnURL": "https://bosch.com/dpn",
+        }
         purchases = [{"name": "Premium", "status": "ACTIVE", "expiryDate": "2025-12-31"}]
         out = self._run_account(
             [
@@ -842,6 +848,7 @@ class TestCmdFeatureFlags:
         ):
             bosch_camera.cmd_feature_flags(cfg, args)
         import sys as _sys  # noqa: F401 — capsys is used by fixture not here
+
         return ""  # caller uses capsys
 
     def test_dict_flags_output(self, capsys: pytest.CaptureFixture[str]) -> None:

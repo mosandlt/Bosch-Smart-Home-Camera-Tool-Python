@@ -128,9 +128,7 @@ class TestFetchFingerprint:
 
     def test_wraps_socket_errors_in_cert_pinning_error(self) -> None:
         """Network failures are wrapped in CertPinningError."""
-        with patch(
-            "bosch_tls.socket.create_connection", side_effect=OSError("Connection refused")
-        ):
+        with patch("bosch_tls.socket.create_connection", side_effect=OSError("Connection refused")):
             with pytest.raises(CertPinningError, match="Could not fetch certificate"):
                 _fetch_fingerprint("192.0.2.1")
 

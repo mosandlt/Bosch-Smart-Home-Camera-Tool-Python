@@ -22,6 +22,7 @@ import bosch_camera
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
+
 def _make_cfg_with_cameras(
     lan_ip: str = "192.0.2.1",
     cam_id: str = "AAAA-0001",
@@ -31,30 +32,30 @@ def _make_cfg_with_cameras(
         "account": {"bearer_token": "", "refresh_token": "", "username": "", "password": ""},
         "cameras": {
             "TestCam": {
-                "id":       cam_id,
-                "name":     "TestCam",
-                "model":    "HOME_Eyes_Outdoor",
+                "id": cam_id,
+                "name": "TestCam",
+                "model": "HOME_Eyes_Outdoor",
                 "local_ip": lan_ip,
             }
         },
         "settings": {},
-        "lan_ips":  {},
-        "nvr":      {"max_clips": 50, "max_duration": 60, "smb": {}},
+        "lan_ips": {},
+        "nvr": {"max_clips": 50, "max_duration": 60, "smb": {}},
     }
 
 
 def _make_args(**kwargs) -> argparse.Namespace:
     """Build an argparse.Namespace with sensible defaults."""
     defaults = {
-        "cam":    None,
+        "cam": None,
         "action": None,
-        "local":  False,
-        "json":   False,
+        "local": False,
+        "json": False,
         "minutes": None,
         "extra_args": [],
         "lan_sub": None,
         "lan_cam": None,
-        "lan_ip":  None,
+        "lan_ip": None,
     }
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -63,6 +64,7 @@ def _make_args(**kwargs) -> argparse.Namespace:
 # ══════════════════════════════════════════════════════════════════════════════
 # bosch_ping_subcommand tests
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestBoschPingSubcommand:
     """cmd_ping: TCP probe to camera LAN IPs."""
@@ -112,9 +114,7 @@ class TestBoschPingSubcommand:
         assert data[0]["ip"] == "192.0.2.20"
         assert data[0]["rtt_ms"] == pytest.approx(7.3, abs=0.1)
 
-    def test_ping_json_no_ip(
-        self, tmp_config_dir: str, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_ping_json_no_ip(self, tmp_config_dir: str, capsys: pytest.CaptureFixture[str]) -> None:
         """--json with no LAN IP: reachable=False, ip=None, error set."""
         cfg = _make_cfg_with_cameras(lan_ip="")
         bosch_camera.cmd_ping(cfg, _make_args(json=True))
@@ -149,6 +149,7 @@ class TestBoschPingSubcommand:
 # ══════════════════════════════════════════════════════════════════════════════
 # bosch_privacy_local_flag tests
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestBoschPrivacyLocalFlag:
     """cmd_privacy --local: direct LAN RCP write, no cloud."""
@@ -214,21 +215,19 @@ class TestBoschPrivacyLocalFlag:
         out = capsys.readouterr().out
         assert "on or off" in out.lower() or "action" in out.lower()
 
-    def test_privacy_local_does_not_call_cloud(
-        self, tmp_config_dir: str
-    ) -> None:
+    def test_privacy_local_does_not_call_cloud(self, tmp_config_dir: str) -> None:
         """--local never touches get_token or make_session."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True), \
-             patch.object(bosch_camera, "get_token") as mock_token, \
-             patch.object(bosch_camera, "make_session") as mock_session:
+        with (
+            patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True),
+            patch.object(bosch_camera, "get_token") as mock_token,
+            patch.object(bosch_camera, "make_session") as mock_session,
+        ):
             bosch_camera.cmd_privacy(cfg, _make_args(action="on", local=True))
         mock_token.assert_not_called()
         mock_session.assert_not_called()
 
-    def test_privacy_local_uses_lan_ips_map(
-        self, tmp_config_dir: str
-    ) -> None:
+    def test_privacy_local_uses_lan_ips_map(self, tmp_config_dir: str) -> None:
         """lan_ips map value is used when local_ip is empty."""
         cfg = _make_cfg_with_cameras(lan_ip="", cam_id="AAAA-0001")
         cfg["lan_ips"]["AAAA-0001"] = "192.0.2.100"
@@ -241,33 +240,34 @@ class TestBoschPrivacyLocalFlag:
 # bosch_light_local_flag tests
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestBoschLightLocalFlag:
     """cmd_light --local: direct LAN RCP write for front light."""
 
-    def test_light_local_on_calls_rcp_brightness_100(
-        self, tmp_config_dir: str
-    ) -> None:
+    def test_light_local_on_calls_rcp_brightness_100(self, tmp_config_dir: str) -> None:
         """'on --local' writes brightness=100."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp:
+        with patch.object(
+            bosch_camera, "_lan_rcp_write_front_light", return_value=True
+        ) as mock_rcp:
             bosch_camera.cmd_light(cfg, _make_args(action="on", local=True))
         mock_rcp.assert_called_once_with("192.0.2.1", 100)
 
-    def test_light_local_off_calls_rcp_brightness_0(
-        self, tmp_config_dir: str
-    ) -> None:
+    def test_light_local_off_calls_rcp_brightness_0(self, tmp_config_dir: str) -> None:
         """'off --local' writes brightness=0."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp:
+        with patch.object(
+            bosch_camera, "_lan_rcp_write_front_light", return_value=True
+        ) as mock_rcp:
             bosch_camera.cmd_light(cfg, _make_args(action="off", local=True))
         mock_rcp.assert_called_once_with("192.0.2.1", 0)
 
-    def test_light_local_intensity_calls_rcp_with_correct_value(
-        self, tmp_config_dir: str
-    ) -> None:
+    def test_light_local_intensity_calls_rcp_with_correct_value(self, tmp_config_dir: str) -> None:
         """'intensity 50 --local' writes brightness=50."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp:
+        with patch.object(
+            bosch_camera, "_lan_rcp_write_front_light", return_value=True
+        ) as mock_rcp:
             bosch_camera.cmd_light(cfg, _make_args(action="intensity 50", local=True))
         mock_rcp.assert_called_once_with("192.0.2.1", 50)
 
@@ -313,33 +313,33 @@ class TestBoschLightLocalFlag:
         out = capsys.readouterr().out
         assert "cloud-only" in out.lower() or "wallwasher" in out.lower()
 
-    def test_light_local_does_not_call_cloud(
-        self, tmp_config_dir: str
-    ) -> None:
+    def test_light_local_does_not_call_cloud(self, tmp_config_dir: str) -> None:
         """--local never touches get_token or make_session."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True), \
-             patch.object(bosch_camera, "get_token") as mock_token, \
-             patch.object(bosch_camera, "make_session") as mock_session:
+        with (
+            patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True),
+            patch.object(bosch_camera, "get_token") as mock_token,
+            patch.object(bosch_camera, "make_session") as mock_session,
+        ):
             bosch_camera.cmd_light(cfg, _make_args(action="on", local=True))
         mock_token.assert_not_called()
         mock_session.assert_not_called()
 
-    def test_light_local_intensity_clamp_0(
-        self, tmp_config_dir: str
-    ) -> None:
+    def test_light_local_intensity_clamp_0(self, tmp_config_dir: str) -> None:
         """Intensity 0 writes brightness=0 (clamp)."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp:
+        with patch.object(
+            bosch_camera, "_lan_rcp_write_front_light", return_value=True
+        ) as mock_rcp:
             bosch_camera.cmd_light(cfg, _make_args(action="intensity 0", local=True))
         mock_rcp.assert_called_once_with("192.0.2.1", 0)
 
-    def test_light_local_intensity_clamp_100(
-        self, tmp_config_dir: str
-    ) -> None:
+    def test_light_local_intensity_clamp_100(self, tmp_config_dir: str) -> None:
         """Intensity 100 writes brightness=100 (no over-clamp)."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp:
+        with patch.object(
+            bosch_camera, "_lan_rcp_write_front_light", return_value=True
+        ) as mock_rcp:
             bosch_camera.cmd_light(cfg, _make_args(action="intensity 100", local=True))
         mock_rcp.assert_called_once_with("192.0.2.1", 100)
 
@@ -348,45 +348,36 @@ class TestBoschLightLocalFlag:
 # cloud_5xx_hints_at_local tests
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestCloud5xxHintsAtLocal:
     """_hint_local_on_5xx: prints --local hint on 5xx responses."""
 
-    def test_hint_printed_on_500(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_hint_printed_on_500(self, capsys: pytest.CaptureFixture[str]) -> None:
         """HTTP 500 triggers hint output."""
         bosch_camera._hint_local_on_5xx(500, "bosch privacy on --local")
         out = capsys.readouterr().out
         assert "500" in out
         assert "--local" in out
 
-    def test_hint_printed_on_503(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_hint_printed_on_503(self, capsys: pytest.CaptureFixture[str]) -> None:
         """HTTP 503 (typical Bosch cloud outage) triggers hint output."""
         bosch_camera._hint_local_on_5xx(503, "bosch light on --local")
         out = capsys.readouterr().out
         assert "503" in out
 
-    def test_hint_not_printed_on_200(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_hint_not_printed_on_200(self, capsys: pytest.CaptureFixture[str]) -> None:
         """HTTP 200 does not trigger any output."""
         bosch_camera._hint_local_on_5xx(200, "bosch privacy on --local")
         out = capsys.readouterr().out
         assert out == ""
 
-    def test_hint_not_printed_on_404(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_hint_not_printed_on_404(self, capsys: pytest.CaptureFixture[str]) -> None:
         """HTTP 404 (client error) does not trigger the hint."""
         bosch_camera._hint_local_on_5xx(404, "bosch privacy on --local")
         out = capsys.readouterr().out
         assert out == ""
 
-    def test_hint_without_command_hint(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_hint_without_command_hint(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Called with empty command_hint still prints the generic fallback message."""
         bosch_camera._hint_local_on_5xx(500)
         out = capsys.readouterr().out
@@ -405,16 +396,23 @@ class TestCloud5xxHintsAtLocal:
             status=503,
             body="Service Unavailable",
         )
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session",
-                          return_value=MagicMock(
-                              get=MagicMock(return_value=MagicMock(
-                                  status_code=503,
-                                  text="Service Unavailable",
-                                  raise_for_status=MagicMock(side_effect=Exception("503")),
-                              ))
-                          )), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(
+                bosch_camera,
+                "make_session",
+                return_value=MagicMock(
+                    get=MagicMock(
+                        return_value=MagicMock(
+                            status_code=503,
+                            text="Service Unavailable",
+                            raise_for_status=MagicMock(side_effect=Exception("503")),
+                        )
+                    )
+                ),
+            ),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             try:
                 bosch_camera.cmd_privacy(cfg, _make_args(action="on"))
             except Exception:
@@ -429,16 +427,23 @@ class TestCloud5xxHintsAtLocal:
     ) -> None:
         """cmd_light cloud path: when video_inputs returns 503, hint is printed."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "get_token", return_value="tok"), \
-             patch.object(bosch_camera, "make_session",
-                          return_value=MagicMock(
-                              get=MagicMock(return_value=MagicMock(
-                                  status_code=503,
-                                  text="Service Unavailable",
-                                  raise_for_status=MagicMock(side_effect=Exception("503")),
-                              ))
-                          )), \
-             patch.object(bosch_camera, "get_cameras"):
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(
+                bosch_camera,
+                "make_session",
+                return_value=MagicMock(
+                    get=MagicMock(
+                        return_value=MagicMock(
+                            status_code=503,
+                            text="Service Unavailable",
+                            raise_for_status=MagicMock(side_effect=Exception("503")),
+                        )
+                    )
+                ),
+            ),
+            patch.object(bosch_camera, "get_cameras"),
+        ):
             try:
                 bosch_camera.cmd_light(cfg, _make_args(action="on"))
             except Exception:
@@ -451,6 +456,7 @@ class TestCloud5xxHintsAtLocal:
 # ══════════════════════════════════════════════════════════════════════════════
 # LAN helper unit tests
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestLanHelpers:
     """Unit tests for _lan_tcp_ping, _resolve_lan_ip, _lan_rcp_write."""
@@ -563,6 +569,7 @@ class TestLanHelpers:
 # lan-ips subcommand tests
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestLanIpsSubcommand:
     """cmd_lan_ips: list / set / unset / sync."""
 
@@ -620,6 +627,7 @@ class TestLanIpsSubcommand:
 # DEFAULT_CONFIG lan_ips section test
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestDefaultConfigLanIps:
     """Verify lan_ips section in DEFAULT_CONFIG and config merge."""
 
@@ -635,9 +643,7 @@ class TestDefaultConfigLanIps:
         assert "lan_ips" in cfg
         assert isinstance(cfg["lan_ips"], dict)
 
-    def test_load_config_creates_lan_ips_section(
-        self, tmp_config_dir: str
-    ) -> None:
+    def test_load_config_creates_lan_ips_section(self, tmp_config_dir: str) -> None:
         """load_config() on a fresh install produces lan_ips in the returned dict."""
         cfg = bosch_camera.load_config()
         assert "lan_ips" in cfg

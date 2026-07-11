@@ -38,7 +38,9 @@ def get_local_ip() -> str:
     try:
         result = subprocess.run(
             ["ipconfig", "getifaddr", "en0"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         ip = result.stdout.strip()
         if ip:
@@ -62,7 +64,9 @@ def check_mitmproxy() -> bool:
     try:
         result = subprocess.run(
             ["mitmdump", "--version"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return result.returncode == 0
     except FileNotFoundError:
@@ -73,17 +77,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Start mitmproxy for Bosch Smart Camera app traffic capture"
     )
+    parser.add_argument("--port", type=int, default=8890, help="Proxy listen port (default: 8890)")
     parser.add_argument(
-        "--port", type=int, default=8890,
-        help="Proxy listen port (default: 8890)"
+        "--dump",
+        action="store_true",
+        help="Save captured flows to a timestamped file for later analysis",
     )
     parser.add_argument(
-        "--dump", action="store_true",
-        help="Save captured flows to a timestamped file for later analysis"
-    )
-    parser.add_argument(
-        "--filter", type=str, default="",
-        help="Filter expression (e.g. '~d boschsecurity.com' for Bosch traffic only)"
+        "--filter",
+        type=str,
+        default="",
+        help="Filter expression (e.g. '~d boschsecurity.com' for Bosch traffic only)",
     )
     args = parser.parse_args()
 
@@ -139,9 +143,12 @@ def main() -> None:
     # Build mitmdump command
     cmd = [
         "mitmdump",
-        "--listen-host", local_ip,
-        "--listen-port", str(port),
-        "--set", "console_eventlog_verbosity=info",
+        "--listen-host",
+        local_ip,
+        "--listen-port",
+        str(port),
+        "--set",
+        "console_eventlog_verbosity=info",
         "--showhost",
         # Apple domains use certificate pinning — bypass them
         "--ignore-hosts",
@@ -164,7 +171,7 @@ def main() -> None:
         if args.dump and os.path.exists(dump_file):
             size = os.path.getsize(dump_file) / 1024
             print(f"  Flows saved to: {dump_file} ({size:.0f} KB)")
-            print(f"  View later:     mitmproxy --rfile \"{dump_file}\"")
+            print(f'  View later:     mitmproxy --rfile "{dump_file}"')
         print()
         print("  Don't forget to remove the proxy from your phone's WiFi settings!")
         print()

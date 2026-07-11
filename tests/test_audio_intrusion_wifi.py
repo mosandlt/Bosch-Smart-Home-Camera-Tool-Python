@@ -43,10 +43,13 @@ def _make_cfg(cam_id: str = CAM_ID, cam_name: str = CAM_NAME) -> dict[str, Any]:
 
     def _jwt() -> str:
         import json as _j
+
         hdr = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
-        pay = base64.urlsafe_b64encode(
-            _j.dumps({"exp": int(time.time()) + 3600}).encode()
-        ).rstrip(b"=").decode()
+        pay = (
+            base64.urlsafe_b64encode(_j.dumps({"exp": int(time.time()) + 3600}).encode())
+            .rstrip(b"=")
+            .decode()
+        )
         return f"{hdr}.{pay}.sig"
 
     return {
@@ -379,8 +382,12 @@ class TestCmdIntrusionGet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 4, "distance": 7},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 4,
+                "distance": 7,
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -427,8 +434,12 @@ class TestCmdIntrusionGet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ZONES",
-                          "sensitivity": 2, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ZONES",
+                "sensitivity": 2,
+                "distance": 5,
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -456,8 +467,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ZONES",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ZONES",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         sess.put.return_value = MagicMock(status_code=200)
         with (
@@ -475,8 +490,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         sess.put.return_value = MagicMock(status_code=200)
         with (
@@ -494,8 +513,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         sess.put.return_value = MagicMock(status_code=200)
         with (
@@ -512,8 +535,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         sess.put.return_value = MagicMock(status_code=200)
         with (
@@ -530,8 +557,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -549,8 +580,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         sess.put.return_value = MagicMock(status_code=200)
         with (
@@ -567,8 +602,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         sess.put.return_value = MagicMock(status_code=200)
         with (
@@ -585,8 +624,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -604,8 +647,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -623,8 +670,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -640,8 +691,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -657,8 +712,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 1, "distance": 3},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 1,
+                "distance": 3,
+            },
         )
         sess.put.return_value = MagicMock(status_code=200)
         with (
@@ -678,8 +737,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -695,8 +758,12 @@ class TestCmdIntrusionSet:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"enabled": True, "detectionMode": "ALL_MOTIONS",
-                          "sensitivity": 3, "distance": 5},
+            json=lambda: {
+                "enabled": True,
+                "detectionMode": "ALL_MOTIONS",
+                "sensitivity": 3,
+                "distance": 5,
+            },
         )
         sess.put.return_value = MagicMock(status_code=200)
         with (
@@ -723,9 +790,13 @@ class TestCmdWifi:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"ssid": "MyNetwork", "rssi": -65,
-                          "signalStrength": 70, "ipAddress": "192.168.1.5",
-                          "macAddress": "aa:bb:cc:dd:ee:ff"},
+            json=lambda: {
+                "ssid": "MyNetwork",
+                "rssi": -65,
+                "signalStrength": 70,
+                "ipAddress": "192.168.1.5",
+                "macAddress": "aa:bb:cc:dd:ee:ff",
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -743,9 +814,13 @@ class TestCmdWifi:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"ssid": "HomeWifi", "rssi": -50,
-                          "signalStrength": 80, "ipAddress": "10.0.0.2",
-                          "macAddress": "11:22:33:44:55:66"},
+            json=lambda: {
+                "ssid": "HomeWifi",
+                "rssi": -50,
+                "signalStrength": 80,
+                "ipAddress": "10.0.0.2",
+                "macAddress": "11:22:33:44:55:66",
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -763,9 +838,13 @@ class TestCmdWifi:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"ssid": "WeakWifi", "rssi": -85,
-                          "signalStrength": 20, "ipAddress": "10.0.0.3",
-                          "macAddress": "ff:ee:dd:cc:bb:aa"},
+            json=lambda: {
+                "ssid": "WeakWifi",
+                "rssi": -85,
+                "signalStrength": 20,
+                "ipAddress": "10.0.0.3",
+                "macAddress": "ff:ee:dd:cc:bb:aa",
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -811,9 +890,13 @@ class TestCmdWifi:
         sess = MagicMock()
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"ssid": "TestSSID", "rssi": -70,
-                          "signalStrength": 55, "ipAddress": "192.168.1.20",
-                          "macAddress": "00:11:22:33:44:55"},
+            json=lambda: {
+                "ssid": "TestSSID",
+                "rssi": -70,
+                "signalStrength": 55,
+                "ipAddress": "192.168.1.20",
+                "macAddress": "00:11:22:33:44:55",
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -848,8 +931,12 @@ class TestCmdWifi:
         # No rssi/signalLevel field at all
         sess.get.return_value = MagicMock(
             status_code=200,
-            json=lambda: {"ssid": "NoRSSI", "signalStrength": 60,
-                          "ipAddress": "10.0.0.9", "macAddress": "00:00:00:00:00:00"},
+            json=lambda: {
+                "ssid": "NoRSSI",
+                "signalStrength": 60,
+                "ipAddress": "10.0.0.9",
+                "macAddress": "00:00:00:00:00:00",
+            },
         )
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
@@ -908,7 +995,9 @@ class TestCmdIntercomeIntercomSpeakerSet:
     def _args_intercom(self, speaker_level: int = 80) -> argparse.Namespace:
         return argparse.Namespace(cam=CAM_NAME, duration=1, speaker_level=speaker_level)
 
-    def test_intercom_speaker_set_issues_get_first(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_intercom_speaker_set_issues_get_first(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """REGRESSION BUG2: intercom must GET /audio before PUT (not partial-PUT)."""
         cfg = _make_cfg()
         sess = self._make_intercom_sess(mic=60)
@@ -942,9 +1031,7 @@ class TestCmdIntercomeIntercomSpeakerSet:
                 pass
         # Find the /audio PUT call
         audio_put_bodies = [
-            call[1]["json"]
-            for call in sess.put.call_args_list
-            if "/audio" in call[0][0]
+            call[1]["json"] for call in sess.put.call_args_list if "/audio" in call[0][0]
         ]
         assert audio_put_bodies, "No PUT to /audio was issued"
         body = audio_put_bodies[0]
@@ -968,9 +1055,7 @@ class TestCmdIntercomeIntercomSpeakerSet:
             except Exception:
                 pass
         audio_put_bodies = [
-            call[1]["json"]
-            for call in sess.put.call_args_list
-            if "/audio" in call[0][0]
+            call[1]["json"] for call in sess.put.call_args_list if "/audio" in call[0][0]
         ]
         assert audio_put_bodies, "No PUT to /audio was issued"
         body = audio_put_bodies[0]

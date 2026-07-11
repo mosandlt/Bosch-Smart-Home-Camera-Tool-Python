@@ -70,9 +70,18 @@ _TIME_RANGE_RE = re.compile(
 )
 # Camera-relevant keywords (lower-case match against title + summary).
 _CAMERA_KEYWORDS: tuple[str, ...] = (
-    "kamera", "kameras", "camera", "cameras",
-    "video", "videos", "videostream", "stream",
-    "cbs", "cloud", "backend", "infrastruktur",
+    "kamera",
+    "kameras",
+    "camera",
+    "cameras",
+    "video",
+    "videos",
+    "videostream",
+    "stream",
+    "cbs",
+    "cloud",
+    "backend",
+    "infrastruktur",
 )
 # Items older than this are treated as historical context, never "scheduled".
 _MAX_AGE = timedelta(days=14)
@@ -117,12 +126,8 @@ class MaintenanceWindow:
             "link": self.link,
             "pub_date": self.pub_date.isoformat(),
             "summary": self.summary,
-            "scheduled_start": (
-                self.scheduled_start.isoformat() if self.scheduled_start else None
-            ),
-            "scheduled_end": (
-                self.scheduled_end.isoformat() if self.scheduled_end else None
-            ),
+            "scheduled_start": (self.scheduled_start.isoformat() if self.scheduled_start else None),
+            "scheduled_end": (self.scheduled_end.isoformat() if self.scheduled_end else None),
             "source": self.source,
             "camera_relevant": self.camera_relevant,
         }
@@ -211,8 +216,8 @@ def _items_from_rss(root: ET.Element) -> Iterable[dict[str, str]]:
                 or ""
             ).strip(),
             "desc": entry.findtext("a:summary", default="", namespaces=atom_ns)
-                    or entry.findtext("a:content", default="", namespaces=atom_ns)
-                    or "",
+            or entry.findtext("a:content", default="", namespaces=atom_ns)
+            or "",
         }
 
 

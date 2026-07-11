@@ -50,7 +50,9 @@ def _jwt() -> str:
     return f"{hdr}.{pay}.sig"
 
 
-def _make_cfg(*, model: str = "HOME_Eyes_Outdoor", mac: str = "aa:bb:cc:dd:ee:ff") -> dict[str, Any]:
+def _make_cfg(
+    *, model: str = "HOME_Eyes_Outdoor", mac: str = "aa:bb:cc:dd:ee:ff"
+) -> dict[str, Any]:
     return {
         "account": {"bearer_token": _jwt(), "refresh_token": "", "username": ""},
         "cameras": {
@@ -185,9 +187,7 @@ class TestCmdStatus:
         out = capsys.readouterr().out
         assert "rescan" in out.lower()
 
-    def test_live_list_http_error_does_not_crash(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_live_list_http_error_does_not_crash(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Non-200 from /video_inputs → no crash, status still printed."""
         cfg = _make_cfg()
 
@@ -425,7 +425,9 @@ class TestCmdSnapshot:
             patch.object(bosch_camera, "get_token", return_value=FAKE_TOKEN),
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
-            patch.object(bosch_camera, "snap_from_proxy", return_value=FAKE_SNAP_BYTES) as mock_proxy,
+            patch.object(
+                bosch_camera, "snap_from_proxy", return_value=FAKE_SNAP_BYTES
+            ) as mock_proxy,
             patch.object(bosch_camera, "_save_and_open"),
         ):
             cmd_snapshot(cfg, _args(live=True, hq=True))
@@ -441,7 +443,9 @@ class TestCmdSnapshot:
             patch.object(bosch_camera, "get_token", return_value=FAKE_TOKEN),
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
-            patch.object(bosch_camera, "snap_from_proxy", return_value=FAKE_SNAP_BYTES) as mock_proxy,
+            patch.object(
+                bosch_camera, "snap_from_proxy", return_value=FAKE_SNAP_BYTES
+            ) as mock_proxy,
             patch.object(bosch_camera, "_save_and_open"),
         ):
             cmd_snapshot(cfg, _args(live=True, quality="high"))
@@ -457,7 +461,9 @@ class TestCmdSnapshot:
             patch.object(bosch_camera, "get_token", return_value=FAKE_TOKEN),
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
-            patch.object(bosch_camera, "snap_from_proxy", return_value=FAKE_SNAP_BYTES) as mock_proxy,
+            patch.object(
+                bosch_camera, "snap_from_proxy", return_value=FAKE_SNAP_BYTES
+            ) as mock_proxy,
             patch.object(bosch_camera, "_save_and_open"),
         ):
             cmd_snapshot(cfg, _args(live=True, quality="low"))
@@ -474,7 +480,9 @@ class TestCmdSnapshot:
             patch.object(bosch_camera, "make_session", return_value=sess),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(
-                bosch_camera, "snap_from_events", return_value=(FAKE_SNAP_BYTES, "2024-01-01T00:00:00Z")
+                bosch_camera,
+                "snap_from_events",
+                return_value=(FAKE_SNAP_BYTES, "2024-01-01T00:00:00Z"),
             ) as mock_events,
             patch.object(bosch_camera, "_save_and_open"),
         ):

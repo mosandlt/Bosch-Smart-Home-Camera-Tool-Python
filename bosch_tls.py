@@ -82,6 +82,7 @@ def _fetch_fingerprint(host: str, port: int = 443, timeout: float = 5.0) -> str:
 def _host_from_url(url: str) -> tuple[str, int]:
     """Extract (host, port) from an https:// URL. Default port = 443."""
     from urllib.parse import urlparse
+
     parsed = urlparse(url)
     host = parsed.hostname or ""
     port = parsed.port or 443
@@ -106,7 +107,8 @@ def pin_or_verify(
     if cfg is None:
         _LOGGER.warning(
             "bosch_tls: no config passed for %s:%s — skipping fingerprint check (verify=False)",
-            host, port,
+            host,
+            port,
         )
         return True
 
@@ -148,6 +150,7 @@ def clear_fingerprint(host: str, cfg: dict[str, Any]) -> bool:
 # Drop-in wrappers — route all LAN camera HTTP calls through these.
 # ---------------------------------------------------------------------------
 
+
 def bosch_get(
     url: str,
     cfg: Optional[dict[str, Any]] = None,
@@ -163,6 +166,7 @@ def bosch_get(
         host, port = _host_from_url(url)
         pin_or_verify(host, port, cfg)
     kwargs.setdefault("verify", False)
+    kwargs.setdefault("timeout", 10)
     return requests.get(url, **kwargs)
 
 
@@ -176,6 +180,7 @@ def bosch_post(
         host, port = _host_from_url(url)
         pin_or_verify(host, port, cfg)
     kwargs.setdefault("verify", False)
+    kwargs.setdefault("timeout", 10)
     return requests.post(url, **kwargs)
 
 
@@ -189,4 +194,5 @@ def bosch_put(
         host, port = _host_from_url(url)
         pin_or_verify(host, port, cfg)
     kwargs.setdefault("verify", False)
+    kwargs.setdefault("timeout", 10)
     return requests.put(url, **kwargs)

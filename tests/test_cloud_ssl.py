@@ -31,6 +31,7 @@ from bosch_cloud_ssl import (
 # CA PEM constant
 # ---------------------------------------------------------------------------
 
+
 class TestBoschCloudCaPem:
     def test_pem_is_str(self) -> None:
         assert isinstance(BOSCH_CLOUD_CA_PEM, str)
@@ -50,6 +51,7 @@ class TestBoschCloudCaPem:
 # ---------------------------------------------------------------------------
 # build_bosch_cloud_ssl_context
 # ---------------------------------------------------------------------------
+
 
 class TestBuildBoschCloudSslContext:
     def test_returns_ssl_context(self) -> None:
@@ -79,6 +81,7 @@ class TestBuildBoschCloudSslContext:
 # get_bosch_cloud_ssl_context (caching)
 # ---------------------------------------------------------------------------
 
+
 class TestGetBoschCloudSslContext:
     def test_caches_on_second_call(self) -> None:
         # Reset module-level cache first so the test is deterministic.
@@ -99,6 +102,7 @@ class TestGetBoschCloudSslContext:
 # ---------------------------------------------------------------------------
 # _BoschCloudAdapter
 # ---------------------------------------------------------------------------
+
 
 class TestBoschCloudAdapter:
     def test_init_poolmanager_passes_ssl_context(self) -> None:
@@ -128,9 +132,11 @@ class TestBoschCloudAdapter:
 # make_bosch_cloud_session
 # ---------------------------------------------------------------------------
 
+
 class TestMakeBoschCloudSession:
     def test_returns_requests_session(self) -> None:
         import requests as req_lib
+
         s = make_bosch_cloud_session()
         assert isinstance(s, req_lib.Session)
 
@@ -156,6 +162,7 @@ class TestMakeBoschCloudSession:
 # requests_*_bosch_cloud helpers — verify= stripping
 # ---------------------------------------------------------------------------
 
+
 class TestRequestsBoschCloudHelpers:
     """Drop-in helpers must strip any caller-supplied verify= kwarg."""
 
@@ -169,36 +176,43 @@ class TestRequestsBoschCloudHelpers:
 
     def test_get_strips_verify_false(self) -> None:
         with self._mock_session("get") as mock_make:
-            requests_get_bosch_cloud("https://residential.cbs.boschsecurity.com/test",
-                                     verify=False, timeout=5)
+            requests_get_bosch_cloud(
+                "https://residential.cbs.boschsecurity.com/test", verify=False, timeout=5
+            )
             _, call_kwargs = mock_make.return_value.get.call_args
             assert "verify" not in call_kwargs
 
     def test_get_strips_verify_true(self) -> None:
         with self._mock_session("get") as mock_make:
-            requests_get_bosch_cloud("https://residential.cbs.boschsecurity.com/test",
-                                     verify=True, timeout=5)
+            requests_get_bosch_cloud(
+                "https://residential.cbs.boschsecurity.com/test", verify=True, timeout=5
+            )
             _, call_kwargs = mock_make.return_value.get.call_args
             assert "verify" not in call_kwargs
 
     def test_put_strips_verify(self) -> None:
         with self._mock_session("put") as mock_make:
-            requests_put_bosch_cloud("https://residential.cbs.boschsecurity.com/test",
-                                     verify=False, timeout=5)
+            requests_put_bosch_cloud(
+                "https://residential.cbs.boschsecurity.com/test", verify=False, timeout=5
+            )
             _, call_kwargs = mock_make.return_value.put.call_args
             assert "verify" not in call_kwargs
 
     def test_post_strips_verify(self) -> None:
         with self._mock_session("post") as mock_make:
-            requests_post_bosch_cloud("https://residential.cbs.boschsecurity.com/test",
-                                      verify=False, timeout=5)
+            requests_post_bosch_cloud(
+                "https://residential.cbs.boschsecurity.com/test", verify=False, timeout=5
+            )
             _, call_kwargs = mock_make.return_value.post.call_args
             assert "verify" not in call_kwargs
 
     def test_get_passes_other_kwargs(self) -> None:
         with self._mock_session("get") as mock_make:
-            requests_get_bosch_cloud("https://residential.cbs.boschsecurity.com/test",
-                                     timeout=10, headers={"X-Foo": "bar"})
+            requests_get_bosch_cloud(
+                "https://residential.cbs.boschsecurity.com/test",
+                timeout=10,
+                headers={"X-Foo": "bar"},
+            )
             _, call_kwargs = mock_make.return_value.get.call_args
             assert call_kwargs.get("timeout") == 10
             assert call_kwargs.get("headers") == {"X-Foo": "bar"}

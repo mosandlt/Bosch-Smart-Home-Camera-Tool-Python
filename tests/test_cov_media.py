@@ -40,9 +40,11 @@ CAM_NAME_INDOOR = "Kamera"
 
 def _jwt() -> str:
     hdr = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
-    pay = base64.urlsafe_b64encode(
-        _json_mod.dumps({"exp": int(time.time()) + 3600}).encode()
-    ).rstrip(b"=").decode()
+    pay = (
+        base64.urlsafe_b64encode(_json_mod.dumps({"exp": int(time.time()) + 3600}).encode())
+        .rstrip(b"=")
+        .decode()
+    )
     return f"{hdr}.{pay}.sig"
 
 
@@ -329,10 +331,17 @@ class TestCmdSiren:
         cfg: dict[str, Any] = {
             "account": {"bearer_token": _jwt(), "refresh_token": "", "username": ""},
             "cameras": {
-                "CamA": {"id": CAM_ID, "name": "CamA", "model": "HOME_Eyes_Indoor", "firmware": "9.0"},
+                "CamA": {
+                    "id": CAM_ID,
+                    "name": "CamA",
+                    "model": "HOME_Eyes_Indoor",
+                    "firmware": "9.0",
+                },
                 "CamB": {
-                    "id": CAM_ID_INDOOR, "name": "CamB",
-                    "model": "HOME_Eyes_Indoor", "firmware": "9.0",
+                    "id": CAM_ID_INDOOR,
+                    "name": "CamB",
+                    "model": "HOME_Eyes_Indoor",
+                    "firmware": "9.0",
                 },
             },
             "settings": {},
@@ -536,9 +545,7 @@ class TestCmdSiren:
 class TestCmdNotifications:
     """Tests for cmd_notifications — get / on / off / already-set / error paths."""
 
-    def _cam_list_response(
-        self, cam_id: str = CAM_ID, status: str = "ALWAYS_OFF"
-    ) -> MagicMock:
+    def _cam_list_response(self, cam_id: str = CAM_ID, status: str = "ALWAYS_OFF") -> MagicMock:
         return _ok([{"id": cam_id, "notificationsEnabledStatus": status}])
 
     def test_get_shows_current_state(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1100,7 +1107,12 @@ class TestCmdUnread:
         cfg: dict[str, Any] = {
             "account": {"bearer_token": _jwt(), "refresh_token": "", "username": ""},
             "cameras": {
-                "CamA": {"id": CAM_ID, "name": "CamA", "model": "HOME_Eyes_Outdoor", "firmware": "9.0"},
+                "CamA": {
+                    "id": CAM_ID,
+                    "name": "CamA",
+                    "model": "HOME_Eyes_Outdoor",
+                    "firmware": "9.0",
+                },
                 "CamB": {
                     "id": CAM_ID_INDOOR,
                     "name": "CamB",
@@ -1132,12 +1144,16 @@ class TestCmdUnread:
             "account": {"bearer_token": _jwt(), "refresh_token": "", "username": ""},
             "cameras": {
                 "CamA": {
-                    "id": CAM_ID, "name": "CamA",
-                    "model": "HOME_Eyes_Outdoor", "firmware": "9.0",
+                    "id": CAM_ID,
+                    "name": "CamA",
+                    "model": "HOME_Eyes_Outdoor",
+                    "firmware": "9.0",
                 },
                 "CamB": {
-                    "id": CAM_ID_INDOOR, "name": "CamB",
-                    "model": "HOME_Eyes_Indoor", "firmware": "9.0",
+                    "id": CAM_ID_INDOOR,
+                    "name": "CamB",
+                    "model": "HOME_Eyes_Indoor",
+                    "firmware": "9.0",
                 },
             },
             "settings": {},

@@ -13,6 +13,7 @@ import bosch_camera
 
 # ── fixtures / helpers ────────────────────────────────────────────────────────
 
+
 def _cfg_with_cams(**cameras: dict) -> dict:
     """Build a minimal config dict with the given camera entries."""
     return {"cameras": cameras}
@@ -20,10 +21,11 @@ def _cfg_with_cams(**cameras: dict) -> dict:
 
 CAM_GARTEN: dict = {"id": "aaa", "name": "Garten", "model": "OUTDOOR"}
 CAM_KAMERA: dict = {"id": "bbb", "name": "Kamera", "model": "OUTDOOR"}
-CAM_INNEN:  dict = {"id": "ccc", "name": "Innenbereich", "model": "INDOOR"}
+CAM_INNEN: dict = {"id": "ccc", "name": "Innenbereich", "model": "INDOOR"}
 
 
 # ── key=None paths ────────────────────────────────────────────────────────────
+
 
 class TestResolveCamNoKey:
     def test_none_key_single_cam_returns_all(self) -> None:
@@ -47,6 +49,7 @@ class TestResolveCamNoKey:
 
 # ── exact match ───────────────────────────────────────────────────────────────
 
+
 class TestResolveCamExactMatch:
     def test_exact_match_returns_single_entry(self) -> None:
         """Exact name match returns a dict with exactly one entry."""
@@ -64,6 +67,7 @@ class TestResolveCamExactMatch:
 
 
 # ── case-insensitive partial match ────────────────────────────────────────────
+
 
 class TestResolveCamCaseInsensitive:
     def test_lowercase_key_matches_title_case_name(self) -> None:
@@ -89,6 +93,7 @@ class TestResolveCamCaseInsensitive:
 
 
 # ── no match ──────────────────────────────────────────────────────────────────
+
 
 class TestResolveCamNoMatch:
     def test_unknown_name_calls_sys_exit(self) -> None:

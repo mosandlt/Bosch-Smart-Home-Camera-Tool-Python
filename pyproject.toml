@@ -68,3 +68,56 @@ target-version = "py310"
 python_version = "3.10"
 strict = true
 ignore_missing_imports = true
+
+[tool.coverage.report]
+fail_under = 90
+
+[tool.pylint.MASTER]
+persistent = false
+jobs = 2
+
+[tool.pylint.REPORTS]
+score = false
+
+[tool.pylint."MESSAGES CONTROL"]
+disable = [
+  # ruff already enforces these — disable to avoid duplicate CI noise
+  "format",
+  "wrong-import-order",
+  "line-too-long",
+  "unused-import",   # ruff F401
+  "unused-variable", # ruff F841
+  # mypy already enforces these
+  "import-error",
+  "no-member",
+  # project conventions — single flat CLI module, not a package
+  "too-many-lines",          # bosch_camera.py is a deliberately flat single-file CLI
+  "too-many-branches",       # argparse dispatch + cmd_* handlers are inherently branchy
+  "too-many-statements",
+  "too-many-locals",
+  "too-many-arguments",
+  "too-many-positional-arguments",
+  "broad-exception-caught",  # network calls catch broadly to print a clean CLI error
+  "missing-function-docstring", # most cmd_* handlers have a module-level docstring instead
+  "invalid-name",             # short CLI-local names (r, cm, cfg) are conventional here
+  "import-outside-toplevel", # optional-dependency (numpy/PIL/smbclient) + circular-import avoidance
+  "reimported",               # same symbol imported lazily in multiple cmd_* scopes
+  "cell-var-from-loop",       # closures are called synchronously within the same iteration, never deferred
+  "missing-timeout",          # false positive — bosch_get/post/put (bosch_tls.py) set a kwargs.setdefault("timeout", 10)
+  "global-statement",         # module-level lazy-init caches (bosch_cloud_ssl adapter, bosch_i18n lang cache)
+  "arguments-renamed",        # urllib3 HTTPAdapter override intentionally matches urllib3's own param name drift
+  "too-many-instance-attributes", # bosch_maintenance.py's diagnostic report dataclass-like holder
+  "missing-class-docstring",  # tiny local helper classes (e.g. the OAuth callback HTTP handler)
+  "redefined-builtin",        # get_token.py's `format` param name mirrors argparse's own --format flag
+  "subprocess-run-check",     # diagnostic subprocess calls (ipconfig/ffmpeg) already branch on stdout/returncode
+  "no-else-return",           # explicit if/elif/else chains read clearer than de-indented early returns here
+  "too-many-return-statements", # cmd_* dispatch/status functions have one return per status branch by design
+  "too-many-nested-blocks",   # deeply-nested RCP/stream fallback cascades reflect the real protocol cascade
+  "unused-argument",          # argparse cmd_* signatures are fixed by the dispatch table, not all args used per command
+  "consider-using-with",      # subprocess.Popen handles for long-running child processes (ffmpeg/go2rtc) outlive the function
+  "redefined-outer-name",     # threading/signal/t re-imported locally in a few functions for lazy-import reasons
+  "useless-return",           # explicit `return` at a function's end documents "no value on purpose" for cmd_* handlers
+  "fixme",                    # tracked TODOs (e.g. TURN/NAT-traversal) are deliberate backlog markers, not lint debt
+  "protected-access",         # `proc._nvr_out_path`/`proc._go2rtc_cfg_path` SET a new custom attr on our own subprocess handle, not access an external private member
+  "no-else-break",            # same readability call as no-else-return
+]

@@ -72,14 +72,16 @@ def test_event_image_fetch_does_not_send_json_only_accept() -> None:
     responses_lib.add(
         responses_lib.GET,
         "https://residential.cbs.boschsecurity.com/v11/events",
-        json=[{
-            "id": "E1",
-            "timestamp": "2026-05-24T08:18:02.893+02:00",
-            "eventType": "MOVEMENT",
-            "imageUrl": img_url,
-            "videoClipUrl": clip_url,
-            "videoClipUploadStatus": "Done",
-        }],
+        json=[
+            {
+                "id": "E1",
+                "timestamp": "2026-05-24T08:18:02.893+02:00",
+                "eventType": "MOVEMENT",
+                "imageUrl": img_url,
+                "videoClipUrl": clip_url,
+                "videoClipUploadStatus": "Done",
+            }
+        ],
         status=200,
         match=[matchers.query_param_matcher({"videoInputId": cam_id, "limit": "10"})],
     )
@@ -91,8 +93,11 @@ def test_event_image_fetch_does_not_send_json_only_accept() -> None:
         # Refuse with 500 if Accept is application/json — mirrors Bosch's real
         # behavior. Otherwise return image bytes.
         if req.headers.get("Accept", "") == "application/json":
-            return (500, {"Content-Type": "application/json"},
-                    b'{"status":500,"error":"sh:internal.error"}')
+            return (
+                500,
+                {"Content-Type": "application/json"},
+                b'{"status":500,"error":"sh:internal.error"}',
+            )
         return (200, {"Content-Type": "image/jpeg"}, b"\xff\xd8\xff\xe0" + b"x" * 100)
 
     responses_lib.add_callback(responses_lib.GET, img_url, callback=_capture_accept)

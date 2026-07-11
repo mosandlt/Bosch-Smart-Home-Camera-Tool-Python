@@ -23,6 +23,7 @@ FROZEN_NOW = "2024-06-01 12:00:00"
 
 # ── _is_token_expired ─────────────────────────────────────────────────────────
 
+
 class TestIsTokenExpired:
     @freeze_time(FROZEN_NOW)
     def test_valid_token_returns_false(self, valid_token: str) -> None:
@@ -65,6 +66,7 @@ class TestIsTokenExpired:
         """
         import base64
         import json
+
         header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
         payload = base64.urlsafe_b64encode(json.dumps({"sub": "u"}).encode()).rstrip(b"=").decode()
         token = f"{header}.{payload}.sig"
@@ -88,6 +90,7 @@ class TestIsTokenExpired:
 
 
 # ── _is_token_near_expiry ─────────────────────────────────────────────────────
+
 
 class TestIsTokenNearExpiry:
     @freeze_time(FROZEN_NOW)
@@ -123,6 +126,7 @@ class TestIsTokenNearExpiry:
 
 # ── check_token_age ───────────────────────────────────────────────────────────
 
+
 class TestCheckTokenAge:
     @freeze_time(FROZEN_NOW)
     def test_no_token_returns_no_token(self, tmp_config_dir: str) -> None:
@@ -148,6 +152,7 @@ class TestCheckTokenAge:
         The expired token hits the `mins <= 0` branch before reaching mtime fallback.
         """
         import bosch_camera as bc
+
         bc.save_config({"account": {"bearer_token": expired_token}, "cameras": {}, "settings": {}})
         cfg = {"account": {"bearer_token": expired_token}}
         result = bc.check_token_age(cfg)
@@ -165,7 +170,10 @@ class TestCheckTokenAge:
         the exact category — the boundary is documented in test_token_exactly_* tests.
         """
         import bosch_camera as bc
-        bc.save_config({"account": {"bearer_token": near_expiry_token}, "cameras": {}, "settings": {}})
+
+        bc.save_config(
+            {"account": {"bearer_token": near_expiry_token}, "cameras": {}, "settings": {}}
+        )
         cfg = {"account": {"bearer_token": near_expiry_token}}
         result = bc.check_token_age(cfg)
         assert isinstance(result, str)
@@ -178,6 +186,7 @@ class TestCheckTokenAge:
         Should not raise — returns a non-empty string.
         """
         import bosch_camera as bc
+
         bc.save_config({"account": {}, "cameras": {}, "settings": {}})
         cfg = {"account": {"bearer_token": "not.a.real.jwt.at.all"}}
         result = bc.check_token_age(cfg)

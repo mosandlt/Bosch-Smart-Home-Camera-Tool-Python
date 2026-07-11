@@ -247,7 +247,7 @@ def load_config() -> dict[str, Any]:
     """Load config from file. Creates default config if it doesn't exist."""
     if not os.path.exists(CONFIG_FILE):
         _create_default_config()
-    with open(CONFIG_FILE, "r") as f:
+    with open(CONFIG_FILE, encoding="utf-8") as f:
         cfg: dict[str, Any] = json.load(f)
     # Merge in any missing keys from DEFAULT_CONFIG (forward-compat)
     _merge_defaults(cfg, DEFAULT_CONFIG)
@@ -266,7 +266,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     with _CONFIG_LOCK:
         tmp_path = f"{CONFIG_FILE}.tmp.{os.getpid()}"
         try:
-            with open(tmp_path, "w") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
@@ -1354,7 +1354,7 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
         else:
             # ffplay via open — write a tiny shell script and open it
             script = os.path.join(BASE_DIR, "_live_ffplay.sh")
-            with open(script, "w") as f:
+            with open(script, "w", encoding="utf-8") as f:
                 f.write(
                     f"#!/bin/sh\n{ffplay} -loglevel warning -f mjpeg -window_title 'Live: {cam_name}' '{mjpeg_url}'\n"
                 )
@@ -1864,8 +1864,8 @@ def _start_go2rtc_with_camera(
         _s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             _s.bind(("127.0.0.1", port))
-        except OSError:
-            raise Go2rtcError(t("err.webrtc.port_in_use", port=port))
+        except OSError as exc:
+            raise Go2rtcError(t("err.webrtc.port_in_use", port=port)) from exc
 
     # 3. Write temp config
     config_yaml = _build_go2rtc_config(rtsps_url, stream_name=stream_name, port=port)
@@ -3208,10 +3208,10 @@ def cmd_pan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         pct = (current + limit) / (2 * limit)  # 0.0 = full left, 1.0 = full right
         width = 30
         pos = int(pct * width)
-        bar = "─" * pos + "●" + "─" * (width - pos)
+        bar_str = "─" * pos + "●" + "─" * (width - pos)
         direction = "CENTER" if abs(current) < 5 else ("RIGHT ▶" if current > 0 else "◀ LEFT")
         print(f"  📍  Position:  {current:+4d}°  {direction}")
-        print(f"      Range:    -{limit}° ◀ [{bar}] ▶ +{limit}°")
+        print(f"      Range:    -{limit}° ◀ [{bar_str}] ▶ +{limit}°")
 
         if action is None:
             print(f"\n  Run with --preset or a number (-{limit}..+{limit}). E.g.:")
@@ -7317,6 +7317,101 @@ def cmd_lighting_schedule(cfg: dict[str, Any], args: argparse.Namespace) -> None
         print(f"  Wallwasher:     {'An' if d.get('wallwasherInGeneralLightOn') else 'Aus'}")
 
 
+def cmd_firmware_update(cfg: dict[str, Any], args: argparse.Namespace) -> None:
+    """View firmware update status, or trigger an install.
+
+    Usage:
+      python3 bosch_camera.py firmware-update [cam]          → show current/latest/status
+      python3 bosch_camera.py firmware-update [cam] install  → install the pending update
+
+    API: GET /v11/video_inputs/{id}/firmware, PUT (install) same endpoint with {"id": <update>}.
+    Same endpoint the official Bosch app's "Update now" button uses. Cross-ported from the
+    HA integration's BoschCameraCoordinator.async_install_firmware (2026-07-11 family-parity work).
+    Installing reboots the camera for 3-7 minutes.
+    """
+    token = get_token(cfg)
+    session = make_session(token)
+    get_cameras(cfg, session)
+    cam_arg = getattr(args, "cam", None)
+    sub = getattr(args, "sub", None)
+
+    if cam_arg and cam_arg.lower() == "install" and not sub:
+        sub, cam_arg = "install", None
+    if sub:
+        sub = sub.lower()
+
+    cams = resolve_cam(cfg, cam_arg)
+
+    # Guard: "firmware-update install" with no camera targets EVERY camera —
+    # each install reboots the physical camera for 3-7 minutes. Bug-hunt
+    # finding (2026-07-11): this was silently fleet-wide with zero
+    # confirmation, unlike every other multi-cam command in this file (none
+    # of which are this destructive/slow). Require an explicit y/N unless
+    # --yes was passed (for scripting).
+    if sub == "install" and len(cams) > 1 and not getattr(args, "yes", False):
+        names = ", ".join(cams.keys())
+        print(f"\n⚠️   This will install firmware on ALL {len(cams)} cameras: {names}")
+        print("    Each camera reboots for 3-7 minutes. Pass a camera name to target just one.")
+        try:
+            reply = input("    Continue for all cameras? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            reply = ""
+        if reply != "y":
+            print("    Aborted.")
+            return
+
+    for name, cam_info in cams.items():
+        cam_id = cam_info["id"]
+        print(f"\n── Firmware: {name} ────────────────────────────────────────────")
+
+        r = session.get(f"{CLOUD_API}/v11/video_inputs/{cam_id}/firmware", timeout=10)
+        if r.status_code == 401:
+            print("  ❌  Token expired.")
+            return
+        if r.status_code == 444:
+            print("  ⚠️   Camera offline.")
+            continue
+        if r.status_code == 442:
+            print("  ⚠️   Not supported on this camera model.")
+            continue
+        if r.status_code != 200:
+            print(f"  ❌  Could not fetch: HTTP {r.status_code}")
+            continue
+        fw = r.json()
+        current = fw.get("current", "?")
+        up_to_date = fw.get("upToDate")
+        updating = fw.get("updating", False)
+        update_target = fw.get("update")
+
+        if sub == "install":
+            if updating:
+                print("  ⚠️   Install already in progress.")
+                continue
+            if not update_target:
+                print("  ✅  Already up to date — nothing to install.")
+                continue
+            print(f"  ✏️   Installing firmware {update_target} (camera will reboot)...")
+            pr = session.put(
+                f"{CLOUD_API}/v11/video_inputs/{cam_id}/firmware",
+                json={"id": update_target},
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
+            if pr.status_code in (200, 201, 204):
+                print(f"  ✅  Install started: {current} → {update_target}")
+            elif pr.status_code == 444:
+                print("  ⚠️   Camera offline.")
+            else:
+                print(f"  ❌  Failed: HTTP {pr.status_code}  {pr.text[:200]}")
+            continue
+
+        print(f"  Installed:      {current}")
+        print(f"  Up to date:     {up_to_date}")
+        if not up_to_date and update_target:
+            print(f"  Update available: {update_target}")
+        print(f"  Installing now: {updating}")
+
+
 def cmd_rename(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     """Rename a camera via the Bosch cloud API.
 
@@ -9601,6 +9696,42 @@ def main() -> None:
         "--threshold", type=float, metavar="0.0-1.0", help="Darkness threshold 0.0–1.0 (for set)"
     )
 
+    # ── firmware-update ──────────────────────────────────────────────────
+    p_fwupdate = subparsers.add_parser(
+        "firmware-update",
+        help="View firmware update status, or install a pending update",
+        description=(
+            "🔧  firmware-update — camera firmware status + install\n"
+            "\n"
+            "  API: GET /v11/video_inputs/{id}/firmware, PUT (install) same endpoint.\n"
+            "\n"
+            "  Subcommands:\n"
+            "    (none)   → show installed/latest version + up-to-date status\n"
+            "    install  → install the pending update (camera reboots 3-7 min)"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "  Examples:\n"
+            "    python3 bosch_camera.py firmware-update Garten\n"
+            "    python3 bosch_camera.py firmware-update Garten install"
+        ),
+    )
+    p_fwupdate.add_argument(
+        "cam",
+        nargs="?",
+        metavar="<camera>",
+        help="Camera name or partial match (omit = all cameras)",
+    )
+    p_fwupdate.add_argument(
+        "sub", nargs="?", metavar="install", help="Subcommand: install the update"
+    )
+    p_fwupdate.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip the confirmation prompt when installing on all cameras",
+    )
+
     # ── rename ────────────────────────────────────────────────────────────
     p_rename = subparsers.add_parser(
         "rename",
@@ -9915,6 +10046,7 @@ def main() -> None:
         "zones": cmd_zones,
         "privacy-masks": cmd_privacy_masks,
         "lighting-schedule": cmd_lighting_schedule,
+        "firmware-update": cmd_firmware_update,
         "rename": cmd_rename,
         "profile": cmd_profile,
         "account": cmd_account,

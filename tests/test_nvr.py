@@ -45,6 +45,7 @@ from bosch_camera import (
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _make_cam(name: str = "TestCam", rtsp_url: str = "rtsps://proxy.example.com/stream") -> dict:
     return {
         "id": "test-id-1234",
@@ -104,6 +105,7 @@ def _create_clips(cam_name: str, n: int, tmp_path, suffix_start: int = 0) -> lis
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. _start_motion_recording — ffmpeg Popen
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestStartMotionRecording:
     def test_start_motion_recording_spawns_ffmpeg(self, tmp_path):
@@ -169,6 +171,7 @@ class TestStartMotionRecording:
 # 2. Rising/falling edge lifecycle (via _nvr_active)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestRecordingLifecycle:
     def setup_method(self):
         """Clear NVR state before each test."""
@@ -222,10 +225,12 @@ class TestRecordingLifecycle:
 # 3. Clip path format
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestClipPathFormat:
     def test_clip_path_format_uses_iso_date(self, tmp_path):
         """Clip path must contain a YYYY-MM-DD directory segment."""
         import re
+
         with patch.object(bosch_camera, "BASE_DIR", str(tmp_path)):
             path = _nvr_clip_path("TestCam")
         # Extract the date segment
@@ -250,6 +255,7 @@ class TestClipPathFormat:
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. FIFO prune
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestFifoPrune:
     def test_fifo_prune_keeps_n_most_recent(self, tmp_path):
@@ -306,6 +312,7 @@ class TestFifoPrune:
 # 5. SMB upload
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestSmbUpload:
     def _make_smbclient_mock(self):
         """Build a fake smbclient module."""
@@ -323,8 +330,13 @@ class TestSmbUpload:
         """_nvr_smb_upload calls smbclient.makedirs and open_file with correct host/share."""
         clip = tmp_path / "clip.mp4"
         clip.write_bytes(b"x" * 100)
-        cfg = _make_cfg(smb_host="nas.local", smb_share="Backup", smb_user="u", smb_pass="p",
-                        smb_path="bosch/nvr")
+        cfg = _make_cfg(
+            smb_host="nas.local",
+            smb_share="Backup",
+            smb_user="u",
+            smb_pass="p",
+            smb_path="bosch/nvr",
+        )
 
         mock_smb = self._make_smbclient_mock()
         with patch.dict("sys.modules", {"smbclient": mock_smb, "smbclient.shutil": MagicMock()}):
@@ -423,9 +435,14 @@ class TestSmbUpload:
 
         with patch.dict("sys.modules", {"smbclient": None}):
             # Simulate ImportError
-            with patch("builtins.__import__", side_effect=lambda name, *a, **k:
-                       (_ for _ in ()).throw(ImportError("No module named 'smbclient'"))
-                       if name == "smbclient" else __import__(name, *a, **k)):
+            with patch(
+                "builtins.__import__",
+                side_effect=lambda name, *a, **k: (
+                    (_ for _ in ()).throw(ImportError("No module named 'smbclient'"))
+                    if name == "smbclient"
+                    else __import__(name, *a, **k)
+                ),
+            ):
                 ok, msg = _nvr_smb_upload(str(clip), cfg)
 
         assert ok is False
@@ -436,6 +453,7 @@ class TestSmbUpload:
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. NVR status
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestNvrStatus:
     def setup_method(self):
@@ -495,6 +513,7 @@ class TestNvrStatus:
 # 7. cmd_nvr dispatcher
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdNvrDispatch:
     def test_nvr_status_subcommand_dispatched(self, tmp_path, capsys):
         cfg = _make_cfg()
@@ -540,6 +559,7 @@ class TestCmdNvrDispatch:
 # 8. PIN_EVERY_MODE — argparse wiring for --auto-record and nvr subcommand
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestArgparsePinEveryMode:
     """Verify argparse wiring for NVR-related flags."""
 
@@ -555,9 +575,9 @@ class TestArgparsePinEveryMode:
         pw.add_argument("--signal", metavar="URL", default="")
         pw.add_argument("--signal-recipients", metavar="NUMS", default="")
         pw.add_argument("--signal-sender", metavar="NUM", default="")
-        pw.add_argument("--push-mode",
-                        choices=["auto", "android", "ios", "polling"],
-                        default="auto")
+        pw.add_argument(
+            "--push-mode", choices=["auto", "android", "ios", "polling"], default="auto"
+        )
         pw.add_argument("--track-motion", action="store_true", dest="track_motion")
         pw.add_argument("--auto-snapshot", action="store_true", dest="auto_snapshot")
         pw.add_argument("--quiet-secs", type=int, default=30, metavar="N", dest="quiet_secs")

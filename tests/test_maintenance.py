@@ -103,8 +103,11 @@ class TestState:
         **kw: object,
     ) -> MaintenanceWindow:
         defaults: dict[str, object] = {
-            "title": "x", "link": "x", "summary": "x",
-            "source": "rss:x", "camera_relevant": False,
+            "title": "x",
+            "link": "x",
+            "summary": "x",
+            "source": "rss:x",
+            "camera_relevant": False,
             "pub_date": pub or datetime(2026, 5, 19, tzinfo=timezone.utc),
             "scheduled_start": start,
             "scheduled_end": end,
@@ -151,18 +154,26 @@ class TestState:
 
 
 class TestCameraRelevance:
-    @pytest.mark.parametrize("text", [
-        "Kamera-Infrastruktur Wartung",
-        "video streams unavailable",
-        "Cloud-Backend Störung",
-        "CBS service maintenance",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Kamera-Infrastruktur Wartung",
+            "video streams unavailable",
+            "Cloud-Backend Störung",
+            "CBS service maintenance",
+        ],
+    )
     def test_relevant_keywords_hit(self, text: str) -> None:
         assert _is_camera_relevant(text, "")
 
-    @pytest.mark.parametrize("text", [
-        "Heizung Update", "Thermostat-Firmware", "Tür-/Fenster-Kontakt rollout",
-    ])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Heizung Update",
+            "Thermostat-Firmware",
+            "Tür-/Fenster-Kontakt rollout",
+        ],
+    )
     def test_unrelated_keywords_miss(self, text: str) -> None:
         assert not _is_camera_relevant(text, "")
 
@@ -208,9 +219,13 @@ class TestParseFeedBody:
 class TestPrefers:
     def _mw(self, **kw: object) -> MaintenanceWindow:
         defaults: dict[str, object] = {
-            "title": "x", "link": "x", "summary": "x", "source": "rss:x",
+            "title": "x",
+            "link": "x",
+            "summary": "x",
+            "source": "rss:x",
             "pub_date": datetime(2026, 5, 19, tzinfo=timezone.utc),
-            "scheduled_start": None, "scheduled_end": None,
+            "scheduled_start": None,
+            "scheduled_end": None,
             "camera_relevant": False,
         }
         defaults.update(kw)
@@ -222,6 +237,7 @@ class TestPrefers:
         # window. Avoids the wall-clock-dependent failure that only passed
         # between 05:00 and 09:00 UTC.
         import bosch_maintenance as _m
+
         fixed = datetime(2026, 5, 19, 7, 0, tzinfo=timezone.utc)
 
         class _FrozenDT(datetime):
@@ -340,6 +356,7 @@ class TestFetchEndToEnd:
             raise requests_exc()
 
         import requests as _requests
+
         requests_exc = _requests.exceptions.RequestException
 
         with patch("bosch_maintenance.requests.get", side_effect=requests_exc("DNS down")):

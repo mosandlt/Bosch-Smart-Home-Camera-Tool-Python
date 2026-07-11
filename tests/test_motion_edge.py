@@ -26,7 +26,8 @@ from bosch_camera import MotionEdgeTracker, _motion_snapshot_cleanup, _motion_sn
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-T0 = 1_000_000.0   # arbitrary anchor time (seconds since epoch)
+T0 = 1_000_000.0  # arbitrary anchor time (seconds since epoch)
+
 
 def _ev(etype: str = "MOVEMENT") -> dict[str, Any]:
     """Build a minimal motion event dict."""
@@ -36,6 +37,7 @@ def _ev(etype: str = "MOVEMENT") -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 # MotionEdgeTracker — state machine unit tests
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestMotionEdgeTrackerInitialState:
     def test_initial_state_is_inactive(self) -> None:
@@ -60,7 +62,7 @@ class TestMotionEdgeTrackerRisingEdge:
     def test_consecutive_events_in_active_state_emit_none(self) -> None:
         """Subsequent events while already active must return None (no edge)."""
         tracker = MotionEdgeTracker(quiet_secs=30)
-        tracker.update([_ev()], now=T0)                  # rising
+        tracker.update([_ev()], now=T0)  # rising
         assert tracker.update([_ev()], now=T0 + 5) is None
         assert tracker.update([_ev()], now=T0 + 10) is None
         assert tracker.state == MotionEdgeTracker.ACTIVE
@@ -68,8 +70,8 @@ class TestMotionEdgeTrackerRisingEdge:
     def test_rising_after_falling_cycle(self) -> None:
         """A second rising edge can occur after the tracker has gone inactive again."""
         tracker = MotionEdgeTracker(quiet_secs=10)
-        tracker.update([_ev()], now=T0)          # → active
-        tracker.update([], now=T0 + 15)          # → inactive (falling)
+        tracker.update([_ev()], now=T0)  # → active
+        tracker.update([], now=T0 + 15)  # → inactive (falling)
         edge = tracker.update([_ev()], now=T0 + 20)  # → active again (rising)
         assert edge == "rising"
 
@@ -78,27 +80,27 @@ class TestMotionEdgeTrackerFallingEdge:
     def test_no_events_for_quiet_secs_triggers_falling(self) -> None:
         """After quiet_secs with no events, falling edge must fire."""
         tracker = MotionEdgeTracker(quiet_secs=30)
-        tracker.update([_ev()], now=T0)          # rising
-        edge = tracker.update([], now=T0 + 31)   # 31s quiet → falling
+        tracker.update([_ev()], now=T0)  # rising
+        edge = tracker.update([], now=T0 + 31)  # 31s quiet → falling
         assert edge == "falling"
         assert tracker.state == MotionEdgeTracker.INACTIVE
 
     def test_no_events_before_quiet_secs_stays_active(self) -> None:
         """Quiet period shorter than quiet_secs must NOT trigger falling edge."""
         tracker = MotionEdgeTracker(quiet_secs=30)
-        tracker.update([_ev()], now=T0)          # rising
-        edge = tracker.update([], now=T0 + 29)   # 29s quiet → still active
+        tracker.update([_ev()], now=T0)  # rising
+        edge = tracker.update([], now=T0 + 29)  # 29s quiet → still active
         assert edge is None
         assert tracker.state == MotionEdgeTracker.ACTIVE
 
     def test_new_event_during_quiet_period_resets_quiet_timer(self) -> None:
         """An event during the quiet window must reset the timer and prevent falling."""
         tracker = MotionEdgeTracker(quiet_secs=30)
-        tracker.update([_ev()], now=T0)          # rising; last_event = T0
-        tracker.update([], now=T0 + 25)          # 25s quiet — still active
-        tracker.update([_ev()], now=T0 + 28)     # new event → resets timer to T0+28
+        tracker.update([_ev()], now=T0)  # rising; last_event = T0
+        tracker.update([], now=T0 + 25)  # 25s quiet — still active
+        tracker.update([_ev()], now=T0 + 28)  # new event → resets timer to T0+28
         # Now 30s from T0+28 = T0+58; checking at T0+50 should be silent
-        edge = tracker.update([], now=T0 + 50)   # 22s from last event → no falling
+        edge = tracker.update([], now=T0 + 50)  # 22s from last event → no falling
         assert edge is None
         assert tracker.state == MotionEdgeTracker.ACTIVE
         # 31s after the reset event: falling should fire
@@ -108,7 +110,7 @@ class TestMotionEdgeTrackerFallingEdge:
     def test_event_at_exactly_quiet_secs_boundary(self) -> None:
         """At exactly quiet_secs elapsed the falling edge fires (>= boundary)."""
         tracker = MotionEdgeTracker(quiet_secs=30)
-        tracker.update([_ev()], now=T0)          # rising
+        tracker.update([_ev()], now=T0)  # rising
         # Exactly 30s later — boundary: quiet_elapsed (30) >= quiet_secs (30) → falling
         edge = tracker.update([], now=T0 + 30)
         assert edge == "falling"
@@ -116,8 +118,8 @@ class TestMotionEdgeTrackerFallingEdge:
     def test_quiet_secs_zero_falls_immediately(self) -> None:
         """quiet_secs=0 means any poll with no events instantly triggers falling."""
         tracker = MotionEdgeTracker(quiet_secs=0)
-        tracker.update([_ev()], now=T0)          # rising
-        edge = tracker.update([], now=T0)        # same timestamp, quiet_secs=0 → falling
+        tracker.update([_ev()], now=T0)  # rising
+        edge = tracker.update([], now=T0)  # same timestamp, quiet_secs=0 → falling
         assert edge == "falling"
         assert tracker.state == MotionEdgeTracker.INACTIVE
 
@@ -131,6 +133,7 @@ class TestMotionEdgeTrackerFallingEdge:
 # ─────────────────────────────────────────────────────────────────────────────
 # MotionEdgeTracker — active_duration
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestActiveDuration:
     def test_inactive_tracker_returns_zero(self) -> None:
@@ -147,12 +150,14 @@ class TestActiveDuration:
 # CLI flag parsing — --track-motion, --auto-snapshot, --quiet-secs
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestWatchFlagParsing:
     """Verify the argparse wiring for the three new watch flags."""
 
     def _parse(self, extra_args: list[str]) -> argparse.Namespace:
         """Run the real argparse main() parser in isolation and return parsed args."""
         import sys
+
         # Build a minimal parser that mirrors the watch sub-command wiring
         # by importing bosch_camera and invoking its real parser.
         old_argv = sys.argv
@@ -177,13 +182,14 @@ class TestWatchFlagParsing:
                 pw.add_argument("--signal", metavar="URL", default="")
                 pw.add_argument("--signal-recipients", metavar="NUMS", default="")
                 pw.add_argument("--signal-sender", metavar="NUM", default="")
-                pw.add_argument("--push-mode",
-                                choices=["auto", "android", "ios", "polling"],
-                                default="auto")
+                pw.add_argument(
+                    "--push-mode", choices=["auto", "android", "ios", "polling"], default="auto"
+                )
                 pw.add_argument("--track-motion", action="store_true", dest="track_motion")
                 pw.add_argument("--auto-snapshot", action="store_true", dest="auto_snapshot")
-                pw.add_argument("--quiet-secs", type=int, default=30, metavar="N",
-                                dest="quiet_secs")
+                pw.add_argument(
+                    "--quiet-secs", type=int, default=30, metavar="N", dest="quiet_secs"
+                )
                 return parser.parse_args(["watch"] + extra_args)
         finally:
             sys.argv = old_argv
@@ -222,6 +228,7 @@ class TestWatchFlagParsing:
 # FIFO snapshot cleanup
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestMotionSnapshotCleanup:
     def test_fifo_keeps_only_last_100(self, tmp_path: pytest.TempPathFactory) -> None:
         """With 150 motion_*.jpg files, cleanup must delete 50 oldest, keep 100 newest."""
@@ -238,8 +245,7 @@ class TestMotionSnapshotCleanup:
             _motion_snapshot_cleanup(cam_name, keep=100)
 
             remaining = sorted(
-                f for f in os.listdir(snap_dir)
-                if f.startswith("motion_") and f.endswith(".jpg")
+                f for f in os.listdir(snap_dir) if f.startswith("motion_") and f.endswith(".jpg")
             )
             assert len(remaining) == 100
             # The 100 newest files remain (indices 50-149)
@@ -257,8 +263,7 @@ class TestMotionSnapshotCleanup:
             _motion_snapshot_cleanup(cam_name, keep=100)
 
             remaining = [
-                f for f in os.listdir(snap_dir)
-                if f.startswith("motion_") and f.endswith(".jpg")
+                f for f in os.listdir(snap_dir) if f.startswith("motion_") and f.endswith(".jpg")
             ]
             assert len(remaining) == 50
 
@@ -273,7 +278,6 @@ class TestMotionSnapshotCleanup:
             _motion_snapshot_cleanup(cam_name, keep=100)
 
             remaining = [
-                f for f in os.listdir(snap_dir)
-                if f.startswith("motion_") and f.endswith(".jpg")
+                f for f in os.listdir(snap_dir) if f.startswith("motion_") and f.endswith(".jpg")
             ]
             assert len(remaining) == 100

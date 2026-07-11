@@ -310,7 +310,9 @@ class TestCmdLight:
         ]
 
     def _override_resp(self) -> MagicMock:
-        return _resp(200, {"frontLightOn": False, "wallwasherOn": False, "frontLightIntensity": 0.5})
+        return _resp(
+            200, {"frontLightOn": False, "wallwasherOn": False, "frontLightIntensity": 0.5}
+        )
 
     def _run(self, cfg: dict[str, Any], args: argparse.Namespace, sess: MagicMock) -> None:
         with (
@@ -763,7 +765,14 @@ class TestCmdPan:
             _resp(200, self._pan_cam_list()),
             _resp(200, self._pan_state(45)),
         ]
-        sess.put.return_value = _resp(200, {"currentAbsolutePosition": 0, "estimatedTimeToCompletion": 500, "cameraStoppedAtLimit": False})
+        sess.put.return_value = _resp(
+            200,
+            {
+                "currentAbsolutePosition": 0,
+                "estimatedTimeToCompletion": 500,
+                "cameraStoppedAtLimit": False,
+            },
+        )
         self._run(cfg, _args(preset="home"), sess)
         body = sess.put.call_args[1]["json"]
         assert body["absolutePosition"] == 0
@@ -776,7 +785,14 @@ class TestCmdPan:
             _resp(200, self._pan_cam_list()),
             _resp(200, self._pan_state(0)),
         ]
-        sess.put.return_value = _resp(200, {"currentAbsolutePosition": -60, "estimatedTimeToCompletion": 400, "cameraStoppedAtLimit": False})
+        sess.put.return_value = _resp(
+            200,
+            {
+                "currentAbsolutePosition": -60,
+                "estimatedTimeToCompletion": 400,
+                "cameraStoppedAtLimit": False,
+            },
+        )
         self._run(cfg, _args(preset="left"), sess)
         body = sess.put.call_args[1]["json"]
         assert body["absolutePosition"] == -60
@@ -789,7 +805,14 @@ class TestCmdPan:
             _resp(200, self._pan_cam_list()),
             _resp(200, self._pan_state(0)),
         ]
-        sess.put.return_value = _resp(200, {"currentAbsolutePosition": 60, "estimatedTimeToCompletion": 400, "cameraStoppedAtLimit": False})
+        sess.put.return_value = _resp(
+            200,
+            {
+                "currentAbsolutePosition": 60,
+                "estimatedTimeToCompletion": 400,
+                "cameraStoppedAtLimit": False,
+            },
+        )
         self._run(cfg, _args(preset="right"), sess)
         body = sess.put.call_args[1]["json"]
         assert body["absolutePosition"] == 60
@@ -802,7 +825,14 @@ class TestCmdPan:
             _resp(200, self._pan_cam_list()),
             _resp(200, self._pan_state(0)),
         ]
-        sess.put.return_value = _resp(200, {"currentAbsolutePosition": -120, "estimatedTimeToCompletion": 900, "cameraStoppedAtLimit": False})
+        sess.put.return_value = _resp(
+            200,
+            {
+                "currentAbsolutePosition": -120,
+                "estimatedTimeToCompletion": 900,
+                "cameraStoppedAtLimit": False,
+            },
+        )
         self._run(cfg, _args(preset="back-left"), sess)
         body = sess.put.call_args[1]["json"]
         assert body["absolutePosition"] == -120
@@ -815,7 +845,14 @@ class TestCmdPan:
             _resp(200, self._pan_cam_list()),
             _resp(200, self._pan_state(0)),
         ]
-        sess.put.return_value = _resp(200, {"currentAbsolutePosition": 120, "estimatedTimeToCompletion": 900, "cameraStoppedAtLimit": False})
+        sess.put.return_value = _resp(
+            200,
+            {
+                "currentAbsolutePosition": 120,
+                "estimatedTimeToCompletion": 900,
+                "cameraStoppedAtLimit": False,
+            },
+        )
         self._run(cfg, _args(preset="back-right"), sess)
         body = sess.put.call_args[1]["json"]
         assert body["absolutePosition"] == 120
@@ -828,7 +865,14 @@ class TestCmdPan:
             _resp(200, self._pan_cam_list()),
             _resp(200, self._pan_state(0)),
         ]
-        sess.put.return_value = _resp(200, {"currentAbsolutePosition": 45, "estimatedTimeToCompletion": 300, "cameraStoppedAtLimit": False})
+        sess.put.return_value = _resp(
+            200,
+            {
+                "currentAbsolutePosition": 45,
+                "estimatedTimeToCompletion": 300,
+                "cameraStoppedAtLimit": False,
+            },
+        )
         self._run(cfg, _args(action="45"), sess)
         body = sess.put.call_args[1]["json"]
         assert body["absolutePosition"] == 45
@@ -880,7 +924,14 @@ class TestCmdPan:
             _resp(200, self._pan_cam_list()),
             _resp(200, self._pan_state(45)),
         ]
-        sess.put.return_value = _resp(200, {"currentAbsolutePosition": 0, "estimatedTimeToCompletion": 200, "cameraStoppedAtLimit": False})
+        sess.put.return_value = _resp(
+            200,
+            {
+                "currentAbsolutePosition": 0,
+                "estimatedTimeToCompletion": 200,
+                "cameraStoppedAtLimit": False,
+            },
+        )
         self._run(cfg, _args(action="center"), sess)
         body = sess.put.call_args[1]["json"]
         assert body["absolutePosition"] == 0
@@ -893,7 +944,14 @@ class TestCmdPan:
             _resp(200, self._pan_cam_list()),
             _resp(200, self._pan_state(45)),
         ]
-        sess.put.return_value = _resp(200, {"currentAbsolutePosition": 0, "estimatedTimeToCompletion": 200, "cameraStoppedAtLimit": False})
+        sess.put.return_value = _resp(
+            200,
+            {
+                "currentAbsolutePosition": 0,
+                "estimatedTimeToCompletion": 200,
+                "cameraStoppedAtLimit": False,
+            },
+        )
         self._run(cfg, _args(cam="center"), sess)
         body = sess.put.call_args[1]["json"]
         assert body["absolutePosition"] == 0
@@ -906,7 +964,14 @@ class TestCmdPan:
             _resp(200, self._pan_cam_list()),
             _resp(200, self._pan_state(0)),
         ]
-        sess.put.return_value = _resp(200, {"currentAbsolutePosition": 45, "estimatedTimeToCompletion": 200, "cameraStoppedAtLimit": False})
+        sess.put.return_value = _resp(
+            200,
+            {
+                "currentAbsolutePosition": 45,
+                "estimatedTimeToCompletion": 200,
+                "cameraStoppedAtLimit": False,
+            },
+        )
         self._run(cfg, _args(cam="45"), sess)
         body = sess.put.call_args[1]["json"]
         assert body["absolutePosition"] == 45
@@ -945,7 +1010,12 @@ class TestCmdPan:
             _resp(200, self._pan_state(0)),
         ]
         sess.put.return_value = _resp(
-            200, {"currentAbsolutePosition": 120, "estimatedTimeToCompletion": 900, "cameraStoppedAtLimit": True}
+            200,
+            {
+                "currentAbsolutePosition": 120,
+                "estimatedTimeToCompletion": 900,
+                "cameraStoppedAtLimit": True,
+            },
         )
         self._run(cfg, _args(preset="back-right"), sess)
         out = capsys.readouterr().out
@@ -1189,6 +1259,7 @@ class TestCmdMaintenance:
     def test_scheduled_state(self, capsys: pytest.CaptureFixture[str]) -> None:
         """state=scheduled → scheduled message printed."""
         import datetime
+
         now = datetime.datetime.now(datetime.timezone.utc)
         mw = self._mw(
             state="scheduled",
@@ -1203,6 +1274,7 @@ class TestCmdMaintenance:
     def test_past_state(self, capsys: pytest.CaptureFixture[str]) -> None:
         """state=past → past message printed."""
         import datetime
+
         now = datetime.datetime.now(datetime.timezone.utc)
         mw = self._mw(
             state="past",

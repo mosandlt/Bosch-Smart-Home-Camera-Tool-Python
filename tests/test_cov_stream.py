@@ -29,8 +29,8 @@ import bosch_camera as bc
 # Fake IDs / credentials (no real values)
 # ─────────────────────────────────────────────────────────────────────────────
 
-CAM_ID   = "AABBCCDD-0000-1111-2222-333344445555"
-CAM_MAC  = "aa:bb:cc:dd:ee:ff"
+CAM_ID = "AABBCCDD-0000-1111-2222-333344445555"
+CAM_MAC = "aa:bb:cc:dd:ee:ff"
 CAM_NAME = "Terrasse"
 
 CONN_REMOTE: dict[str, Any] = {
@@ -100,7 +100,9 @@ def _err_resp(status: int) -> MagicMock:
     return r
 
 
-def _mock_session(put_resp: MagicMock | None = None, get_resp: MagicMock | None = None) -> MagicMock:
+def _mock_session(
+    put_resp: MagicMock | None = None, get_resp: MagicMock | None = None
+) -> MagicMock:
     sess = MagicMock()
     if put_resp is not None:
         sess.put.return_value = put_resp
@@ -113,23 +115,28 @@ def _mock_session(put_resp: MagicMock | None = None, get_resp: MagicMock | None 
 # open_vlc
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestOpenVlc:
     """open_vlc — player selection, per-player CLI args, no-player path."""
 
     def test_no_player_found_prints_hint(self, capsys: pytest.CaptureFixture[str]) -> None:
         """When no player exists, print hint and return without Popen."""
-        with patch("shutil.which", return_value=None), \
-             patch("os.path.exists", return_value=False), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("os.path.exists", return_value=False),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.open_vlc("rtsp://192.0.2.10:443/stream")
         mock_popen.assert_not_called()
 
     def test_ffplay_chosen_for_rtsp_with_token(self) -> None:
         """ffplay is preferred for rtsp:// and gets -headers when token supplied."""
         ffplay_path = "/usr/bin/ffplay"
-        with patch("shutil.which", side_effect=lambda b: ffplay_path if b == "ffplay" else None), \
-             patch("os.path.exists", return_value=True), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", side_effect=lambda b: ffplay_path if b == "ffplay" else None),
+            patch("os.path.exists", return_value=True),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.open_vlc("rtsp://192.0.2.10:443/stream", token="mytoken123")
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
@@ -140,9 +147,11 @@ class TestOpenVlc:
     def test_ffplay_chosen_for_rtsp_no_token(self) -> None:
         """ffplay chosen for rtsp:// without token → no -headers flag."""
         ffplay_path = "/usr/bin/ffplay"
-        with patch("shutil.which", side_effect=lambda b: ffplay_path if b == "ffplay" else None), \
-             patch("os.path.exists", return_value=True), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", side_effect=lambda b: ffplay_path if b == "ffplay" else None),
+            patch("os.path.exists", return_value=True),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.open_vlc("rtsp://192.0.2.10:443/stream")
         cmd = mock_popen.call_args[0][0]
         assert "-headers" not in cmd
@@ -150,11 +159,15 @@ class TestOpenVlc:
     def test_mpv_chosen_when_no_ffplay(self) -> None:
         """mpv is chosen for rtsp:// when ffplay is absent."""
         mpv_path = "/usr/bin/mpv"
+
         def _which(b: str) -> str | None:
             return mpv_path if b == "mpv" else None
-        with patch("shutil.which", side_effect=_which), \
-             patch("os.path.exists", return_value=True), \
-             patch("subprocess.Popen") as mock_popen:
+
+        with (
+            patch("shutil.which", side_effect=_which),
+            patch("os.path.exists", return_value=True),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.open_vlc("rtsp://192.0.2.10:443/stream", token="tok")
         cmd = mock_popen.call_args[0][0]
         assert cmd[0] == mpv_path
@@ -163,9 +176,11 @@ class TestOpenVlc:
     def test_mpv_no_token_no_header_flag(self) -> None:
         """mpv without token → no --http-header-fields arg."""
         mpv_path = "/usr/bin/mpv"
-        with patch("shutil.which", side_effect=lambda b: mpv_path if b == "mpv" else None), \
-             patch("os.path.exists", return_value=True), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", side_effect=lambda b: mpv_path if b == "mpv" else None),
+            patch("os.path.exists", return_value=True),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.open_vlc("rtsp://192.0.2.10:443/stream")
         cmd = mock_popen.call_args[0][0]
         assert not any("http-header" in a for a in cmd)
@@ -173,9 +188,11 @@ class TestOpenVlc:
     def test_vlc_preferred_for_https_url(self) -> None:
         """VLC is the first choice for https:// (non-rtsp) URLs."""
         vlc_path = "/Applications/VLC.app/Contents/MacOS/VLC"
-        with patch("shutil.which", return_value=None), \
-             patch("os.path.exists", side_effect=lambda p: p == vlc_path), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("os.path.exists", side_effect=lambda p: p == vlc_path),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.open_vlc("https://proxy.example.com/stream.m3u8")
         cmd = mock_popen.call_args[0][0]
         assert cmd[0] == vlc_path
@@ -183,9 +200,11 @@ class TestOpenVlc:
     def test_vlc_with_credentials_embeds_in_rtsp_url(self) -> None:
         """VLC with user+password for rtsp:// → embed creds in URL."""
         vlc_path = "/Applications/VLC.app/Contents/MacOS/VLC"
-        with patch("shutil.which", return_value=None), \
-             patch("os.path.exists", side_effect=lambda p: p == vlc_path), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("os.path.exists", side_effect=lambda p: p == vlc_path),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.open_vlc("rtsp://192.0.2.10:443/stream", user="admin", password="secret")
         cmd = mock_popen.call_args[0][0]
         # Credentials embedded in URL
@@ -196,9 +215,11 @@ class TestOpenVlc:
     def test_vlc_with_token_appends_cookie(self) -> None:
         """VLC with bearer token appends --http-cookie to cmd."""
         vlc_path = "/Applications/VLC.app/Contents/MacOS/VLC"
-        with patch("shutil.which", return_value=None), \
-             patch("os.path.exists", side_effect=lambda p: p == vlc_path), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("os.path.exists", side_effect=lambda p: p == vlc_path),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.open_vlc("https://proxy.example.com/stream.m3u8", token="mytoken123")
         cmd = mock_popen.call_args[0][0]
         assert "--http-cookie" in cmd
@@ -208,11 +229,13 @@ class TestOpenVlc:
 # snap_from_proxy (_put_connection + _fetch_snap)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestSnapFromProxy:
     """Tests for snap_from_proxy — covers _put_connection and _fetch_snap."""
 
-    def _make_snap_resp(self, status: int = 200, content: bytes = b"\xff\xd8snap",
-                        ctype: str = "image/jpeg") -> MagicMock:
+    def _make_snap_resp(
+        self, status: int = 200, content: bytes = b"\xff\xd8snap", ctype: str = "image/jpeg"
+    ) -> MagicMock:
         r = MagicMock()
         r.status_code = status
         r.content = content
@@ -236,7 +259,7 @@ class TestSnapFromProxy:
         with patch.object(bc, "requests") as mock_req:
             mock_req.put.side_effect = [
                 _err_resp(503),  # REMOTE fails
-                put_resp,        # LOCAL succeeds
+                put_resp,  # LOCAL succeeds
             ]
             mock_req.get.return_value = snap_resp
             mock_req.get = MagicMock(return_value=snap_resp)
@@ -255,9 +278,11 @@ class TestSnapFromProxy:
             "cameras": {CAM_NAME: _fake_cam()},
             "language": "en",
         }
-        with patch.object(bc, "requests") as mock_req, \
-             patch.object(bc, "get_token", return_value="newtok") as mock_get_tok, \
-             patch.object(bc, "make_session"):
+        with (
+            patch.object(bc, "requests") as mock_req,
+            patch.object(bc, "get_token", return_value="newtok") as mock_get_tok,
+            patch.object(bc, "make_session"),
+        ):
             mock_req.put.side_effect = [r_401, r_200, r_200]
             mock_req.get.return_value = snap_resp
             bc.snap_from_proxy(_fake_cam(), token="oldtok", cfg=cfg)
@@ -290,7 +315,7 @@ class TestSnapFromProxy:
         """_fetch_snap: snap.jpg 404 → retry → 200 → returns bytes."""
         put_resp = _ok_put_resp(CONN_REMOTE)
         snap_404 = self._make_snap_resp(status=404)
-        snap_ok  = self._make_snap_resp()
+        snap_ok = self._make_snap_resp()
         call_count = 0
 
         def _get_side(*a: Any, **kw: Any) -> MagicMock:
@@ -342,8 +367,7 @@ class TestSnapFromProxy:
 
     def test_401_without_cfg_does_not_refresh(self) -> None:
         """PUT 401 without cfg → no refresh, returns None."""
-        with patch.object(bc, "requests") as mock_req, \
-             patch.object(bc, "get_token") as mock_gt:
+        with patch.object(bc, "requests") as mock_req, patch.object(bc, "get_token") as mock_gt:
             mock_req.put.return_value = _err_resp(401)
             bc.snap_from_proxy(_fake_cam(), token="tok", cfg=None)
         mock_gt.assert_not_called()
@@ -354,9 +378,11 @@ class TestSnapFromProxy:
             "account": {"bearer_token": "tok"},
             "cameras": {CAM_NAME: _fake_cam()},
         }
-        with patch.object(bc, "requests") as mock_req, \
-             patch.object(bc, "get_token", return_value="newtok"), \
-             patch.object(bc, "make_session"):
+        with (
+            patch.object(bc, "requests") as mock_req,
+            patch.object(bc, "get_token", return_value="newtok"),
+            patch.object(bc, "make_session"),
+        ):
             mock_req.put.return_value = _err_resp(401)
             result = bc.snap_from_proxy(_fake_cam(), token="tok", cfg=cfg)
         assert result is None
@@ -368,8 +394,10 @@ class TestSnapFromProxy:
             "cameras": {CAM_NAME: _fake_cam()},
         }
         r_401 = _err_resp(401)
-        with patch.object(bc, "requests") as mock_req, \
-             patch.object(bc, "get_token", side_effect=RuntimeError("net err")):
+        with (
+            patch.object(bc, "requests") as mock_req,
+            patch.object(bc, "get_token", side_effect=RuntimeError("net err")),
+        ):
             mock_req.put.return_value = r_401
             result = bc.snap_from_proxy(_fake_cam(), token="tok", cfg=cfg)
         assert result is None
@@ -378,6 +406,7 @@ class TestSnapFromProxy:
 # ─────────────────────────────────────────────────────────────────────────────
 # snap_from_local
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestSnapFromLocal:
     """snap_from_local — local IP + Digest auth → JPEG or None."""
@@ -439,9 +468,11 @@ class TestSnapFromLocal:
         """URL must contain JpegSize= to hit the fast-path on the camera."""
         cam = _fake_cam(local=True)
         captured: list[str] = []
+
         def _fake_get(url: str, **kw: Any) -> MagicMock:
             captured.append(url)
             raise OSError("stop")
+
         with patch.object(bc, "bosch_get", side_effect=_fake_get):
             bc.snap_from_local(cam)
         assert captured and "JpegSize" in captured[0]
@@ -450,6 +481,7 @@ class TestSnapFromLocal:
 # ─────────────────────────────────────────────────────────────────────────────
 # _open_rtsps_stream
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestOpenRtspsStream:
     """_open_rtsps_stream — player selection and launch (no real subprocess)."""
@@ -460,9 +492,11 @@ class TestOpenRtspsStream:
         """ffplay found → Popen called with ffplay cmd, proc.wait() called."""
         mock_proc = MagicMock()
         mock_proc.wait.return_value = 0
-        with patch("shutil.which", return_value="/usr/bin/ffplay"), \
-             patch("os.path.exists", return_value=True), \
-             patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
+        with (
+            patch("shutil.which", return_value="/usr/bin/ffplay"),
+            patch("os.path.exists", return_value=True),
+            patch("subprocess.Popen", return_value=mock_proc) as mock_popen,
+        ):
             bc._open_rtsps_stream(self.RTSPS, CAM_NAME)
         cmd = mock_popen.call_args[0][0]
         assert "ffplay" in cmd[0]
@@ -476,29 +510,35 @@ class TestOpenRtspsStream:
         def _which(b: str) -> str | None:
             return "/usr/bin/mpv" if b == "mpv" else None
 
-        with patch("shutil.which", side_effect=_which), \
-             patch("os.path.exists", return_value=False), \
-             patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
+        with (
+            patch("shutil.which", side_effect=_which),
+            patch("os.path.exists", return_value=False),
+            patch("subprocess.Popen", return_value=mock_proc) as mock_popen,
+        ):
             bc._open_rtsps_stream(self.RTSPS, CAM_NAME)
         cmd = mock_popen.call_args[0][0]
         assert "mpv" in cmd[0]
 
     def test_no_player_falls_back_to_snap_loop(self) -> None:
         """No ffplay/mpv → _live_snap_loop called with fallback URL."""
-        with patch("shutil.which", return_value=None), \
-             patch("os.path.exists", return_value=False), \
-             patch.object(bc, "_live_snap_loop") as mock_loop, \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("os.path.exists", return_value=False),
+            patch.object(bc, "_live_snap_loop") as mock_loop,
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc._open_rtsps_stream(self.RTSPS, CAM_NAME, fallback_snap_url="https://proxy/snap.jpg")
         mock_loop.assert_called_once_with("https://proxy/snap.jpg", CAM_NAME)
         mock_popen.assert_not_called()
 
     def test_no_player_no_fallback_url_does_nothing(self) -> None:
         """No player + no fallback URL → just prints hint, no Popen."""
-        with patch("shutil.which", return_value=None), \
-             patch("os.path.exists", return_value=False), \
-             patch.object(bc, "_live_snap_loop") as mock_loop, \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("os.path.exists", return_value=False),
+            patch.object(bc, "_live_snap_loop") as mock_loop,
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc._open_rtsps_stream(self.RTSPS, CAM_NAME)
         mock_loop.assert_not_called()
         mock_popen.assert_not_called()
@@ -507,9 +547,11 @@ class TestOpenRtspsStream:
         """KeyboardInterrupt during wait() → proc.kill() called."""
         mock_proc = MagicMock()
         mock_proc.wait.side_effect = KeyboardInterrupt
-        with patch("shutil.which", return_value="/usr/bin/ffplay"), \
-             patch("os.path.exists", return_value=True), \
-             patch("subprocess.Popen", return_value=mock_proc):
+        with (
+            patch("shutil.which", return_value="/usr/bin/ffplay"),
+            patch("os.path.exists", return_value=True),
+            patch("subprocess.Popen", return_value=mock_proc),
+        ):
             bc._open_rtsps_stream(self.RTSPS, CAM_NAME)
         mock_proc.kill.assert_called()
 
@@ -528,10 +570,14 @@ class TestOpenRtspsStream:
         def _exists(p: str) -> bool:
             return p in (vlc_path, ffmpeg_path)
 
-        with patch("shutil.which", side_effect=_which), \
-             patch("os.path.exists", side_effect=_exists), \
-             patch("subprocess.Popen", side_effect=[mock_proxy, mock_proc, MagicMock()]) as mock_popen, \
-             patch("time.sleep"):
+        with (
+            patch("shutil.which", side_effect=_which),
+            patch("os.path.exists", side_effect=_exists),
+            patch(
+                "subprocess.Popen", side_effect=[mock_proxy, mock_proc, MagicMock()]
+            ) as mock_popen,
+            patch("time.sleep"),
+        ):
             bc._open_rtsps_stream(self.RTSPS, CAM_NAME, use_vlc=True)
         # At least 2 Popen calls: ffmpeg pipe + VLC
         assert mock_popen.call_count >= 2
@@ -543,9 +589,11 @@ class TestOpenRtspsStream:
         def _exists(p: str) -> bool:
             return p == vlc_path
 
-        with patch("shutil.which", return_value=None), \
-             patch("os.path.exists", side_effect=_exists), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch("shutil.which", return_value=None),
+            patch("os.path.exists", side_effect=_exists),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc._open_rtsps_stream(self.RTSPS, CAM_NAME, use_vlc=True)
         mock_popen.assert_not_called()
 
@@ -564,10 +612,12 @@ class TestOpenRtspsStream:
         def _exists(p: str) -> bool:
             return p in (vlc_path, ffmpeg_path)
 
-        with patch("shutil.which", side_effect=_which), \
-             patch("os.path.exists", side_effect=_exists), \
-             patch("subprocess.Popen", side_effect=[mock_proxy, mock_proc, MagicMock()]), \
-             patch("time.sleep"):
+        with (
+            patch("shutil.which", side_effect=_which),
+            patch("os.path.exists", side_effect=_exists),
+            patch("subprocess.Popen", side_effect=[mock_proxy, mock_proc, MagicMock()]),
+            patch("time.sleep"),
+        ):
             bc._open_rtsps_stream(self.RTSPS, CAM_NAME, use_vlc=True)
         mock_proc.kill.assert_called()
         mock_proxy.kill.assert_called()
@@ -577,12 +627,15 @@ class TestOpenRtspsStream:
 # cmd_live
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestCmdLive:
     """cmd_live — connection negotiation, player launch, quality presets."""
 
-    def _setup(self, tmp_path: Any, conn_payload: dict[str, Any] | None = None,
-               put_status: int = 200) -> tuple[dict[str, Any], MagicMock]:
+    def _setup(
+        self, tmp_path: Any, conn_payload: dict[str, Any] | None = None, put_status: int = 200
+    ) -> tuple[dict[str, Any], MagicMock]:
         import bosch_camera as bc_local
+
         bc_local.BASE_DIR = str(tmp_path)
         bc_local.CONFIG_FILE = str(tmp_path / "cfg.json")
         payload = conn_payload or CONN_REMOTE
@@ -598,106 +651,128 @@ class TestCmdLive:
         cfg = _fake_cfg(tmp_path)
         return cfg, sess
 
-    def _patch_live(self, monkeypatch: pytest.MonkeyPatch, sess: MagicMock,
-                    tmp_path: Any) -> None:
+    def _patch_live(self, monkeypatch: pytest.MonkeyPatch, sess: MagicMock, tmp_path: Any) -> None:
         monkeypatch.setattr(bc, "BASE_DIR", str(tmp_path))
         monkeypatch.setattr(bc, "CONFIG_FILE", str(tmp_path / "cfg.json"))
 
-    def test_camera_offline_skips_stream(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    def test_camera_offline_skips_stream(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """OFFLINE camera → no PUT /connection, no stream opened."""
         cfg, sess = self._setup(tmp_path)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="OFFLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream") as mock_stream:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="OFFLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream") as mock_stream,
+        ):
             bc.cmd_live(cfg, _make_live_args())
         mock_stream.assert_not_called()
 
-    def test_remote_connection_opens_rtsps_stream(self, monkeypatch: pytest.MonkeyPatch,
-                                                   tmp_path: Any) -> None:
+    def test_remote_connection_opens_rtsps_stream(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """REMOTE 200 → _open_rtsps_stream called with rtsps:// URL."""
         cfg, sess = self._setup(tmp_path, CONN_REMOTE)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream") as mock_stream:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream") as mock_stream,
+        ):
             bc.cmd_live(cfg, _make_live_args())
         mock_stream.assert_called_once()
         url_arg = mock_stream.call_args[0][0]
         assert url_arg.startswith("rtsps://")
 
-    def test_sub_stream_uses_inst2_url(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    def test_sub_stream_uses_inst2_url(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """--sub flag → rtsps URL contains inst=2."""
         cfg, sess = self._setup(tmp_path, CONN_REMOTE)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream") as mock_stream:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream") as mock_stream,
+        ):
             bc.cmd_live(cfg, _make_live_args(sub=True))
         url_arg = mock_stream.call_args[0][0]
         assert "inst=2" in url_arg
 
-    def test_quality_high_sets_hq_true(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    def test_quality_high_sets_hq_true(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """--quality high → PUT is called with highQualityVideo=True."""
         cfg, sess = self._setup(tmp_path, CONN_REMOTE)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream"):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream"),
+        ):
             bc.cmd_live(cfg, _make_live_args(quality="high"))
         put_call = sess.put.call_args
         assert put_call.kwargs["json"]["highQualityVideo"] is True
 
-    def test_quality_low_sets_hq_false(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    def test_quality_low_sets_hq_false(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """--quality low → PUT called with highQualityVideo=False."""
         cfg, sess = self._setup(tmp_path, CONN_REMOTE)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream"):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream"),
+        ):
             bc.cmd_live(cfg, _make_live_args(quality="low"))
         put_call = sess.put.call_args
         assert put_call.kwargs["json"]["highQualityVideo"] is False
 
-    def test_local_flag_forces_local_connection(self, monkeypatch: pytest.MonkeyPatch,
-                                                 tmp_path: Any) -> None:
+    def test_local_flag_forces_local_connection(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """--local flag → PUT is called with type='LOCAL'."""
         cfg, sess = self._setup(tmp_path, CONN_LOCAL)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_start_tls_proxy_sync", return_value=8554), \
-             patch.object(bc, "_open_rtsps_stream"):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_start_tls_proxy_sync", return_value=8554),
+            patch.object(bc, "_open_rtsps_stream"),
+        ):
             bc.cmd_live(cfg, _make_live_args(local=True))
         put_json = sess.put.call_args.kwargs["json"]
         assert put_json["type"] == "LOCAL"
 
-    def test_401_triggers_one_token_refresh(self, monkeypatch: pytest.MonkeyPatch,
-                                            tmp_path: Any) -> None:
+    def test_401_triggers_one_token_refresh(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """PUT /connection 401 → one get_token refresh, then retried."""
         cfg, sess = self._setup(tmp_path, CONN_REMOTE)
         self._patch_live(monkeypatch, sess, tmp_path)
@@ -710,18 +785,21 @@ class TestCmdLive:
         sess.put.side_effect = [r_401, r_200]
         sess2 = MagicMock()
         sess2.put.return_value = r_200
-        with patch.object(bc, "get_token", return_value="tok") as mock_gt, \
-             patch.object(bc, "make_session", side_effect=[sess, sess2]), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream"):
+        with (
+            patch.object(bc, "get_token", return_value="tok") as mock_gt,
+            patch.object(bc, "make_session", side_effect=[sess, sess2]),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream"),
+        ):
             bc.cmd_live(cfg, _make_live_args())
         assert mock_gt.call_count >= 1
 
-    def test_no_result_shows_event_snapshot(self, monkeypatch: pytest.MonkeyPatch,
-                                            tmp_path: Any) -> None:
+    def test_no_result_shows_event_snapshot(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """All PUT attempts fail → falls back to latest event snapshot."""
         cfg, sess = self._setup(tmp_path, put_status=503)
         self._patch_live(monkeypatch, sess, tmp_path)
@@ -730,100 +808,122 @@ class TestCmdLive:
         ev_snap.status_code = 200
         ev_snap.content = fake_img
         sess.get.return_value = ev_snap
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "api_get_events", return_value=[
-                 {"imageUrl": "https://events.cbs.boschsecurity.com/snap.jpg",
-                  "timestamp": "2024-01-01T12:00:00Z"}
-             ]), \
-             patch.object(bc, "_is_safe_bosch_url", return_value=True), \
-             patch.object(bc, "open_file"):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(
+                bc,
+                "api_get_events",
+                return_value=[
+                    {
+                        "imageUrl": "https://events.cbs.boschsecurity.com/snap.jpg",
+                        "timestamp": "2024-01-01T12:00:00Z",
+                    }
+                ],
+            ),
+            patch.object(bc, "_is_safe_bosch_url", return_value=True),
+            patch.object(bc, "open_file"),
+        ):
             bc.cmd_live(cfg, _make_live_args())
         # Session.get called for event snapshot
         sess.get.assert_called()
 
-    def test_webrtc_flag_calls_open_webrtc_stream(self, monkeypatch: pytest.MonkeyPatch,
-                                                   tmp_path: Any) -> None:
+    def test_webrtc_flag_calls_open_webrtc_stream(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """--webrtc flag → _open_webrtc_stream called instead of _open_rtsps_stream."""
         cfg, sess = self._setup(tmp_path, CONN_REMOTE)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_webrtc_stream") as mock_webrtc, \
-             patch.object(bc, "_open_rtsps_stream") as mock_rtsps:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_webrtc_stream") as mock_webrtc,
+            patch.object(bc, "_open_rtsps_stream") as mock_rtsps,
+        ):
             bc.cmd_live(cfg, _make_live_args(webrtc=True))
         mock_webrtc.assert_called_once()
         mock_rtsps.assert_not_called()
 
-    def test_vlc_flag_passed_to_open_rtsps(self, monkeypatch: pytest.MonkeyPatch,
-                                           tmp_path: Any) -> None:
+    def test_vlc_flag_passed_to_open_rtsps(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """--vlc flag is forwarded to _open_rtsps_stream as use_vlc=True."""
         cfg, sess = self._setup(tmp_path, CONN_REMOTE)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream") as mock_stream:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream") as mock_stream,
+        ):
             bc.cmd_live(cfg, _make_live_args(vlc=True))
         _, kwargs = mock_stream.call_args
         assert kwargs.get("use_vlc") is True
 
-    def test_local_connection_uses_tls_proxy(self, monkeypatch: pytest.MonkeyPatch,
-                                             tmp_path: Any) -> None:
+    def test_local_connection_uses_tls_proxy(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """LOCAL response → _start_tls_proxy_sync called, rtsp:// proxy URL used."""
         cfg, sess = self._setup(tmp_path, CONN_LOCAL)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_start_tls_proxy_sync", return_value=8554) as mock_proxy, \
-             patch.object(bc, "_open_rtsps_stream"):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_start_tls_proxy_sync", return_value=8554) as mock_proxy,
+            patch.object(bc, "_open_rtsps_stream"),
+        ):
             bc.cmd_live(cfg, _make_live_args(local=True))
         mock_proxy.assert_called_once()
 
-    def test_updating_status_still_proceeds(self, monkeypatch: pytest.MonkeyPatch,
-                                            tmp_path: Any) -> None:
+    def test_updating_status_still_proceeds(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
         """UPDATING status is treated as offline (stream skipped)."""
         cfg, sess = self._setup(tmp_path, CONN_REMOTE)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="UPDATING_1.0"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream") as mock_stream:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="UPDATING_1.0"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream") as mock_stream,
+        ):
             bc.cmd_live(cfg, _make_live_args())
         mock_stream.assert_not_called()
 
-    def test_no_urls_in_result_prints_warning(self, monkeypatch: pytest.MonkeyPatch,
-                                              tmp_path: Any,
-                                              capsys: pytest.CaptureFixture[str]) -> None:
+    def test_no_urls_in_result_prints_warning(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """PUT 200 but urls=[] → prints ⚠️ message, no stream opened."""
         conn_empty = dict(CONN_REMOTE, urls=[])
         cfg, sess = self._setup(tmp_path, conn_empty)
         self._patch_live(monkeypatch, sess, tmp_path)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]), \
-             patch.object(bc, "api_ping", return_value="ONLINE"), \
-             patch.object(bc, "save_config"), \
-             patch.object(bc, "_open_rtsps_stream") as mock_stream:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bc, "api_ping", return_value="ONLINE"),
+            patch.object(bc, "save_config"),
+            patch.object(bc, "_open_rtsps_stream") as mock_stream,
+        ):
             bc.cmd_live(cfg, _make_live_args())
         mock_stream.assert_not_called()
         out = capsys.readouterr().out
@@ -833,6 +933,7 @@ class TestCmdLive:
 # ─────────────────────────────────────────────────────────────────────────────
 # cmd_intercom
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestCmdIntercom:
     """cmd_intercom — audio session, ffplay launch, no-ffplay, duration expiry."""
@@ -852,10 +953,12 @@ class TestCmdIntercom:
         cfg = self._base_cfg()
         cfg["cameras"]["Kamera"] = _fake_cam()
         sess = MagicMock()
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cfg["cameras"]), \
-             patch.object(bc, "resolve_cam", return_value=cfg["cameras"]):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bc, "resolve_cam", return_value=cfg["cameras"]),
+        ):
             bc.cmd_intercom(cfg, self._make_args())
         # No subprocess call expected
         sess.put.assert_not_called()
@@ -875,12 +978,14 @@ class TestCmdIntercom:
         sess = MagicMock()
         sess.get.return_value = audio_resp
         sess.put.side_effect = [audio_put, conn_resp]
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cams), \
-             patch.object(bc, "resolve_cam", return_value=cams), \
-             patch("shutil.which", return_value=None), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cams),
+            patch.object(bc, "resolve_cam", return_value=cams),
+            patch("shutil.which", return_value=None),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.cmd_intercom(cfg, self._make_args())
         mock_popen.assert_not_called()
 
@@ -902,12 +1007,14 @@ class TestCmdIntercom:
         mock_proc = MagicMock()
         mock_proc.pid = 12345
         mock_proc.wait.return_value = 0
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cams), \
-             patch.object(bc, "resolve_cam", return_value=cams), \
-             patch("shutil.which", return_value="/usr/bin/ffplay"), \
-             patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cams),
+            patch.object(bc, "resolve_cam", return_value=cams),
+            patch("shutil.which", return_value="/usr/bin/ffplay"),
+            patch("subprocess.Popen", return_value=mock_proc) as mock_popen,
+        ):
             bc.cmd_intercom(cfg, self._make_args(duration=1))
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
@@ -916,6 +1023,7 @@ class TestCmdIntercom:
     def test_timeout_expired_terminates_proc(self) -> None:
         """proc.wait() TimeoutExpired → proc.terminate() called."""
         import subprocess as subp
+
         cfg = self._base_cfg()
         cams = {CAM_NAME: _fake_cam()}
         audio_resp = MagicMock()
@@ -932,12 +1040,14 @@ class TestCmdIntercom:
         mock_proc = MagicMock()
         mock_proc.pid = 12345
         mock_proc.wait.side_effect = subp.TimeoutExpired(cmd="ffplay", timeout=5)
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cams), \
-             patch.object(bc, "resolve_cam", return_value=cams), \
-             patch("shutil.which", return_value="/usr/bin/ffplay"), \
-             patch("subprocess.Popen", return_value=mock_proc):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cams),
+            patch.object(bc, "resolve_cam", return_value=cams),
+            patch("shutil.which", return_value="/usr/bin/ffplay"),
+            patch("subprocess.Popen", return_value=mock_proc),
+        ):
             bc.cmd_intercom(cfg, self._make_args(duration=5))
         mock_proc.terminate.assert_called()
 
@@ -959,12 +1069,14 @@ class TestCmdIntercom:
         mock_proc = MagicMock()
         mock_proc.pid = 99999
         mock_proc.wait.side_effect = KeyboardInterrupt
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cams), \
-             patch.object(bc, "resolve_cam", return_value=cams), \
-             patch("shutil.which", return_value="/usr/bin/ffplay"), \
-             patch("subprocess.Popen", return_value=mock_proc):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cams),
+            patch.object(bc, "resolve_cam", return_value=cams),
+            patch("shutil.which", return_value="/usr/bin/ffplay"),
+            patch("subprocess.Popen", return_value=mock_proc),
+        ):
             bc.cmd_intercom(cfg, self._make_args(duration=60))
         mock_proc.terminate.assert_called()
 
@@ -983,12 +1095,14 @@ class TestCmdIntercom:
         sess = MagicMock()
         sess.get.return_value = audio_resp
         sess.put.side_effect = [audio_put, conn_err, conn_err]
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cams), \
-             patch.object(bc, "resolve_cam", return_value=cams), \
-             patch("shutil.which", return_value="/usr/bin/ffplay"), \
-             patch("subprocess.Popen") as mock_popen:
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cams),
+            patch.object(bc, "resolve_cam", return_value=cams),
+            patch("shutil.which", return_value="/usr/bin/ffplay"),
+            patch("subprocess.Popen") as mock_popen,
+        ):
             bc.cmd_intercom(cfg, self._make_args())
         mock_popen.assert_not_called()
 
@@ -1007,12 +1121,14 @@ class TestCmdIntercom:
         mock_proc = MagicMock()
         mock_proc.pid = 11111
         mock_proc.wait.return_value = 0
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cams), \
-             patch.object(bc, "resolve_cam", return_value=cams), \
-             patch("shutil.which", return_value="/usr/bin/ffplay"), \
-             patch("subprocess.Popen", return_value=mock_proc):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cams),
+            patch.object(bc, "resolve_cam", return_value=cams),
+            patch("shutil.which", return_value="/usr/bin/ffplay"),
+            patch("subprocess.Popen", return_value=mock_proc),
+        ):
             bc.cmd_intercom(cfg, self._make_args(duration=1))
         # Popen called (stream opened despite audio GET 442)
         mock_proc.wait.assert_called()
@@ -1035,11 +1151,13 @@ class TestCmdIntercom:
         mock_proc = MagicMock()
         mock_proc.pid = 22222
         mock_proc.wait.side_effect = OSError("broken pipe")
-        with patch.object(bc, "get_token", return_value="tok"), \
-             patch.object(bc, "make_session", return_value=sess), \
-             patch.object(bc, "get_cameras", return_value=cams), \
-             patch.object(bc, "resolve_cam", return_value=cams), \
-             patch("shutil.which", return_value="/usr/bin/ffplay"), \
-             patch("subprocess.Popen", return_value=mock_proc):
+        with (
+            patch.object(bc, "get_token", return_value="tok"),
+            patch.object(bc, "make_session", return_value=sess),
+            patch.object(bc, "get_cameras", return_value=cams),
+            patch.object(bc, "resolve_cam", return_value=cams),
+            patch("shutil.which", return_value="/usr/bin/ffplay"),
+            patch("subprocess.Popen", return_value=mock_proc),
+        ):
             # Should NOT raise
             bc.cmd_intercom(cfg, self._make_args(duration=10))
