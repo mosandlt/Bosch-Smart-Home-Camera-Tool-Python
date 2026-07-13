@@ -666,6 +666,7 @@
   "help.watch": "Monitorizar novos eventos (polling ou push FCM)",
   "help.watch.auto_record": "Gravação MP4 ativada por movimento em captures/<cam>/nvr/ (BETA)",
   "help.watch.auto_snapshot": "Capturar automaticamente ao iniciar movimento; implica --track-motion",
+  "help.watch.nvr_segment_seconds": "Duração do segmento em segundos enquanto o movimento permanece ativo para --auto-record (padrão: 60, ou nvr.max_duration/segment_seconds da configuração)",
   "help.watch.quiet_secs": "Segundos de silêncio antes de declarar fim do movimento (padrão: 30)",
   "help.watch.track_motion": "Seguir estado do movimento com transições rising/falling edge",
   "help.zones": "Obter / definir zonas de detecção de movimento",

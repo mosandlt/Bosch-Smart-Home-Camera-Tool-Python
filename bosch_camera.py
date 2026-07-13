@@ -231,7 +231,15 @@ DEFAULT_CONFIG = {
         },
         "_note": (
             "nvr.max_clips: keep only the N most recent clips per camera (FIFO). "
-            "nvr.max_duration: maximum single clip length in seconds. "
+            "nvr.max_duration: length of each recorded segment while motion stays "
+            "active — a single motion session longer than this produces multiple "
+            "consecutive clips instead of one file. "
+            "nvr.segment_seconds: optional newer alias for max_duration, takes "
+            "priority if both are set — NOT part of this default config on purpose "
+            "(deliberately not auto-injected into existing configs on load, so it "
+            "never silently shadows a max_duration value you've customized; add it "
+            "yourself if you want the new name). --nvr-segment-seconds on `watch` "
+            "overrides both, per run. "
             "nvr.smb.*: optional SMB/NAS upload — requires 'pip install smbprotocol'. "
             "Leave nvr.smb.host empty to disable upload."
         ),
@@ -3793,9 +3801,28 @@ def _motion_snapshot_cleanup(cam_name: str, keep: int = _MOTION_SNAPSHOT_KEEP) -
 #   - No H.265 transcoding — clips are remuxed as-is from the RTSP stream.
 #   - clip naming is second-precision; rapid consecutive recordings may collide
 #     (TODO: add sub-second suffix if needed).
+#   - Recording is motion-triggered only (single ffmpeg segment-muxer process per
+#     active motion session, started on rising edge / stopped on falling edge) —
+#     unlike the HA integration's "continuous" NVR mode there is no always-on
+#     background daemon here; the CLI only runs while `watch --auto-record` is
+#     attached to a foreground/background process.
+#   - TODO(preroll): no pre-trigger buffer yet. A few seconds of video from
+#     *before* the motion rising edge (matching the HA Mini-NVR ring-buffer
+#     concept) would need a second, continuously-running ffmpeg ring segmenter
+#     for the whole `watch --auto-record` session (not just while motion is
+#     active) plus a concat-demuxer splice step onto the front of each event.
+#     Deliberately not implemented in this iteration — it's a real architectural
+#     addition (a second long-lived process per camera, a ring/tmpfs directory,
+#     splicing logic) that deserves its own change rather than being bolted onto
+#     the segment-muxing fix below.
 
 _NVR_DEFAULT_MAX_CLIPS = 50
-_NVR_DEFAULT_MAX_DURATION = 60  # seconds per clip
+_NVR_DEFAULT_SEGMENT_SECONDS = 60  # seconds per segment while motion stays active
+# Legacy alias — kept for backward compatibility with existing bosch_config.json
+# files that only set nvr.max_duration (pre-segmenting semantics: used to be the
+# single clip's *maximum total* length; now it's the *segment* length used while
+# motion continues, see cmd_watch's nvr_segment_seconds resolution).
+_NVR_DEFAULT_MAX_DURATION = _NVR_DEFAULT_SEGMENT_SECONDS
 
 
 def _nvr_clip_dir(cam_name: str, base_dir: Optional[str] = None) -> str:
@@ -3875,23 +3902,60 @@ def _nvr_disk_mb(cam_name: str, base_dir: Optional[str] = None) -> float:
     return total / (1024 * 1024)
 
 
+def _nvr_session_clips(clip_dir: str, since: float) -> list[str]:
+    """Return segment clip paths in *clip_dir* written at/after *since* (epoch secs).
+
+    With segment muxing a single motion recording session (rising edge to
+    falling edge) can produce more than one file if motion stays active longer
+    than one segment_seconds interval, so callers that need "all clips this
+    session produced" (for prune bookkeeping / SMB upload / total byte count)
+    use this instead of a single fixed output path.
+
+    A small (1s) slack is applied to *since* to tolerate filesystem mtime
+    granularity — this can very rarely pick up the tail end of an
+    immediately-preceding session's last segment, which is harmless (it just
+    gets uploaded/counted once, under whichever session's falling edge fires
+    first).
+    """
+    if not clip_dir or not os.path.isdir(clip_dir):
+        return []
+    matches: list[str] = []
+    for fname in os.listdir(clip_dir):
+        if not fname.endswith(".mp4"):
+            continue
+        p = os.path.join(clip_dir, fname)
+        try:
+            if os.path.getmtime(p) >= since - 1:
+                matches.append(p)
+        except OSError:
+            continue
+    return sorted(matches)
+
+
 def _start_motion_recording(
     cam: dict[str, Any],
-    output_dir: Optional[str] = None,
-    max_duration: int = _NVR_DEFAULT_MAX_DURATION,
+    segment_seconds: int = _NVR_DEFAULT_SEGMENT_SECONDS,
     base_dir: Optional[str] = None,
 ) -> Optional["subprocess.Popen[bytes]"]:
-    """Start an ffmpeg process that records the camera RTSP stream to an MP4 file.
+    """Start an ffmpeg process that segments the camera RTSP stream into MP4 clips.
 
     Uses the RTSP URL stored in cam['last_live'] (set when the camera was last
     opened via the 'live' command).  If no RTSP URL is available, returns None.
 
-    The process writes a single MP4 file (not segmented) capped at *max_duration*
-    seconds via ffmpeg's -t flag.  The caller is responsible for terminating the
-    process early on a falling motion edge.
+    Unlike the previous single-file `-t <max_duration>` behavior, this uses
+    ffmpeg's own `-f segment` muxer (`-c copy`, no re-encode) so ONE ffmpeg
+    child process keeps rotating output files on its own, every
+    *segment_seconds* seconds, for as long as the process keeps running — motion
+    that continues past *segment_seconds* simply produces additional
+    consecutive segment clips instead of the recording stopping early. The
+    caller (`cmd_watch`) starts this process on a motion rising edge and
+    terminates it on the matching falling edge; ffmpeg finalizes whatever
+    segment is in progress on SIGTERM.
 
-    Returns the subprocess.Popen object so the caller can wait() / terminate() it,
-    or None on error.
+    Returns the subprocess.Popen object so the caller can wait() / terminate()
+    it, or None on error. The Popen gets a `_nvr_clip_dir` attribute (the
+    directory segments are written into) so callers can discover which files
+    a given session produced via `_nvr_session_clips()`.
 
     TODO: add RTSP URL auto-resolution via PUT /connection when last_live is empty.
     """
@@ -3906,7 +3970,8 @@ def _start_motion_recording(
         return None
 
     cam_name = cam.get("name", "unknown")
-    out_path = _nvr_clip_path(cam_name, base_dir)
+    clip_dir = _nvr_clip_dir(cam_name, base_dir)
+    out_pattern = os.path.join(clip_dir, "%H%M%S.mp4")
 
     ffmpeg_cmd = [
         "ffmpeg",
@@ -3915,13 +3980,19 @@ def _start_motion_recording(
         "tcp",
         "-i",
         rtsp_url,
-        "-t",
-        str(max_duration),
         "-c",
         "copy",
+        "-f",
+        "segment",
+        "-segment_time",
+        str(segment_seconds),
+        "-reset_timestamps",
+        "1",
+        "-strftime",
+        "1",
         "-movflags",
         "+faststart",
-        out_path,
+        out_pattern,
     ]
 
     try:
@@ -3930,8 +4001,11 @@ def _start_motion_recording(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        # Attach the output path as a custom attribute so callers can reference it
-        proc._nvr_out_path = out_path  # type: ignore[attr-defined]
+        # Attach the clip directory as a custom attribute so callers can find
+        # this session's segment files (there is no single "output path"
+        # anymore once motion continues past one segment_seconds interval).
+        proc._nvr_clip_dir = clip_dir  # type: ignore[attr-defined]
+        proc._nvr_out_pattern = out_pattern  # type: ignore[attr-defined]
         return proc
     except FileNotFoundError:
         # ffmpeg not installed
@@ -4161,7 +4235,23 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     # NVR config (used when auto_record=True)
     nvr_cfg = cfg.get("nvr", {})
     nvr_max_clips = nvr_cfg.get("max_clips", _NVR_DEFAULT_MAX_CLIPS)
-    nvr_max_duration = nvr_cfg.get("max_duration", _NVR_DEFAULT_MAX_DURATION)
+    # --nvr-segment-seconds CLI flag > nvr.segment_seconds config (opt-in, never
+    # auto-injected into an existing config — see DEFAULT_CONFIG's nvr._note) >
+    # nvr.max_duration config (the persisted default key) > built-in default.
+    # `is not None` (not truthiness) throughout: an explicit 0 must be honored
+    # as "user said 0", not silently treated as "unset" and skipped.
+    cli_segment_seconds = getattr(args, "nvr_segment_seconds", None)
+    if cli_segment_seconds is not None:
+        nvr_segment_seconds = cli_segment_seconds
+    else:
+        nvr_segment_seconds = nvr_cfg.get("segment_seconds")
+        if nvr_segment_seconds is None:
+            nvr_segment_seconds = nvr_cfg.get("max_duration")
+    # ffmpeg's -segment_time rejects 0/negative — clamp any such explicit or
+    # unset value (including a config file with max_duration: 0) to the
+    # built-in default rather than handing ffmpeg an invalid argument.
+    if not nvr_segment_seconds or nvr_segment_seconds <= 0:
+        nvr_segment_seconds = _NVR_DEFAULT_SEGMENT_SECONDS
 
     # One MotionEdgeTracker per camera (keyed by camera name)
     motion_trackers: dict[str, MotionEdgeTracker] = {}
@@ -4374,13 +4464,13 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                         if auto_record and not _nvr_is_recording(name):
                             proc = _start_motion_recording(
                                 cam_info,
-                                max_duration=nvr_max_duration,
+                                segment_seconds=nvr_segment_seconds,
                             )
                             if proc is not None:
-                                out_path = getattr(proc, "_nvr_out_path", "?")
+                                out_pattern = getattr(proc, "_nvr_out_pattern", "?")
                                 _nvr_active[name] = proc
                                 _nvr_start_times[name] = time.time()
-                                print(t("nvr.recording.started", camera=name, path=out_path))
+                                print(t("nvr.recording.started", camera=name, path=out_pattern))
                             else:
                                 print(
                                     t(
@@ -4427,12 +4517,15 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                                     proc.wait(timeout=5)
                                 except subprocess.TimeoutExpired:
                                     proc.kill()
-                                out_path = getattr(proc, "_nvr_out_path", "?")
+                                clip_dir = getattr(proc, "_nvr_clip_dir", "")
+                                session_start = _nvr_start_times.get(name, time.time())
+                                session_clips = _nvr_session_clips(clip_dir, session_start)
                                 clip_bytes = 0
-                                try:
-                                    clip_bytes = os.path.getsize(out_path)
-                                except OSError:
-                                    pass
+                                for _cp in session_clips:
+                                    try:
+                                        clip_bytes += os.path.getsize(_cp)
+                                    except OSError:
+                                        pass
                                 print(
                                     t(
                                         "nvr.recording.stopped",
@@ -4441,29 +4534,42 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                                         bytes=clip_bytes,
                                     )
                                 )
-                                # FIFO prune after new clip
-                                _nvr_prune(name, keep=nvr_max_clips)
-                                # Auto-upload if SMB configured
+                                # Auto-upload if SMB configured — one or more
+                                # segment clips may have been produced this
+                                # session if motion outlasted one segment.
+                                # IMPORTANT: upload BEFORE prune. A single long
+                                # motion session can easily emit more segments
+                                # than nvr.max_clips (unlike the old
+                                # single-file-per-session cap) — pruning first
+                                # would delete this session's own clips before
+                                # they ever got uploaded.
                                 smb_host = cfg.get("nvr", {}).get("smb", {}).get("host", "").strip()
-                                if smb_host and out_path != "?":
+                                if smb_host and session_clips:
                                     smb_share = cfg.get("nvr", {}).get("smb", {}).get("share", "")
-                                    print(
-                                        t(
-                                            "nvr.upload.started",
-                                            path=out_path,
-                                            host=smb_host,
-                                            share=smb_share,
-                                        )
+                                    delete_after = (
+                                        cfg.get("nvr", {})
+                                        .get("smb", {})
+                                        .get("delete_after_upload", False)
                                     )
-                                    ok, msg = _nvr_smb_upload(out_path, cfg)
-                                    print(f"  {msg}")
-                                    if ok and cfg.get("nvr", {}).get("smb", {}).get(
-                                        "delete_after_upload", False
-                                    ):
-                                        try:
-                                            os.remove(out_path)
-                                        except OSError:
-                                            pass
+                                    for clip_path in session_clips:
+                                        print(
+                                            t(
+                                                "nvr.upload.started",
+                                                path=clip_path,
+                                                host=smb_host,
+                                                share=smb_share,
+                                            )
+                                        )
+                                        ok, msg = _nvr_smb_upload(clip_path, cfg)
+                                        print(f"  {msg}")
+                                        if ok and delete_after:
+                                            try:
+                                                os.remove(clip_path)
+                                            except OSError:
+                                                pass
+                                # FIFO prune after upload — see the comment above
+                                # the upload block for why this must run last.
+                                _nvr_prune(name, keep=nvr_max_clips)
 
     except KeyboardInterrupt:
         elapsed = int(time.time() - start_time)
@@ -9006,6 +9112,14 @@ def main() -> None:
         "--auto-record", action="store_true", dest="auto_record", help=t("help.watch.auto_record")
     )
     p_watch.add_argument(
+        "--nvr-segment-seconds",
+        type=int,
+        default=None,
+        metavar="N",
+        dest="nvr_segment_seconds",
+        help=t("help.watch.nvr_segment_seconds"),
+    )
+    p_watch.add_argument(
         "--webhook",
         metavar="URL",
         default="",
@@ -9027,8 +9141,12 @@ def main() -> None:
             "    upload [cam] [--clip PATH] — upload to SMB/NAS (requires smbprotocol)\n"
             "\n"
             "  Config (bosch_config.json):\n"
-            "    nvr.max_clips      — FIFO limit (default 50)\n"
-            "    nvr.max_duration   — max clip seconds (default 60)\n"
+            "    nvr.max_clips        — FIFO limit (default 50)\n"
+            "    nvr.max_duration     — segment length in seconds while motion stays "
+            "active (default 60; --nvr-segment-seconds on `watch` overrides per-run)\n"
+            "    nvr.segment_seconds  — optional newer name for max_duration, wins if "
+            "both are set (not written to new configs automatically, so setting "
+            "max_duration always works)\n"
             "    nvr.smb.host / .share / .username / .password / .path\n"
             "    nvr.smb.delete_after_upload — remove local file after successful upload\n"
             "\n"

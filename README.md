@@ -685,7 +685,7 @@ python3 bosch_camera.py rescan                   # re-discover cameras
 
 > **BETA — test before use in production. API and config keys may change.**
 
-The Mini-NVR records motion-triggered MP4 clips locally via ffmpeg, with optional upload to a SMB/NAS share.
+The Mini-NVR records motion-triggered MP4 clips locally via ffmpeg's segment muxer, with optional upload to a SMB/NAS share. Recording starts on a motion rising edge and keeps running — rotating to a new segment clip every `nvr.max_duration` seconds — for as long as motion stays active, stopping only on the matching falling edge. Unlike a fixed single-clip cap, motion that outlasts one segment simply produces additional consecutive clips instead of the recording ending early.
 
 ### Requirements
 
@@ -698,7 +698,12 @@ The Mini-NVR records motion-triggered MP4 clips locally via ffmpeg, with optiona
 # Start watching + auto-record on motion
 python3 bosch_camera.py watch Garten --auto-record
 
+# Override the segment length for this run only (default: nvr.max_duration from config)
+python3 bosch_camera.py watch Garten --auto-record --nvr-segment-seconds 30
+
 # Clips land in: captures/Garten/nvr/YYYY-MM-DD/HHMMSS.mp4
+# (one file per segment — a motion session longer than the segment length produces
+# several consecutive clips instead of one)
 
 # Show status
 python3 bosch_camera.py nvr status Garten
@@ -733,7 +738,8 @@ python3 bosch_camera.py nvr upload Garten
 | Key | Default | Description |
 |-----|---------|-------------|
 | `nvr.max_clips` | `50` | FIFO clip limit per camera — oldest deleted automatically |
-| `nvr.max_duration` | `60` | Max clip length in seconds; clip is closed early on falling edge |
+| `nvr.max_duration` | `60` | Segment length in seconds while motion stays active; `--nvr-segment-seconds` on `watch` overrides per-run |
+| `nvr.segment_seconds` | *(optional)* | Newer alias for `max_duration`, wins if you set both. Not written into your config automatically — add it yourself if you prefer the new name; existing `max_duration` values keep working untouched |
 | `nvr.smb.host` | `""` | NAS hostname or IP; leave empty to disable SMB upload |
 | `nvr.smb.share` | `""` | SMB share name |
 | `nvr.smb.username` | `""` | SMB username |
@@ -744,8 +750,9 @@ python3 bosch_camera.py nvr upload Garten
 ### BETA Limitations
 
 - RTSP URL must be pre-resolved: run `live <cam>` once before `watch --auto-record` so the URL is cached in `last_live`.
-- Clip names are second-precision; two clips starting in the same second on the same camera will collide.
+- Clip names are second-precision; two segments starting in the same second on the same camera will collide.
 - No automatic RTSP URL refresh during a long watch session. If the stream URL rotates (~every hour), recording will fail silently until the next rising edge forces a re-check.
+- Motion-triggered only — there is no always-on background recording daemon (unlike the HA integration's "continuous" NVR mode). A short pre-trigger buffer (a few seconds of video from *before* the motion rising edge) is not implemented in this iteration; it would need a second, continuously-running ring-buffer ffmpeg process for the whole `watch --auto-record` session plus a concat-splice step, which is a larger architectural addition left for a future change.
 - SMB upload is synchronous and happens in the watch loop — large clips may add latency on slow NAS links.
 - No H.265 transcoding — stream is remuxed as-is; clip codec depends on camera firmware.
 

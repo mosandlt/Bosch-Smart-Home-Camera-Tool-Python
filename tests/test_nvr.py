@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 import subprocess
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -29,6 +30,7 @@ from bosch_camera import (
     _nvr_prune,
     _nvr_is_recording,
     _nvr_recording_duration,
+    _nvr_session_clips,
     _nvr_active,
     _nvr_start_times,
     _start_motion_recording,
@@ -37,8 +39,13 @@ from bosch_camera import (
     _cmd_nvr_upload,
     cmd_nvr,
     _NVR_DEFAULT_MAX_CLIPS,
-    _NVR_DEFAULT_MAX_DURATION,
+    _NVR_DEFAULT_SEGMENT_SECONDS,
 )
+
+# Real time.sleep, captured before any test patches "time.sleep" — used by the
+# cmd_watch end-to-end test to genuinely wait out MotionEdgeTracker's
+# quiet_secs hysteresis window between a rising and a falling edge poll.
+_REAL_SLEEP = time.sleep
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -124,20 +131,26 @@ class TestStartMotionRecording:
         cmd = call_args[0][0]
         assert cmd[0] == "ffmpeg"
         assert "rtsps://proxy.example.com/abc123" in cmd
-        assert "-t" in cmd
-        assert str(_NVR_DEFAULT_MAX_DURATION) in cmd
+        # Segment muxing, not a fixed single-file -t cap:
+        assert "-t" not in cmd
+        assert "-f" in cmd
+        assert cmd[cmd.index("-f") + 1] == "segment"
+        assert "-segment_time" in cmd
+        assert str(_NVR_DEFAULT_SEGMENT_SECONDS) in cmd
+        assert "-strftime" in cmd
+        assert "-reset_timestamps" in cmd
 
-    def test_start_motion_recording_uses_max_duration(self, tmp_path):
-        """max_duration param is forwarded to ffmpeg -t flag."""
+    def test_start_motion_recording_uses_segment_seconds(self, tmp_path):
+        """segment_seconds param is forwarded to ffmpeg -segment_time flag."""
         cam = _make_cam()
         mock_proc = MagicMock(spec=subprocess.Popen)
 
         with patch("bosch_camera.subprocess.Popen", return_value=mock_proc) as mock_popen:
             with patch.object(bosch_camera, "BASE_DIR", str(tmp_path)):
-                _start_motion_recording(cam, max_duration=120)
+                _start_motion_recording(cam, segment_seconds=120)
 
         cmd = mock_popen.call_args[0][0]
-        idx = cmd.index("-t")
+        idx = cmd.index("-segment_time")
         assert cmd[idx + 1] == "120"
 
     def test_start_motion_recording_returns_none_without_rtsp(self, tmp_path):
@@ -154,8 +167,8 @@ class TestStartMotionRecording:
                 proc = _start_motion_recording(cam)
         assert proc is None
 
-    def test_start_motion_recording_attaches_output_path(self, tmp_path):
-        """Returned Popen has _nvr_out_path attribute set to the target MP4 path."""
+    def test_start_motion_recording_attaches_clip_dir(self, tmp_path):
+        """Returned Popen has _nvr_clip_dir attribute set to the session's clip directory."""
         cam = _make_cam()
         mock_proc = MagicMock(spec=subprocess.Popen)
 
@@ -163,8 +176,24 @@ class TestStartMotionRecording:
             with patch.object(bosch_camera, "BASE_DIR", str(tmp_path)):
                 proc = _start_motion_recording(cam)
 
-        assert hasattr(proc, "_nvr_out_path")
-        assert proc._nvr_out_path.endswith(".mp4")
+        assert hasattr(proc, "_nvr_clip_dir")
+        assert os.path.isdir(proc._nvr_clip_dir)
+        assert hasattr(proc, "_nvr_out_pattern")
+        assert proc._nvr_out_pattern.endswith(".mp4")
+        assert "%H%M%S" in proc._nvr_out_pattern
+
+    def test_start_motion_recording_segment_pattern_uses_strftime_name(self, tmp_path):
+        """Output pattern is the segment dir + strftime %H%M%S.mp4, not a fixed name."""
+        cam = _make_cam()
+        mock_proc = MagicMock(spec=subprocess.Popen)
+
+        with patch("bosch_camera.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            with patch.object(bosch_camera, "BASE_DIR", str(tmp_path)):
+                _start_motion_recording(cam)
+
+        cmd = mock_popen.call_args[0][0]
+        out_pattern = cmd[-1]
+        assert out_pattern.endswith("%H%M%S.mp4")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -181,11 +210,13 @@ class TestRecordingLifecycle:
     def test_recording_stops_on_falling_edge(self, tmp_path):
         """On falling edge, the active Popen must be terminated."""
         cam_name = "TestCam"
+        clip_dir = tmp_path / "nvr_session"
+        clip_dir.mkdir()
         mock_proc = MagicMock(spec=subprocess.Popen)
         mock_proc.poll.return_value = None
-        mock_proc._nvr_out_path = str(tmp_path / "clip.mp4")
-        # create a dummy file so getsize works
-        open(mock_proc._nvr_out_path, "wb").close()
+        mock_proc._nvr_clip_dir = str(clip_dir)
+        # create a dummy segment file so session-clip discovery/getsize works
+        (clip_dir / "120000.mp4").write_bytes(b"x")
 
         _nvr_active[cam_name] = mock_proc
         _nvr_start_times[cam_name] = time.time() - 10
@@ -222,6 +253,62 @@ class TestRecordingLifecycle:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 2b. _nvr_session_clips — segment discovery for a motion session
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestNvrSessionClips:
+    def test_session_clips_returns_files_at_or_after_since(self, tmp_path):
+        """Only segments written at/after the session start are returned."""
+        clip_dir = tmp_path / "nvr"
+        clip_dir.mkdir()
+        old = clip_dir / "090000.mp4"
+        old.write_bytes(b"old")
+        now = time.time()
+        # Backdate the "old" file well before the session start.
+        os.utime(old, (now - 1000, now - 1000))
+
+        session_start = now - 5
+        new1 = clip_dir / "120000.mp4"
+        new1.write_bytes(b"new1")
+        os.utime(new1, (now, now))
+
+        clips = _nvr_session_clips(str(clip_dir), session_start)
+        assert str(new1) in clips
+        assert str(old) not in clips
+
+    def test_session_clips_returns_multiple_segments_in_order(self, tmp_path):
+        """A session spanning several segment_seconds intervals yields all its files, sorted."""
+        clip_dir = tmp_path / "nvr"
+        clip_dir.mkdir()
+        now = time.time()
+        paths = []
+        for i, name in enumerate(["120000.mp4", "120100.mp4", "120200.mp4"]):
+            p = clip_dir / name
+            p.write_bytes(b"x")
+            os.utime(p, (now + i, now + i))
+            paths.append(str(p))
+
+        clips = _nvr_session_clips(str(clip_dir), now - 1)
+        assert clips == sorted(paths)
+
+    def test_session_clips_ignores_non_mp4_files(self, tmp_path):
+        clip_dir = tmp_path / "nvr"
+        clip_dir.mkdir()
+        (clip_dir / "clip.mp4").write_bytes(b"x")
+        (clip_dir / "notes.txt").write_bytes(b"x")
+        clips = _nvr_session_clips(str(clip_dir), time.time() - 10)
+        assert len(clips) == 1
+        assert clips[0].endswith(".mp4")
+
+    def test_session_clips_missing_dir_returns_empty(self, tmp_path):
+        assert _nvr_session_clips(str(tmp_path / "does-not-exist"), time.time()) == []
+
+    def test_session_clips_empty_clip_dir_returns_empty(self, tmp_path):
+        assert _nvr_session_clips("", time.time()) == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 3. Clip path format
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -250,6 +337,40 @@ class TestClipPathFormat:
         with patch.object(bosch_camera, "BASE_DIR", str(tmp_path)):
             path = _nvr_clip_path("TestCam")
         assert os.sep + "nvr" + os.sep in path or "/nvr/" in path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3b. DEFAULT_CONFIG regression guard — segment_seconds must stay opt-in
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestDefaultConfigSegmentSecondsStaysOptIn:
+    def test_default_config_nvr_has_no_segment_seconds_key(self):
+        """DEFAULT_CONFIG's nvr block must NOT include "segment_seconds".
+
+        _merge_defaults() (called by load_config() on every run, including
+        implicitly via get_token()'s save_config() on token renewal) injects
+        any DEFAULT_CONFIG key missing from an EXISTING on-disk config —
+        including one a user customized long ago. If "segment_seconds" were a
+        DEFAULT_CONFIG key, the next token renewal after this feature ships
+        would silently write "segment_seconds": 60 into every existing user's
+        config file, permanently shadowing a still-configured "max_duration"
+        (since cmd_watch's fallback chain checks segment_seconds first) — the
+        documented "max_duration still works, segment_seconds is opt-in"
+        guarantee in README.md / the nvr --help text would become false for
+        every pre-existing installation. segment_seconds must only ever be
+        read via nvr_cfg.get(...), never auto-materialized onto disk.
+        """
+        assert "segment_seconds" not in bosch_camera.DEFAULT_CONFIG.get("nvr", {})
+        # max_duration remains the persisted, always-present key.
+        assert bosch_camera.DEFAULT_CONFIG["nvr"]["max_duration"] == 60
+
+    def test_merge_defaults_does_not_inject_segment_seconds(self):
+        """End-to-end proof of the above via the real _merge_defaults() path."""
+        existing_cfg = {"nvr": {"max_duration": 90}}
+        bosch_camera._merge_defaults(existing_cfg, bosch_camera.DEFAULT_CONFIG)
+        assert "segment_seconds" not in existing_cfg["nvr"]
+        assert existing_cfg["nvr"]["max_duration"] == 90  # untouched
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -582,6 +703,9 @@ class TestArgparsePinEveryMode:
         pw.add_argument("--auto-snapshot", action="store_true", dest="auto_snapshot")
         pw.add_argument("--quiet-secs", type=int, default=30, metavar="N", dest="quiet_secs")
         pw.add_argument("--auto-record", action="store_true", dest="auto_record")
+        pw.add_argument(
+            "--nvr-segment-seconds", type=int, default=None, metavar="N", dest="nvr_segment_seconds"
+        )
         return parser.parse_args(["watch"] + extra_args)
 
     def test_auto_record_default_false(self):
@@ -596,6 +720,15 @@ class TestArgparsePinEveryMode:
         ns = self._parse_watch(["--auto-record", "--quiet-secs", "45"])
         assert ns.auto_record is True
         assert ns.quiet_secs == 45
+
+    def test_nvr_segment_seconds_default_none(self):
+        """Default is None so cmd_watch falls back to config (segment_seconds/max_duration)."""
+        ns = self._parse_watch(["--auto-record"])
+        assert ns.nvr_segment_seconds is None
+
+    def test_nvr_segment_seconds_flag_sets_value(self):
+        ns = self._parse_watch(["--auto-record", "--nvr-segment-seconds", "90"])
+        assert ns.nvr_segment_seconds == 90
 
     def _parse_nvr(self, extra_args: list[str]) -> argparse.Namespace:
         parser = argparse.ArgumentParser()
@@ -651,3 +784,243 @@ class TestArgparsePinEveryMode:
     def test_nvr_upload_specific_clip(self):
         ns = self._parse_nvr(["upload", "--clip", "/path/to/clip.mp4"])
         assert ns.clip == "/path/to/clip.mp4"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. cmd_watch end-to-end — rising/falling edge drives the real segment-muxer
+#    ffmpeg spawn/terminate cascade (subprocess.Popen mocked; no real ffmpeg).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestCmdWatchAutoRecordSegmenting:
+    """Drives the real cmd_watch loop through one rising + one falling edge."""
+
+    def _run(self, cfg: dict, args: argparse.Namespace, tmp_path) -> MagicMock:
+        call_count = [0]
+
+        def _events(session, cam_id, limit=20):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return []  # baseline (limit=1)
+            if call_count[0] == 2:
+                return [
+                    {
+                        "id": "ev1",
+                        "eventType": "MOVEMENT",
+                        "timestamp": "2026-01-01T00:00:00",
+                        "imageUrl": "",
+                        "videoClipUrl": "",
+                    }
+                ]  # poll 1 — rising edge
+            return []  # poll 2 — no events; falling edge once quiet_secs has elapsed
+
+        sleep_count = [0]
+        # patch("time.sleep", ...) below is a GLOBAL patch — it also intercepts
+        # time.sleep() calls made by any unrelated leaked daemon thread from an
+        # earlier test still running in the background (e.g. a _live_snap_loop
+        # fetcher). Without a thread guard those foreign calls corrupt
+        # sleep_count and can trip the stop condition before cmd_watch's own
+        # loop (running on THIS thread) reaches its second iteration.
+        test_thread = threading.current_thread()
+
+        def _stop_after_third_sleep(*_a, **_kw):
+            if threading.current_thread() is not test_thread:
+                _REAL_SLEEP(0.01)
+                return
+            sleep_count[0] += 1
+            if sleep_count[0] >= 3:
+                bosch_camera._STOP_REQUESTED.set()
+                return
+            if sleep_count[0] == 2:
+                # Between the rising-edge poll (iteration 1) and the next poll
+                # (iteration 2) a real >= quiet_secs gap must elapse for
+                # MotionEdgeTracker to report "falling" — args.quiet_secs=1
+                # here, and `getattr(args, "quiet_secs", 30) or 30` in
+                # cmd_watch treats 0 as "unset" (falsy), so 0 can't be used to
+                # force an instant falling edge; genuinely wait it out instead.
+                _REAL_SLEEP(1.5)
+
+        mock_proc = MagicMock(spec=subprocess.Popen)
+        mock_proc.poll.return_value = None
+        mock_session = MagicMock()
+        mock_session.headers = {}  # falsy Authorization → skip the 401-retry branch
+
+        with (
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=mock_session),
+            patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
+            patch.object(bosch_camera, "resolve_cam", return_value=cfg["cameras"]),
+            patch.object(bosch_camera, "_is_token_near_expiry", return_value=False),
+            patch.object(bosch_camera, "api_get_events", side_effect=_events),
+            patch.object(bosch_camera, "api_mark_events_read"),
+            patch.object(bosch_camera, "_install_stop_handlers"),
+            patch.object(bosch_camera, "BASE_DIR", str(tmp_path)),
+            patch("bosch_camera.subprocess.Popen", return_value=mock_proc) as mock_popen,
+            patch("time.sleep", side_effect=_stop_after_third_sleep),
+        ):
+            bosch_camera._STOP_REQUESTED.clear()
+            bosch_camera._nvr_active.clear()
+            bosch_camera._nvr_start_times.clear()
+            try:
+                bosch_camera.cmd_watch(cfg, args)
+            finally:
+                bosch_camera._STOP_REQUESTED.clear()
+
+        return mock_popen, mock_proc
+
+    def test_rising_edge_spawns_segment_ffmpeg_falling_edge_terminates_it(self, tmp_path):
+        """Full rising→falling cycle: ffmpeg spawned with segment args, then terminated."""
+        cfg = _make_cfg(max_duration=45)
+        cfg["cameras"]["TestCam"]["last_live"] = {"rtsp_url": "rtsps://cam.example.com/s"}
+        args = _make_args(
+            cam=None,
+            interval=1,
+            duration=0,
+            snapshot=False,
+            push=False,
+            signal="",
+            signal_sender="",
+            signal_recipients="",
+            webhook="",
+            quiet_secs=1,
+            auto_snapshot=False,
+            auto_record=True,
+            track_motion=False,
+            push_mode="polling",
+            nvr_segment_seconds=None,
+        )
+
+        mock_popen, mock_proc = self._run(cfg, args, tmp_path)
+
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        assert cmd[0] == "ffmpeg"
+        assert "-f" in cmd and cmd[cmd.index("-f") + 1] == "segment"
+        idx = cmd.index("-segment_time")
+        # No CLI override → falls back to config's legacy nvr.max_duration (45).
+        assert cmd[idx + 1] == "45"
+
+        mock_proc.terminate.assert_called_once()
+        mock_proc.wait.assert_called_once()
+        assert "TestCam" not in bosch_camera._nvr_active
+
+    def test_cli_segment_seconds_overrides_config(self, tmp_path):
+        """--nvr-segment-seconds on the CLI wins over nvr.max_duration/segment_seconds config."""
+        cfg = _make_cfg(max_duration=45)
+        cfg["cameras"]["TestCam"]["last_live"] = {"rtsp_url": "rtsps://cam.example.com/s"}
+        args = _make_args(
+            cam=None,
+            interval=1,
+            duration=0,
+            snapshot=False,
+            push=False,
+            signal="",
+            signal_sender="",
+            signal_recipients="",
+            webhook="",
+            quiet_secs=1,
+            auto_snapshot=False,
+            auto_record=True,
+            track_motion=False,
+            push_mode="polling",
+            nvr_segment_seconds=15,
+        )
+
+        mock_popen, _mock_proc = self._run(cfg, args, tmp_path)
+
+        cmd = mock_popen.call_args[0][0]
+        idx = cmd.index("-segment_time")
+        assert cmd[idx + 1] == "15"
+
+    def test_cli_segment_seconds_zero_is_honored_then_clamped_to_default(self, tmp_path):
+        """--nvr-segment-seconds 0 is an explicit value (not "unset") but 0 is an
+        invalid ffmpeg -segment_time, so it must be clamped to the built-in
+        default (60) rather than silently falling through to nvr.max_duration
+        (45 here) — falling through would look like "0 was ignored", but the
+        actual guarantee is "0 is honored as explicit, then rejected as invalid".
+        """
+        cfg = _make_cfg(max_duration=45)
+        cfg["cameras"]["TestCam"]["last_live"] = {"rtsp_url": "rtsps://cam.example.com/s"}
+        args = _make_args(
+            cam=None,
+            interval=1,
+            duration=0,
+            snapshot=False,
+            push=False,
+            signal="",
+            signal_sender="",
+            signal_recipients="",
+            webhook="",
+            quiet_secs=1,
+            auto_snapshot=False,
+            auto_record=True,
+            track_motion=False,
+            push_mode="polling",
+            nvr_segment_seconds=0,
+        )
+
+        mock_popen, _mock_proc = self._run(cfg, args, tmp_path)
+
+        cmd = mock_popen.call_args[0][0]
+        idx = cmd.index("-segment_time")
+        assert cmd[idx + 1] == str(_NVR_DEFAULT_SEGMENT_SECONDS)
+
+    def test_upload_runs_before_prune_so_session_clips_survive(self, tmp_path):
+        """Regression: prune must not delete a session's own clips before they
+        are uploaded. A single motion session can produce more segment files
+        than nvr.max_clips (unlike the old single-file-per-session cap) — if
+        prune ran first it would delete the session's own oldest segments
+        before the upload loop reached them, silently losing data right after
+        printing a "recording stopped" success message.
+        """
+        cfg = _make_cfg(smb_host="nas.local", max_duration=45, max_clips=1)
+        cfg["cameras"]["TestCam"]["last_live"] = {"rtsp_url": "rtsps://cam.example.com/s"}
+        args = _make_args(
+            cam=None,
+            interval=1,
+            duration=0,
+            snapshot=False,
+            push=False,
+            signal="",
+            signal_sender="",
+            signal_recipients="",
+            webhook="",
+            quiet_secs=1,
+            auto_snapshot=False,
+            auto_record=True,
+            track_motion=False,
+            push_mode="polling",
+            nvr_segment_seconds=None,
+        )
+
+        # Two fake segment clips from the same session — more than max_clips=1,
+        # so if prune ran before upload it would delete one before upload sees it.
+        clip1 = tmp_path / "clip1.mp4"
+        clip2 = tmp_path / "clip2.mp4"
+        clip1.write_bytes(b"a")
+        clip2.write_bytes(b"b")
+        call_order: list[str] = []
+
+        def _fake_session_clips(clip_dir, since):
+            return [str(clip1), str(clip2)]
+
+        def _fake_upload(clip_path, cfg_):
+            call_order.append(f"upload:{clip_path}")
+            return True, "ok"
+
+        def _fake_prune(cam_name, keep=50, base_dir=None):
+            call_order.append("prune")
+            return 0, 2
+
+        with (
+            patch("bosch_camera._nvr_session_clips", side_effect=_fake_session_clips),
+            patch("bosch_camera._nvr_smb_upload", side_effect=_fake_upload),
+            patch("bosch_camera._nvr_prune", side_effect=_fake_prune),
+        ):
+            self._run(cfg, args, tmp_path)
+
+        assert call_order == [
+            f"upload:{clip1}",
+            f"upload:{clip2}",
+            "prune",
+        ], f"prune must run AFTER both uploads, got: {call_order}"

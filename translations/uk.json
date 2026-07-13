@@ -666,6 +666,7 @@
   "help.watch": "Спостерігати за новими подіями (опитування або FCM push)",
   "help.watch.auto_record": "Автозапис MP4 за рухом до captures/<cam>/nvr/ (BETA)",
   "help.watch.auto_snapshot": "Автоматичний знімок при виявленні руху; передбачає --track-motion",
+  "help.watch.nvr_segment_seconds": "Довжина сегмента в секундах, поки рух залишається активним для --auto-record (за замовчуванням: 60, або nvr.max_duration/segment_seconds з конфігурації)",
   "help.watch.quiet_secs": "Секунди тиші до оголошення завершення руху (за замовчуванням: 30)",
   "help.watch.track_motion": "Відстежувати стан руху з переходами rising/falling edge",
   "help.zones": "Отримати / встановити зони виявлення руху",

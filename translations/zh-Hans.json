@@ -666,6 +666,7 @@
   "help.watch": "监视新事件（轮询或 FCM 推送）",
   "help.watch.auto_record": "运动触发 MP4 录制到 captures/<cam>/nvr/（BETA）",
   "help.watch.auto_snapshot": "运动上升沿时自动捕获快照；隐含 --track-motion",
+  "help.watch.nvr_segment_seconds": "运动持续期间 --auto-record 的分段时长（秒）（默认：60，或配置中的 nvr.max_duration/segment_seconds）",
   "help.watch.quiet_secs": "声明运动结束前的安静秒数（默认: 30）",
   "help.watch.track_motion": "使用上升沿/下降沿过渡跟踪运动状态",
   "help.zones": "获取 / 设置运动检测区域",

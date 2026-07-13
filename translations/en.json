@@ -679,6 +679,7 @@
   "help.watch": "Watch for new events (polling or FCM push)",
   "help.watch.auto_record": "Auto-record motion-triggered MP4 clips to captures/<cam>/nvr/ (BETA)",
   "help.watch.auto_snapshot": "Auto-capture snapshot on rising motion edge; implies --track-motion",
+  "help.watch.nvr_segment_seconds": "Segment length in seconds while motion stays active for --auto-record (default: 60, or nvr.max_duration/segment_seconds from config)",
   "help.watch.quiet_secs": "Seconds of quiet before declaring motion cleared (default: 30)",
   "help.watch.track_motion": "Track motion state with rising/falling edge transitions",
   "help.zones": "Get / set motion detection zones",
