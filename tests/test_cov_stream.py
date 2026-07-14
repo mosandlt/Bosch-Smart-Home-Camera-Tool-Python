@@ -249,7 +249,7 @@ class TestSnapFromProxy:
         with patch.object(bc, "requests") as mock_req:
             mock_req.put.return_value = put_resp
             mock_req.get.return_value = snap_resp
-            result = bc.snap_from_proxy(_fake_cam(), token="tok")
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", session=mock_req)
         assert result == b"\xff\xd8snap"
 
     def test_local_with_digest_auth(self) -> None:
@@ -264,7 +264,7 @@ class TestSnapFromProxy:
             mock_req.get.return_value = snap_resp
             mock_req.get = MagicMock(return_value=snap_resp)
             # Call directly with LOCAL to test Digest branch
-            result = bc.snap_from_proxy(_fake_cam(), token="tok")
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", session=mock_req)
         # Either result is bytes or None — just ensure no exception
         assert result is None or isinstance(result, bytes)
 
@@ -285,14 +285,14 @@ class TestSnapFromProxy:
         ):
             mock_req.put.side_effect = [r_401, r_200, r_200]
             mock_req.get.return_value = snap_resp
-            bc.snap_from_proxy(_fake_cam(), token="oldtok", cfg=cfg)
+            bc.snap_from_proxy(_fake_cam(), token="oldtok", cfg=cfg, session=mock_req)
         mock_get_tok.assert_called()
 
     def test_put_connection_returns_non_200_returns_none(self) -> None:
         """_fetch_snap: PUT non-200 → returns None for that conn type."""
         with patch.object(bc, "requests") as mock_req:
             mock_req.put.return_value = _err_resp(503)
-            result = bc.snap_from_proxy(_fake_cam(), token="tok")
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", session=mock_req)
         assert result is None
 
     def test_snap_404_retries_and_fails(self) -> None:
@@ -308,7 +308,7 @@ class TestSnapFromProxy:
             # Reset for cleaner test: put returns ok always; get returns 404
             mock_req.put.return_value = put_resp
             mock_req.get.return_value = snap_404
-            result = bc.snap_from_proxy(_fake_cam(), token="tok")
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", session=mock_req)
         assert result is None
 
     def test_snap_404_retry_succeeds(self) -> None:
@@ -326,7 +326,7 @@ class TestSnapFromProxy:
         with patch.object(bc, "requests") as mock_req:
             mock_req.put.return_value = put_resp
             mock_req.get.side_effect = _get_side
-            result = bc.snap_from_proxy(_fake_cam(), token="tok")
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", session=mock_req)
         assert result == b"\xff\xd8snap"
 
     def test_snap_http_error_non_200_non_404_returns_none(self) -> None:
@@ -336,7 +336,7 @@ class TestSnapFromProxy:
         with patch.object(bc, "requests") as mock_req:
             mock_req.put.return_value = put_resp
             mock_req.get.return_value = snap_err
-            result = bc.snap_from_proxy(_fake_cam(), token="tok")
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", session=mock_req)
         assert result is None
 
     def test_snap_wrong_content_type_returns_none(self) -> None:
@@ -346,7 +346,7 @@ class TestSnapFromProxy:
         with patch.object(bc, "requests") as mock_req:
             mock_req.put.return_value = put_resp
             mock_req.get.return_value = snap_bad
-            result = bc.snap_from_proxy(_fake_cam(), token="tok")
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", session=mock_req)
         assert result is None
 
     def test_exception_in_fetch_snap_returns_none(self) -> None:
@@ -354,7 +354,7 @@ class TestSnapFromProxy:
         with patch.object(bc, "requests") as mock_req:
             mock_req.put.return_value = _ok_put_resp(CONN_REMOTE)
             mock_req.get.side_effect = OSError("connection refused")
-            result = bc.snap_from_proxy(_fake_cam(), token="tok")
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", session=mock_req)
         assert result is None
 
     def test_no_urls_in_response_returns_none(self) -> None:
@@ -362,14 +362,14 @@ class TestSnapFromProxy:
         conn_no_urls = dict(CONN_REMOTE, urls=[])
         with patch.object(bc, "requests") as mock_req:
             mock_req.put.return_value = _ok_put_resp(conn_no_urls)
-            result = bc.snap_from_proxy(_fake_cam(), token="tok")
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", session=mock_req)
         assert result is None
 
     def test_401_without_cfg_does_not_refresh(self) -> None:
         """PUT 401 without cfg → no refresh, returns None."""
         with patch.object(bc, "requests") as mock_req, patch.object(bc, "get_token") as mock_gt:
             mock_req.put.return_value = _err_resp(401)
-            bc.snap_from_proxy(_fake_cam(), token="tok", cfg=None)
+            bc.snap_from_proxy(_fake_cam(), token="tok", cfg=None, session=mock_req)
         mock_gt.assert_not_called()
 
     def test_put_connection_still_401_after_refresh(self) -> None:
@@ -384,7 +384,7 @@ class TestSnapFromProxy:
             patch.object(bc, "make_session"),
         ):
             mock_req.put.return_value = _err_resp(401)
-            result = bc.snap_from_proxy(_fake_cam(), token="tok", cfg=cfg)
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", cfg=cfg, session=mock_req)
         assert result is None
 
     def test_get_token_raises_during_refresh(self) -> None:
@@ -399,7 +399,7 @@ class TestSnapFromProxy:
             patch.object(bc, "get_token", side_effect=RuntimeError("net err")),
         ):
             mock_req.put.return_value = r_401
-            result = bc.snap_from_proxy(_fake_cam(), token="tok", cfg=cfg)
+            result = bc.snap_from_proxy(_fake_cam(), token="tok", cfg=cfg, session=mock_req)
         assert result is None
 
 

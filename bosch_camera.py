@@ -86,6 +86,7 @@ from bosch_tls import bosch_get  # TOFU fingerprint pinning for LAN cameras
 from bosch_cloud_ssl import (  # CWE-295: verified TLS for Bosch cloud/proxy hosts
     _BoschCloudAdapter,
     get_bosch_cloud_ssl_context,
+    make_bosch_cloud_session,
     requests_get_bosch_cloud,
     requests_put_bosch_cloud,
     requests_post_bosch_cloud,
@@ -867,7 +868,11 @@ def cmd_events(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
 
 def snap_from_proxy(
-    cam_info: dict[str, Any], token: str, hq: bool = False, cfg: Optional[dict[str, Any]] = None
+    cam_info: dict[str, Any],
+    token: str,
+    hq: bool = False,
+    cfg: Optional[dict[str, Any]] = None,
+    session: Optional[requests.Session] = None,
 ) -> bytes | None:
     """
     Live snapshot via PUT /connection.
@@ -877,15 +882,26 @@ def snap_from_proxy(
     hq=True requests highQualityVideo in the connection payload.
     If cfg is provided and we receive a 401 on PUT /connection, refresh the
     token once and retry. On second 401 we fail hard with a clear message.
+
+    ``session``: pooled ``requests.Session`` (see ``make_session()``) reused for
+    both the cloud PUT /connection call and the REMOTE snap.jpg GET — avoids a
+    fresh TCP/TLS handshake on every poll tick in hot callers like the live-view
+    loop. Defaults to the cached module-level session via ``make_session(token)``
+    when omitted (e.g. one-shot CLI callers) — same session ``cmd_live``/``cmd_watch``
+    already use for their own cloud calls, so this is not a new shared resource.
+    LOCAL (LAN camera) requests are unaffected — they keep using a one-shot
+    ``requests.get`` since each LOCAL host is a different self-signed camera IP.
+
     Returns JPEG bytes or None.
     """
     cam_id = cam_info.get("id", "")
+    _session = session if session is not None else make_session(token)
     # Mutable list so the inner closure can update the header after a token refresh.
     headers_box = [{"Authorization": f"Bearer {token}", "Content-Type": "application/json"}]
 
     def _put_connection(conn_type: str) -> requests.Response:
         """PUT /connection with one-shot token refresh on 401."""
-        r = requests.put(
+        r = _session.put(
             f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
             headers=headers_box[0],
             json={"type": conn_type, "highQualityVideo": hq},
@@ -905,7 +921,7 @@ def snap_from_proxy(
             }
             # Also update the cached session so subsequent calls use the new token.
             make_session(new_token)
-            r = requests.put(
+            r = _session.put(
                 f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
                 headers=headers_box[0],
                 json={"type": conn_type, "highQualityVideo": hq},
@@ -930,9 +946,12 @@ def snap_from_proxy(
             return None
         snap_url = scheme.replace("{url}", urls[0])
         snap_timeout = 5 if conn_type == "LOCAL" else 15
-        # LOCAL: camera self-signed cert → verify=False (TOFU-pinned by bosch_tls)
-        # REMOTE: Bosch cloud proxy → Bosch cloud SSL context (CWE-295 fix)
-        _snap_get = requests.get if conn_type == "LOCAL" else requests_get_bosch_cloud
+        # LOCAL: camera self-signed cert → verify=False (TOFU-pinned by bosch_tls),
+        # one-shot since each LOCAL host is a different self-signed camera IP.
+        # REMOTE: Bosch cloud proxy → same pooled cloud session as the PUT above
+        # (CWE-295 fix via the session's mounted _BoschCloudAdapter; avoids a
+        # fresh TCP/TLS handshake on every poll tick — see docstring).
+        _snap_get = requests.get if conn_type == "LOCAL" else _session.get
         if api_user and api_pass:
             from requests.auth import HTTPDigestAuth
 
@@ -1210,7 +1229,7 @@ def cmd_snapshot(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
         if live:
             # ── Method 1: Cloud proxy live snap ───────────────────────────────
-            data = snap_from_proxy(cam_info, token, hq=hq, cfg=cfg)
+            data = snap_from_proxy(cam_info, token, hq=hq, cfg=cfg, session=session)
             if data:
                 _save_and_open(data, name, "", "proxy_live")
                 continue
@@ -1269,30 +1288,60 @@ def _live_snap_loop(snap_url: str, cam_name: str, interval: float = 1.0) -> None
     frame_lock = threading.Lock()
     current_frame: list[bytes | None] = [None]  # [bytes | None]
 
+    # Pooled session for the fetcher loop below — created once, reused for every
+    # poll tick instead of the one-shot requests_get_bosch_cloud()-per-frame the
+    # loop used to open (fresh TCP/TLS handshake every `interval` seconds at the
+    # default 1s poll rate). Thread-confined: only the single `fetcher` daemon
+    # thread spawned below ever touches this session, so no cross-thread
+    # requests.Session sharing/locking is needed (unlike the shared module-level
+    # _HTTP_SESSION, which is only ever used from a single thread at a time too,
+    # but by design, not by construction — keeping this one local and dedicated
+    # avoids relying on that invariant here).
+    _snap_loop_session = make_bosch_cloud_session(pool_connections=1, pool_maxsize=1)
+
     # ── Fetcher thread: polls snap.jpg ────────────────────────────────────────
     # snap_url here is always the cloud proxy URL (proxy-*.live.cbs.boschsecurity.com)
     # → use Bosch cloud SSL context instead of verify=False (CWE-295 fix).
     def fetcher() -> None:
         count = 0
-        while not stop_event.is_set():
-            t0 = time.time()
+        try:
+            while not stop_event.is_set():
+                t0 = time.time()
+                try:
+                    r = _snap_loop_session.get(snap_url, timeout=10)
+                    if r.status_code == 200 and r.headers.get("Content-Type", "").startswith(
+                        "image"
+                    ):
+                        with frame_lock:
+                            current_frame[0] = r.content
+                        count += 1
+                        print(
+                            f"\r  🖼️   Frame {count}  {len(r.content):,} bytes", end="", flush=True
+                        )
+                    elif r.status_code == 404:
+                        print(f"\n  ⏰  Proxy session expired after {count} frames.")
+                        stop_event.set()
+                        break
+                except Exception:
+                    pass
+                elapsed = time.time() - t0
+                remaining = interval - elapsed
+                if remaining > 0:
+                    stop_event.wait(remaining)
+        finally:
+            # Close from inside this thread, once the loop has genuinely exited —
+            # _snap_loop_session is thread-confined to `fetcher` by design (see
+            # comment above), so closing it must happen here too, not from the
+            # main thread via stop_event.set() + close() with no join(). That
+            # older pattern raced a live in-flight .get() against .close() on
+            # the same requests.Session (not fully thread-safe) whenever the
+            # main thread returned early (no-frames timeout) or hit the
+            # finally-block on player exit, without ever waiting for this
+            # thread to actually stop.
             try:
-                r = requests_get_bosch_cloud(snap_url, timeout=10)
-                if r.status_code == 200 and r.headers.get("Content-Type", "").startswith("image"):
-                    with frame_lock:
-                        current_frame[0] = r.content
-                    count += 1
-                    print(f"\r  🖼️   Frame {count}  {len(r.content):,} bytes", end="", flush=True)
-                elif r.status_code == 404:
-                    print(f"\n  ⏰  Proxy session expired after {count} frames.")
-                    stop_event.set()
-                    break
+                _snap_loop_session.close()
             except Exception:
                 pass
-            elapsed = time.time() - t0
-            remaining = interval - elapsed
-            if remaining > 0:
-                stop_event.wait(remaining)
 
     # ── MJPEG HTTP server ─────────────────────────────────────────────────────
     class MJPEGHandler(http.server.BaseHTTPRequestHandler):
@@ -4486,7 +4535,9 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                             snap_path = os.path.join(snap_dir, f"motion_{snap_ts}.jpg")
                             snap_data: Optional[bytes] = None
                             try:
-                                snap_data = snap_from_proxy(cam_info, token, hq=False, cfg=cfg)
+                                snap_data = snap_from_proxy(
+                                    cam_info, token, hq=False, cfg=cfg, session=session
+                                )
                             except Exception:
                                 pass
                             if snap_data is None:
