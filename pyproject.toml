@@ -13,6 +13,8 @@ dependencies = [
     "requests",
     "urllib3",
     "defusedxml>=0.7.1",
+    "aiohttp>=3.9",
+    "bosch-shc-camera-client>=0.5.4,<0.6",
 ]
 
 [project.urls]
@@ -31,6 +33,7 @@ include = [
     "bosch_cloud_ssl.py",
     "bosch_i18n.py",
     "bosch_maintenance.py",
+    "bosch_rcp_client.py",
     "bosch_tls.py",
     "get_token.py",
     "start_proxy.py",
@@ -45,6 +48,7 @@ only-include = [
     "bosch_cloud_ssl.py",
     "bosch_i18n.py",
     "bosch_maintenance.py",
+    "bosch_rcp_client.py",
     "bosch_tls.py",
     "get_token.py",
     "start_proxy.py",

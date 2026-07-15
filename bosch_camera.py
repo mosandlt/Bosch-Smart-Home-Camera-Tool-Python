@@ -80,6 +80,7 @@ from requests.adapters import HTTPAdapter
 from typing import Any, Optional, cast
 from urllib.parse import urlparse, urlsplit, urlunsplit
 
+import bosch_rcp_client  # RCP session/read/LOCAL-write via bosch-shc-camera-client
 from bosch_i18n import t, set_lang, detect_lang
 from bosch_maintenance import MaintenanceWindow, fetch_maintenance
 from bosch_tls import bosch_get  # TOFU fingerprint pinning for LAN cameras
@@ -2515,7 +2516,7 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 # We already opened a REMOTE connection above for stream URLs.
                 # Re-use it by opening a new RCP session on the same proxy hash.
                 _rcp_proxy_base, _ = rcp_open_connection(cam_id, token)
-                _rcp_sessionid = rcp_session(_rcp_proxy_base)
+                _rcp_sessionid = rcp_session_cached(_rcp_proxy_base)
                 _rcp_url = f"{_rcp_proxy_base}/rcp.xml"
 
                 # Product name (0x0aea)
@@ -2589,54 +2590,27 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 # Uses synchronous `requests` (same as the rest of the CLI).
 
 
-def _lan_rcp_write(
-    cam_ip: str, command: str, payload_hex: str, type_: str = "P_OCTET", num: int = 0
-) -> bool:
-    """Write an RCP value directly via the camera's LAN HTTP endpoint.
-
-    Returns True on success.  payload_hex may or may not start with "0x".
-    `num=1` is required for T_WORD-typed writes (e.g. 0x0c22 LED dimmer).
-    """
-    base = f"http://{cam_ip}/rcp.xml"
-    if not payload_hex.lower().startswith("0x"):
-        payload_hex = "0x" + payload_hex
-    params: dict[str, str] = {
-        "command": command,
-        "direction": "WRITE",
-        "type": type_,
-        "payload": payload_hex,
-    }
-    if num:
-        params["num"] = str(num)
-    try:
-        r = requests.get(base, params=params, verify=False, timeout=5)
-        if r.status_code != 200:
-            return False
-        if b"<err>" in r.content.lower():
-            return False
-        return True
-    except Exception:
-        return False
-
-
 def _lan_rcp_write_privacy(cam_ip: str, enabled: bool) -> bool:
-    """Write privacy-mode via direct LOCAL RCP (Gen2, no auth).
+    """Write privacy-mode via direct LOCAL RCP (Gen2, HTTPS).
 
     Uses command 0x0d00.  payload byte[1] = 1 (ON) or 0 (OFF).
+    Delegates to bosch_rcp_client (bosch-shc-camera-client library) -- HTTPS
+    on port 443, matching what modern Gen2 firmware actually answers (the
+    previous plain-HTTP-port-80 implementation is confirmed dead on real
+    hardware, see bosch_rcp_client.lan_write_privacy's docstring).
     """
-    payload = "00010000" if enabled else "00000000"
-    return _lan_rcp_write(cam_ip, "0x0d00", payload, "P_OCTET")
+    return bosch_rcp_client.lan_write_privacy(cam_ip, enabled)
 
 
 def _lan_rcp_write_front_light(cam_ip: str, brightness: int) -> bool:
-    """Write front-light brightness (0–100) via direct LOCAL RCP (Gen2, no auth).
+    """Write front-light brightness (0–100) via direct LOCAL RCP (Gen2, HTTPS).
 
     Maps to RCP 0x0c22 (T_WORD, num=1).  0 = off; 1-100 = dimmer level.
     Wallwasher is cloud-only (write payload too complex for unauthenticated RCP).
+    Delegates to bosch_rcp_client -- see _lan_rcp_write_privacy docstring.
     """
     val = max(0, min(100, int(brightness)))
-    payload = f"{val:04x}"
-    return _lan_rcp_write(cam_ip, "0x0c22", payload, "T_WORD", num=1)
+    return bosch_rcp_client.lan_write_front_light(cam_ip, val)
 
 
 def _lan_tcp_ping(host: str, port: int = 443, timeout: float = 3.0) -> tuple[bool, float]:
@@ -5289,13 +5263,6 @@ def cmd_wifi(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
 RCP_BASE_PORT = 42090
 
-# Fixed HELLO payload for auth level 3 (viewer) — matches Bosch app behaviour
-_RCP_HELLO_PAYLOAD = "0102004000000000040000000000000000010000000000000001000000000000"
-
-# RCP session ID cache: proxy_base → (sessionid, expires_timestamp)
-# Avoids re-running the 2-step RCP handshake on every command call.
-_RCP_SESSION_CACHE: dict[str, tuple[str, float]] = {}
-
 
 def rcp_open_connection(cam_id: str, token: str) -> tuple[str, str]:
     """
@@ -5303,6 +5270,13 @@ def rcp_open_connection(cam_id: str, token: str) -> tuple[str, str]:
     Returns (proxy_base_url, proxy_hash_path) where:
       proxy_base_url = 'https://proxy-NN.live.cbs.boschsecurity.com:42090/{hash}'
     Raises RuntimeError on failure.
+
+    NOT migrated to bosch_rcp_client/bosch-shc-camera-client: this is a plain
+    "PUT a JSON body, check status, read a field" cloud call with no
+    RCP-protocol-specific logic to share, so reimplementing it against the
+    library's async cloud_put_json() helper would add an asyncio.run()
+    boundary without removing any duplicated protocol code. Left as the
+    existing sync `requests_put_bosch_cloud` implementation.
     """
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     r = requests_put_bosch_cloud(
@@ -5323,75 +5297,23 @@ def rcp_open_connection(cam_id: str, token: str) -> tuple[str, str]:
     return proxy_base, raw
 
 
-def rcp_session(proxy_base: str) -> str:
-    """
-    Perform the RCP session handshake via the proxy.
-    Step 1: WRITE 0xff0c (HELLO) — get a sessionid back
-    Step 2: WRITE 0xff0d (SESSION_INIT) with that sessionid
-    Returns sessionid string (e.g. '0x1a2b3c4d').
-    Raises RuntimeError on failure.
-    """
-    import re as _re
-
-    rcp_url = f"{proxy_base}/rcp.xml"
-
-    # Step 1: HELLO (0xff0c WRITE P_OCTET)
-    params_hello = {
-        "command": "0xff0c",
-        "direction": "WRITE",
-        "type": "P_OCTET",
-        "payload": _RCP_HELLO_PAYLOAD,
-    }
-    r1 = requests_get_bosch_cloud(rcp_url, params=params_hello, auth=("", ""), timeout=10)
-    if r1.status_code != 200:
-        raise RuntimeError(f"RCP HELLO returned HTTP {r1.status_code}")
-
-    m = _re.search(r"<sessionid>(0x[0-9a-fA-F]+)</sessionid>", r1.text)
-    if not m:
-        # Try to extract from <str> field (hex-encoded XML)
-        ms = _re.search(r"<str>([0-9a-fA-F]+)</str>", r1.text)
-        if ms:
-            raw = bytes.fromhex(ms.group(1))
-            m2 = _re.search(rb"(0x[0-9a-fA-F]+)", raw)
-            if m2:
-                sessionid = m2.group(1).decode()
-            else:
-                raise RuntimeError(f"Cannot parse sessionid from HELLO response: {r1.text[:400]}")
-        else:
-            raise RuntimeError(f"No sessionid in HELLO response: {r1.text[:400]}")
-    else:
-        sessionid = m.group(1)
-
-    # Step 2: SESSION_INIT (0xff0d WRITE P_OCTET sessionid=...)
-    params_init = {
-        "command": "0xff0d",
-        "direction": "WRITE",
-        "type": "P_OCTET",
-        "sessionid": sessionid,
-        "payload": _RCP_HELLO_PAYLOAD,
-    }
-    r2 = requests_get_bosch_cloud(rcp_url, params=params_init, auth=("", ""), timeout=10)
-    if r2.status_code != 200:
-        raise RuntimeError(f"RCP SESSION_INIT returned HTTP {r2.status_code}")
-
-    return sessionid
-
-
 def rcp_session_cached(proxy_base: str) -> str:
-    """Return a cached RCP session ID, calling rcp_session() if missing or expired (5 min TTL).
+    """Return a cached RCP session ID, performing the RCP handshake if missing or expired.
 
-    Avoids the 2-step handshake overhead (0xff0c + 0xff0d) when multiple RCP
-    commands are called in sequence for the same camera within a session.
+    Delegates to bosch_rcp_client (bosch-shc-camera-client library) for the
+    2-step handshake (0xff0c HELLO + 0xff0d SESSION_INIT) and its 5-minute
+    TTL cache -- avoids the handshake overhead when multiple RCP commands are
+    called in sequence for the same camera within a session, same as before.
+
+    Raises RuntimeError if the handshake fails. Unlike the CLI's previous
+    hand-rolled implementation, the library does not distinguish *why* the
+    handshake failed (HTTP error vs. malformed response vs. rejected
+    session) in the exception message -- it logs the specific cause at DEBUG
+    level internally and this wrapper only sees a final None/success.
     """
-    now = time.time()
-    cached = _RCP_SESSION_CACHE.get(proxy_base)
-    if cached:
-        session_id, expires_at = cached
-        if now < expires_at:
-            return session_id
-        del _RCP_SESSION_CACHE[proxy_base]
-    session_id = rcp_session(proxy_base)
-    _RCP_SESSION_CACHE[proxy_base] = (session_id, now + 300.0)
+    session_id = bosch_rcp_client.get_session_id(proxy_base)
+    if not session_id:
+        raise RuntimeError(f"RCP session handshake failed for {proxy_base}")
     return session_id
 
 
@@ -5405,38 +5327,13 @@ def rcp_read(
     Args:
         rcp_url:   full URL to rcp.xml, e.g. https://proxy-NN:42090/{hash}/rcp.xml
         command:   hex command code, e.g. '0x0a0f'
-        sessionid: session ID from rcp_session()
+        sessionid: session ID from rcp_session_cached()
         type_:     RCP type string, default 'P_OCTET'
         num:       instance number (0 = default)
+
+    Delegates to bosch_rcp_client (bosch-shc-camera-client library).
     """
-    import re as _re
-
-    params: dict[str, str | int] = {
-        "command": command,
-        "direction": "READ",
-        "type": type_,
-        "num": num,
-        "sessionid": sessionid,
-    }
-    try:
-        r = requests_get_bosch_cloud(rcp_url, params=params, auth=("", ""), timeout=10)
-    except Exception:
-        return None
-
-    if r.status_code != 200:
-        return None
-
-    # Parse XML — result is in <str>HEX</str>
-    m = _re.search(r"<str>([0-9a-fA-F]*)</str>", r.text)
-    if not m:
-        return None
-    hex_str = m.group(1)
-    if not hex_str:
-        return None  # empty result
-    try:
-        return bytes.fromhex(hex_str)
-    except ValueError:
-        return None
+    return bosch_rcp_client.rcp_read(rcp_url, command, sessionid, type_=type_, num=num)
 
 
 def rcp_parse_utf16be_strings(data: bytes) -> list[str]:

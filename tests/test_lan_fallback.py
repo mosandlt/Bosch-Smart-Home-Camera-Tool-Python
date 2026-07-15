@@ -18,6 +18,7 @@ import pytest
 import responses as responses_lib
 
 import bosch_camera
+import bosch_rcp_client
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
@@ -499,70 +500,60 @@ class TestLanHelpers:
         result = bosch_camera._resolve_lan_ip(cfg, "CAM-1", cam_info)
         assert result is None
 
-    def test_lan_rcp_write_privacy_on_sends_correct_payload(self) -> None:
-        """Privacy ON payload is '00010000'."""
-        with patch.object(bosch_camera, "_lan_rcp_write", return_value=True) as mock_write:
-            bosch_camera._lan_rcp_write_privacy("192.0.2.1", True)
-        mock_write.assert_called_once_with("192.0.2.1", "0x0d00", "00010000", "P_OCTET")
+    # _lan_rcp_write_privacy / _lan_rcp_write_front_light now delegate to
+    # bosch_rcp_client (bosch-shc-camera-client library, HTTPS + optional
+    # Digest instead of the old broken plain-HTTP-port-80 implementation).
+    # Mocked at that new boundary (bosch_rcp_client.lan_write_*) rather than
+    # at the deleted internal `_lan_rcp_write` / `requests.get` calls.
 
-    def test_lan_rcp_write_privacy_off_sends_correct_payload(self) -> None:
-        """Privacy OFF payload is '00000000'."""
-        with patch.object(bosch_camera, "_lan_rcp_write", return_value=True) as mock_write:
+    def test_lan_rcp_write_privacy_on_delegates_enabled_true(self) -> None:
+        """Privacy ON → bosch_rcp_client.lan_write_privacy(ip, True)."""
+        with patch.object(bosch_rcp_client, "lan_write_privacy", return_value=True) as mock_write:
+            result = bosch_camera._lan_rcp_write_privacy("192.0.2.1", True)
+        mock_write.assert_called_once_with("192.0.2.1", True)
+        assert result is True
+
+    def test_lan_rcp_write_privacy_off_delegates_enabled_false(self) -> None:
+        """Privacy OFF → bosch_rcp_client.lan_write_privacy(ip, False)."""
+        with patch.object(bosch_rcp_client, "lan_write_privacy", return_value=True) as mock_write:
             bosch_camera._lan_rcp_write_privacy("192.0.2.1", False)
-        mock_write.assert_called_once_with("192.0.2.1", "0x0d00", "00000000", "P_OCTET")
+        mock_write.assert_called_once_with("192.0.2.1", False)
 
-    def test_lan_rcp_write_front_light_sends_correct_command(self) -> None:
-        """Front-light write uses command 0x0c22, T_WORD, num=1."""
-        with patch.object(bosch_camera, "_lan_rcp_write", return_value=True) as mock_write:
+    def test_lan_rcp_write_front_light_delegates_brightness(self) -> None:
+        """Front-light write delegates the clamped brightness value."""
+        with patch.object(
+            bosch_rcp_client, "lan_write_front_light", return_value=True
+        ) as mock_write:
             bosch_camera._lan_rcp_write_front_light("192.0.2.1", 75)
-        mock_write.assert_called_once_with("192.0.2.1", "0x0c22", "004b", "T_WORD", num=1)
+        mock_write.assert_called_once_with("192.0.2.1", 75)
 
     def test_lan_rcp_write_front_light_clamps_above_100(self) -> None:
-        """Brightness > 100 is clamped to 100."""
-        with patch.object(bosch_camera, "_lan_rcp_write", return_value=True) as mock_write:
+        """Brightness > 100 is clamped to 100 before delegating."""
+        with patch.object(
+            bosch_rcp_client, "lan_write_front_light", return_value=True
+        ) as mock_write:
             bosch_camera._lan_rcp_write_front_light("192.0.2.1", 150)
-        # 100 = 0x0064
-        mock_write.assert_called_once_with("192.0.2.1", "0x0c22", "0064", "T_WORD", num=1)
+        mock_write.assert_called_once_with("192.0.2.1", 100)
 
     def test_lan_rcp_write_front_light_clamps_below_0(self) -> None:
-        """Brightness < 0 is clamped to 0."""
-        with patch.object(bosch_camera, "_lan_rcp_write", return_value=True) as mock_write:
+        """Brightness < 0 is clamped to 0 before delegating."""
+        with patch.object(
+            bosch_rcp_client, "lan_write_front_light", return_value=True
+        ) as mock_write:
             bosch_camera._lan_rcp_write_front_light("192.0.2.1", -5)
-        mock_write.assert_called_once_with("192.0.2.1", "0x0c22", "0000", "T_WORD", num=1)
+        mock_write.assert_called_once_with("192.0.2.1", 0)
 
-    def test_lan_rcp_write_returns_false_on_http_error(self) -> None:
-        """_lan_rcp_write returns False on non-200 HTTP response."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 401
-        mock_resp.content = b""
-        with patch("requests.get", return_value=mock_resp):
-            result = bosch_camera._lan_rcp_write("192.0.2.1", "0x0d00", "00010000")
+    def test_lan_rcp_write_privacy_returns_false_on_failure(self) -> None:
+        """A False from the library wrapper propagates through unchanged."""
+        with patch.object(bosch_rcp_client, "lan_write_privacy", return_value=False):
+            result = bosch_camera._lan_rcp_write_privacy("192.0.2.1", True)
         assert result is False
 
-    def test_lan_rcp_write_returns_false_on_connection_error(self) -> None:
-        """_lan_rcp_write returns False on network exception."""
-        with patch("requests.get", side_effect=Exception("connection refused")):
-            result = bosch_camera._lan_rcp_write("192.0.2.1", "0x0d00", "00010000")
+    def test_lan_rcp_write_front_light_returns_false_on_failure(self) -> None:
+        """A False from the library wrapper propagates through unchanged."""
+        with patch.object(bosch_rcp_client, "lan_write_front_light", return_value=False):
+            result = bosch_camera._lan_rcp_write_front_light("192.0.2.1", 50)
         assert result is False
-
-    def test_lan_rcp_write_returns_false_on_rcp_err_tag(self) -> None:
-        """_lan_rcp_write returns False when response contains <err> tag."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.content = b"<rcp><err>0xa0</err></rcp>"
-        with patch("requests.get", return_value=mock_resp):
-            result = bosch_camera._lan_rcp_write("192.0.2.1", "0x0d00", "00010000")
-        assert result is False
-
-    def test_lan_rcp_write_prepends_0x_to_plain_hex(self) -> None:
-        """Payload without '0x' prefix gets it prepended before the request."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.content = b"<rcp><result>ok</result></rcp>"
-        with patch("requests.get", return_value=mock_resp) as mock_get:
-            bosch_camera._lan_rcp_write("192.0.2.1", "0x0d00", "00010000")
-        # Either positional or keyword — just check the call was made
-        assert mock_get.called
 
 
 # ══════════════════════════════════════════════════════════════════════════════
