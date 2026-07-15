@@ -59,10 +59,14 @@ Standalone Python CLI for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innen
   - [Privacy Sound](#privacy-sound-indoor-cameras-only)
   - [Rules — Cloud Automation](#rules--cloud-automation)
   - [Camera Sharing & Friends](#friends--camera-sharing)
+  - [Accept Invite & Shared-With](#accept-invite--shared-with)
   - [Rename](#rename)
   - [Profile](#profile)
   - [Account](#account)
+  - [Firmware Update](#firmware-update)
+  - [Maintenance Status](#maintenance-status)
   - [RCP Protocol Reads](#rcp-protocol-reads)
+  - [Diagnostics — MJPEG Snapshot, Scopes, RCP Version, Feature Flags](#diagnostics--mjpeg-snapshot-scopes-rcp-version-feature-flags)
   - [Watch — Real-Time Event Monitoring](#watch--real-time-event-monitoring)
   - [Token Management](#token-management)
   - [Config & Rescan](#config--rescan)
@@ -338,7 +342,7 @@ flowchart LR
 | **Recording options — sound on/off** | `recording [cam] [--sound-on\|--sound-off]` |
 | **Auto-follow — 360 camera motion tracking** | `autofollow [cam] [on\|off]` |
 | **Intercom — listen to camera audio** | `intercom [cam] [--duration N] [--speaker-level N]` |
-| **Siren — trigger acoustic alarm (Gen2 Indoor II only)** | `siren [cam]` |
+| **Siren — trigger/stop acoustic alarm (Gen2 Indoor II only)** | `siren [cam] [--stop] [--duration 10-300]` |
 | **Unread events count** | `unread [cam]` |
 | **Push mode selection (auto/iOS/Android/polling)** | `watch --push --push-mode auto\|ios\|android\|polling` |
 | **Privacy sound — audible privacy indicator** | `privacy-sound [cam] [on\|off]` |
@@ -347,11 +351,19 @@ flowchart LR
 | **Privacy mask zones** | `privacy-masks [cam] [list\|set\|clear]` |
 | **Lighting schedule** | `lighting-schedule [cam] [set --on HH:MM --off HH:MM]` |
 | **Camera sharing with friends** | `friends [list\|invite\|share\|unshare\|resend\|remove]` |
+| **Accept an incoming sharing invitation** | `accept-invite TOKEN` |
+| **Show which friends a camera is shared with** | `shared [cam]` |
 | **Rename a camera** | `rename [cam] "New Name"` |
 | **User profile management** | `profile [--name\|--language]` |
 | **Account info & feature flags** | `account` |
+| **Firmware update — view status or install** | `firmware-update [cam] [install] [--yes]` |
+| **Bosch cloud maintenance / outage status** | `maintenance [--json]` |
 | **Timestamp overlay — show/hide clock on video** | `timestamp [cam] [on\|off]` |
 | **Notification type toggles** | `notification-types [cam] [--set movement=on person=off]` |
+| **Fast MJPEG snapshot via FFmpeg/RTSP (Gen2 only)** | `snapshot-mjpeg [cam] [-o out.jpg]` |
+| **Camera discovery-scope strings (LAN RCP read)** | `onvif-scopes [cam] [--json]` |
+| **RCP protocol version (opcodes 0xff00/0xff04)** | `rcp-version [cam]` |
+| **Bosch cloud feature-flag bitmask for this account** | `feature-flags [--json]` |
 | Automatic token via browser login | `get_token.py` |
 | Silent token renewal / token fix | `token [fix\|browser]` |
 | **Mini-NVR: motion-triggered MP4 recording (BETA)** | `watch [cam] --auto-record` |
@@ -546,7 +558,9 @@ python3 bosch_camera.py intercom Indoor --speaker-level 80 # set camera speaker 
 ### Siren (Gen2 Indoor II Only)
 
 ```bash
-python3 bosch_camera.py siren Indoor             # trigger the integrated 75 dB siren
+python3 bosch_camera.py siren Indoor                        # trigger the integrated 75 dB siren
+python3 bosch_camera.py siren Indoor --stop                 # stop an active alarm
+python3 bosch_camera.py siren Indoor --duration 30           # set alarm duration (10-300s) then trigger
 ```
 
 Only the Gen2 Eyes Indoor II (`HOME_Eyes_Indoor`) has working siren hardware — other models print a model-aware skip message instead of issuing a doomed request.
@@ -602,6 +616,16 @@ python3 bosch_camera.py friends resend FRIEND_ID      # resend invitation email
 python3 bosch_camera.py friends remove FRIEND_ID      # remove a friend
 ```
 
+### Accept Invite & Shared-With
+
+```bash
+python3 bosch_camera.py accept-invite TOKEN      # accept an incoming sharing invitation
+python3 bosch_camera.py shared                   # show which friends have access to each camera
+python3 bosch_camera.py shared Outdoor           # show sharing status for one camera
+```
+
+`shared` only works on Gen2 cameras — the `/shared_with_friends` endpoint returns HTTP 404 on Gen1 hardware.
+
 ### Rename
 
 ```bash
@@ -622,6 +646,26 @@ python3 bosch_camera.py profile --language en          # change language prefere
 python3 bosch_camera.py account                       # show feature flags, T&C versions, subscription status
 ```
 
+### Firmware Update
+
+```bash
+python3 bosch_camera.py firmware-update                     # show current/latest firmware + update status (all cameras)
+python3 bosch_camera.py firmware-update Outdoor             # show status for one camera
+python3 bosch_camera.py firmware-update Outdoor install      # install the pending update
+python3 bosch_camera.py firmware-update install --yes        # install on ALL cameras without the confirmation prompt
+```
+
+Installing reboots the camera for 3–7 minutes. Targeting every camera at once (no camera name given to `install`) prompts for confirmation unless `--yes` is passed, since each camera reboots independently. Uses the same cloud endpoint as the official app's "Update now" button.
+
+### Maintenance Status
+
+```bash
+python3 bosch_camera.py maintenance              # show current Bosch cloud maintenance/outage status
+python3 bosch_camera.py maintenance --json       # machine-readable JSON output
+```
+
+Checks Bosch's own status feeds for scheduled or active backend maintenance windows — useful for telling apart "my camera is offline" from "Bosch's cloud is down for everyone."
+
 ### RCP Protocol Reads
 
 ```bash
@@ -640,6 +684,27 @@ python3 bosch_camera.py rcp Outdoor iva          # IVA rule types + resiMotion c
 python3 bosch_camera.py rcp Outdoor bitrate      # bitrate ladder tiers in kbps
 python3 bosch_camera.py rcp Outdoor all          # run all RCP reads
 ```
+
+### Diagnostics — MJPEG Snapshot, Scopes, RCP Version, Feature Flags
+
+```bash
+# Fast JPEG capture via FFmpeg pulling one frame off the local RTSP stream (Gen2 only)
+python3 bosch_camera.py snapshot-mjpeg Outdoor
+python3 bosch_camera.py snapshot-mjpeg Outdoor -o /tmp/frame.jpg
+
+# Camera network discovery-scope strings, read directly over LAN via RCP (0x0a98)
+python3 bosch_camera.py onvif-scopes Outdoor
+python3 bosch_camera.py onvif-scopes Outdoor --json
+
+# RCP protocol version reported by the camera (opcodes 0xff00 / 0xff04)
+python3 bosch_camera.py rcp-version Outdoor
+
+# Bosch cloud feature-flag bitmask for this account (GET /v11/feature_flags)
+python3 bosch_camera.py feature-flags
+python3 bosch_camera.py feature-flags --json
+```
+
+These are low-level diagnostic commands used while reverse-engineering the API — useful for confirming camera generation/capabilities or debugging LAN connectivity, but not needed for everyday use. `snapshot-mjpeg` and `onvif-scopes` require the camera to be Gen2 and reachable on the LAN; both print a skip message (not an error) on Gen1 hardware or when the LAN connection can't be opened.
 
 ### Watch — Real-Time Event Monitoring
 
@@ -1675,7 +1740,7 @@ python3 start_proxy.py --dump   # same, but saves all flows to captures/ folder
 - **VLC needs ffmpeg** — the `live --vlc` option requires ffmpeg to proxy the stream, because VLC cannot skip TLS certificate verification for `rtsps://`.
 - **Camera light control** — the `light on/off` command uses `PUT /v11/video_inputs/{id}/lighting_override` (cloud API, no SHC needed). Full light schedule control is only available via the SHC local API with mutual TLS.
 - **Two-way audio** — the `intercom` command is listen-only. Sending audio to the camera (microphone → speaker) requires the proprietary media tunnel protocol, which is not yet reverse-engineered.
-- **Gen2 cameras** — many Gen2-only features (lens elevation, intrusion detection, polygon zones, SocketKnocker wake) are documented but not yet implemented as CLI commands.
+- **Gen2 cameras** — some Gen2-only features (lens elevation, polygon zones, SocketKnocker wake) are documented in [Undocumented API Endpoints](#undocumented-api-endpoints-from-ios-app-analysis) but not yet implemented as CLI commands. Intrusion detection config (mode/sensitivity/distance) **is** implemented via the `intrusion` command.
 - **Audio+ features** — glass break detection and smoke alarm detection require an active Audio+ subscription from Bosch.
 
 ---
@@ -1699,7 +1764,7 @@ tool/
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history or [GitHub Releases](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python/releases) for release notes and downloads.
 
-**Current version: v10.10.3**
+**Current version: v10.12.1**
 
 ---
 
@@ -1759,13 +1824,13 @@ Part of a five-implementation family for Bosch Smart Home Cameras (plus an alpha
 
 | Implementation | Repo | Status |
 |---|---|---|
-| 🏆 Home Assistant Integration | [Bosch-Smart-Home-Camera-Tool-HomeAssistant](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | **v14.4.1** · HA Quality Scale **Platinum** · production-ready |
-| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | **v10.10.4** · Mini-NVR + SMB upload (BETA) · LAN-fallback (ping / --local) · PTZ presets · webhook delivery · capture / research / standalone |
-| 🟢 ioBroker Adapter | [ioBroker.bosch-smart-home-camera](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) | **v1.7.7** · stable · npm · FCM push · PTZ presets · VIS-2 widgets (BoschCamera + BoschOverview) |
-| 🤖 MCP Server | [Bosch-Smart-Home-Camera-Tool-MCP](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-MCP) | **v1.5.5** · cred-rotation · PTZ presets · TOFU cert pinning · LAN-ping + prefer_local · Claude Code / Claude Desktop integration |
-| 🔴 Node-RED nodes (alpha) | [Bosch-Smart-Home-Camera-Tool-NodeRED](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-NodeRED) | **v0.2.5-alpha** · event / snapshot / privacy / stream-url nodes |
+| 🏆 Home Assistant Integration | [Bosch-Smart-Home-Camera-Tool-HomeAssistant](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-HomeAssistant) | **v16.0.0** · HA Quality Scale **Platinum** · production-ready |
+| 🐍 **Python CLI** (this repo) | [Bosch-Smart-Home-Camera-Tool-Python](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python) | **v10.12.1** · Mini-NVR + SMB upload (BETA) · LAN-fallback (ping / --local) · PTZ presets · webhook delivery · capture / research / standalone |
+| 🟢 ioBroker Adapter | [ioBroker.bosch-smart-home-camera](https://github.com/mosandlt/ioBroker.bosch-smart-home-camera) | **v1.7.8** · stable · npm · FCM push · PTZ presets · VIS-2 widgets (BoschCamera + BoschOverview) |
+| 🤖 MCP Server | [Bosch-Smart-Home-Camera-Tool-MCP](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-MCP) | **v1.6.0** · cred-rotation · PTZ presets · TOFU cert pinning · LAN-ping + prefer_local · Claude Code / Claude Desktop integration |
+| 🔴 Node-RED nodes (alpha) | [Bosch-Smart-Home-Camera-Tool-NodeRED](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-NodeRED) | **v0.2.7-alpha** · event / snapshot / privacy / stream-url nodes |
 
-Also: [Bosch Smart Home Camera — Python Frontend (NiceGUI)](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python-frontend) — **v0.1.5-alpha** Phase 1–4 (dashboard + camera detail + settings + live stream) — community interest welcome
+Also: [Bosch Smart Home Camera — Python Frontend (NiceGUI)](https://github.com/mosandlt/Bosch-Smart-Home-Camera-Tool-Python-frontend) — **v0.1.6a0** Phase 1–4 (dashboard + camera detail + settings + live stream) — community interest welcome
 
 HA stays the **reference implementation** — features land there first; the Python CLI, ioBroker Adapter and MCP Server catch up over time.
 
