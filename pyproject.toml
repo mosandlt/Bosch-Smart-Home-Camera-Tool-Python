@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bosch-smart-home-camera-tool"
-version = "10.12.2"
+version = "10.12.3"
 description = "Standalone command-line tool for Bosch Smart Home cameras (snapshots, livestream proxy, events, light/privacy control)."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "requests",
     "urllib3",
@@ -65,11 +65,11 @@ addopts = "-ra --strict-markers"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.mypy]
 # Project-wide strict typing (family-parity with the HA integration).
-python_version = "3.10"
+python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## [v10.12.3] - 2026-07-15
+
+- **Fix: broken packaging metadata on Python 3.10.** v10.12.2's `pyproject.toml` still declared `requires-python = ">=3.10"` after the previous release added a hard dependency on `bosch-shc-camera-client` (which itself requires Python ≥3.11) — `pip install` on Python 3.10 failed outright with "No matching distribution found for bosch-shc-camera-client". Bumped `requires-python` to `>=3.11` (matching the true floor) and dropped Python 3.10 from CI's test matrix, `ruff` target-version, and `mypy` python_version. v10.12.2 remains on PyPI but never actually worked on 3.10 — install v10.12.3 instead if you're on 3.10 (upgrade to 3.11+) or 3.11/3.12 (unaffected either way). 1376 pytest / ruff / mypy --strict / codespell clean on 3.11/3.12.
+
 ## [v10.12.2] - 2026-07-15
 
 - **Docs:** documented 8 previously-undocumented CLI commands in README and refreshed stale sibling-repo version references (Integration Comparison table), including a correction to the MCP row's login method (shares the CLI's `bosch_config.json` rather than its own OAuth2 PKCE flow).
