@@ -2590,27 +2590,35 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 # Uses synchronous `requests` (same as the rest of the CLI).
 
 
-def _lan_rcp_write_privacy(cam_ip: str, enabled: bool) -> bool:
-    """Write privacy-mode via direct LOCAL RCP (Gen2, HTTPS).
+def _lan_rcp_write_privacy(
+    cam_ip: str, enabled: bool, *, user: str = "", password: str = ""
+) -> bool:
+    """Write privacy-mode via direct LOCAL RCP (Gen2, HTTPS, Digest-authed).
 
     Uses command 0x0d00.  payload byte[1] = 1 (ON) or 0 (OFF).
     Delegates to bosch_rcp_client (bosch-shc-camera-client library) -- HTTPS
     on port 443, matching what modern Gen2 firmware actually answers (the
     previous plain-HTTP-port-80 implementation is confirmed dead on real
-    hardware, see bosch_rcp_client.lan_write_privacy's docstring).
+    hardware, see bosch_rcp_client.lan_write_privacy's docstring). Pass the
+    cycling LOCAL Digest credentials from _get_local_connection_creds() --
+    without them the write goes out unauthenticated and modern firmware
+    rejects it with 401 (matches the HA integration's shc.py, which sources
+    the same cycling creds from its coordinator's local_creds_cache).
     """
-    return bosch_rcp_client.lan_write_privacy(cam_ip, enabled)
+    return bosch_rcp_client.lan_write_privacy(cam_ip, enabled, user=user, password=password)
 
 
-def _lan_rcp_write_front_light(cam_ip: str, brightness: int) -> bool:
-    """Write front-light brightness (0–100) via direct LOCAL RCP (Gen2, HTTPS).
+def _lan_rcp_write_front_light(
+    cam_ip: str, brightness: int, *, user: str = "", password: str = ""
+) -> bool:
+    """Write front-light brightness (0–100) via direct LOCAL RCP (Gen2, HTTPS, Digest-authed).
 
     Maps to RCP 0x0c22 (T_WORD, num=1).  0 = off; 1-100 = dimmer level.
     Wallwasher is cloud-only (write payload too complex for unauthenticated RCP).
     Delegates to bosch_rcp_client -- see _lan_rcp_write_privacy docstring.
     """
     val = max(0, min(100, int(brightness)))
-    return bosch_rcp_client.lan_write_front_light(cam_ip, val)
+    return bosch_rcp_client.lan_write_front_light(cam_ip, val, user=user, password=password)
 
 
 def _lan_tcp_ping(host: str, port: int = 443, timeout: float = 3.0) -> tuple[bool, float]:
@@ -2813,6 +2821,7 @@ def cmd_privacy(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             return
         new_state = action.upper()
         enabled = new_state == "ON"
+        cred_session: requests.Session | None = None
         for name, cam_info in cams.items():
             cam_id = cam_info.get("id", "")
             ip = _resolve_lan_ip(cfg, cam_id, cam_info)
@@ -2820,8 +2829,24 @@ def cmd_privacy(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             if not ip:
                 print(f"  ❌  No LAN IP for {name}. Run: bosch lan-ips set {name.lower()} <ip>")
                 continue
-            print(f"  🔄  Writing privacy → {new_state} via RCP to {ip}...")
-            ok = _lan_rcp_write_privacy(ip, enabled)
+            # Gen2 rcp.xml requires Digest auth -- fetch cycling LOCAL creds
+            # via a brief PUT /connection LOCAL handshake (matches the HA
+            # integration's coordinator.local_creds_cache pattern). The
+            # RCP write itself still goes straight to the camera's LAN IP.
+            # Session built lazily -- only once we know at least one camera
+            # actually needs it, so a config with no LAN IPs set never
+            # touches get_token()/make_session() at all.
+            if cred_session is None:
+                cred_session = make_session(get_token(cfg))
+            creds = _get_local_connection_creds(cred_session, cam_id)
+            if not creds:
+                print(f"  ❌  Could not obtain LOCAL Digest credentials for {name}.")
+                print("     Camera offline, LAN unreachable, or not Gen2?")
+                continue
+            cred_host, cred_user, cred_pass = creds
+            write_ip = cred_host or ip
+            print(f"  🔄  Writing privacy → {new_state} via RCP to {write_ip}...")
+            ok = _lan_rcp_write_privacy(write_ip, enabled, user=cred_user, password=cred_pass)
             if ok:
                 icon_new = "🔒" if enabled else "👁️"
                 print(f"  {icon_new}  Privacy mode set to {new_state} (LAN RCP).")
@@ -2983,6 +3008,7 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 "  ℹ️   --local only supports front light and intensity. Wallwasher is cloud-only."
             )
             return
+        cred_session: requests.Session | None = None
         for name, cam_info in cams.items():
             cam_id = cam_info.get("id", "")
             ip = _resolve_lan_ip(cfg, cam_id, cam_info)
@@ -2990,14 +3016,32 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             if not ip:
                 print(f"  ❌  No LAN IP for {name}. Run: bosch lan-ips set {name.lower()} <ip>")
                 continue
-            print(f"  🔄  Writing front light → {desc} via RCP to {ip}...")
-            ok = _lan_rcp_write_front_light(ip, brightness)
+            # Gen2 rcp.xml requires Digest auth -- fetch cycling LOCAL creds
+            # via a brief PUT /connection LOCAL handshake (matches the HA
+            # integration's coordinator.local_creds_cache pattern). The
+            # RCP write itself still goes straight to the camera's LAN IP.
+            # Session built lazily -- only once we know at least one camera
+            # actually needs it, so a config with no LAN IPs set never
+            # touches get_token()/make_session() at all.
+            if cred_session is None:
+                cred_session = make_session(get_token(cfg))
+            creds = _get_local_connection_creds(cred_session, cam_id)
+            if not creds:
+                print(f"  ❌  Could not obtain LOCAL Digest credentials for {name}.")
+                print("     Camera offline, LAN unreachable, or not Gen2?")
+                continue
+            cred_host, cred_user, cred_pass = creds
+            write_ip = cred_host or ip
+            print(f"  🔄  Writing front light → {desc} via RCP to {write_ip}...")
+            ok = _lan_rcp_write_front_light(
+                write_ip, brightness, user=cred_user, password=cred_pass
+            )
             if ok:
                 icon = "💡" if brightness > 0 else "🌑"
                 print(f"  {icon}  Front light set to {desc} (LAN RCP).")
                 print("     Note: wallwasher control is cloud-only and was not changed.")
             else:
-                print(f"  ❌  LOCAL RCP write failed for {name} ({ip}).")
+                print(f"  ❌  LOCAL RCP write failed for {name} ({write_ip}).")
                 print("     Is it a Gen2 camera reachable on LAN?")
         return
 

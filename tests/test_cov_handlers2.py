@@ -254,17 +254,22 @@ class TestCmdPrivacy:
         assert "No LAN IP" in out or "lan-ips" in out.lower()
 
     def test_local_on_rcp_success(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """--local with action=on and IP → calls _lan_rcp_write_privacy(ip, True)."""
+        """--local with action=on and IP → calls _lan_rcp_write_privacy(ip, True, ...)."""
         cfg = _make_cfg()
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=_sess()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(bosch_camera, "_resolve_lan_ip", return_value="192.0.2.10"),
+            patch.object(
+                bosch_camera,
+                "_get_local_connection_creds",
+                return_value=("192.0.2.10", "u", "p"),
+            ),
             patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True) as mock_rcp,
         ):
             cmd_privacy(cfg, _args(local=True, action="on"))
-        mock_rcp.assert_called_once_with("192.0.2.10", True)
+        mock_rcp.assert_called_once_with("192.0.2.10", True, user="u", password="p")
 
     def test_local_on_rcp_failure(self, capsys: pytest.CaptureFixture[str]) -> None:
         """--local RCP write returns False → error message."""
@@ -514,43 +519,58 @@ class TestCmdLight:
         assert "--local" in out or "on / off" in out.lower()
 
     def test_local_off(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """--local action=off → _lan_rcp_write_front_light(ip, 0)."""
+        """--local action=off → _lan_rcp_write_front_light(ip, 0, ...)."""
         cfg = _make_cfg()
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=_sess()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(bosch_camera, "_resolve_lan_ip", return_value="192.0.2.11"),
+            patch.object(
+                bosch_camera,
+                "_get_local_connection_creds",
+                return_value=("192.0.2.11", "u", "p"),
+            ),
             patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
         ):
             cmd_light(cfg, _args(local=True, action="off"))
-        mock_rcp.assert_called_once_with("192.0.2.11", 0)
+        mock_rcp.assert_called_once_with("192.0.2.11", 0, user="u", password="p")
 
     def test_local_on(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """--local action=on → _lan_rcp_write_front_light(ip, 100)."""
+        """--local action=on → _lan_rcp_write_front_light(ip, 100, ...)."""
         cfg = _make_cfg()
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=_sess()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(bosch_camera, "_resolve_lan_ip", return_value="192.0.2.11"),
+            patch.object(
+                bosch_camera,
+                "_get_local_connection_creds",
+                return_value=("192.0.2.11", "u", "p"),
+            ),
             patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
         ):
             cmd_light(cfg, _args(local=True, action="on"))
-        mock_rcp.assert_called_once_with("192.0.2.11", 100)
+        mock_rcp.assert_called_once_with("192.0.2.11", 100, user="u", password="p")
 
     def test_local_intensity_75(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """--local action='intensity 75' → _lan_rcp_write_front_light(ip, 75)."""
+        """--local action='intensity 75' → _lan_rcp_write_front_light(ip, 75, ...)."""
         cfg = _make_cfg()
         with (
             patch.object(bosch_camera, "get_token", return_value="tok"),
             patch.object(bosch_camera, "make_session", return_value=_sess()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(bosch_camera, "_resolve_lan_ip", return_value="192.0.2.11"),
+            patch.object(
+                bosch_camera,
+                "_get_local_connection_creds",
+                return_value=("192.0.2.11", "u", "p"),
+            ),
             patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
         ):
             cmd_light(cfg, _args(local=True, action="intensity 75"))
-        mock_rcp.assert_called_once_with("192.0.2.11", 75)
+        mock_rcp.assert_called_once_with("192.0.2.11", 75, user="u", password="p")
 
     def test_local_wall_not_supported(self, capsys: pytest.CaptureFixture[str]) -> None:
         """--local action starts with 'wall' → prints not-supported hint."""
@@ -615,10 +635,15 @@ class TestCmdLight:
             patch.object(bosch_camera, "make_session", return_value=_sess()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(bosch_camera, "_resolve_lan_ip", return_value="192.0.2.11"),
+            patch.object(
+                bosch_camera,
+                "_get_local_connection_creds",
+                return_value=("192.0.2.11", "u", "p"),
+            ),
             patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
         ):
             cmd_light(cfg, _args(local=True, action="front on"))
-        mock_rcp.assert_called_once_with("192.0.2.11", 100)
+        mock_rcp.assert_called_once_with("192.0.2.11", 100, user="u", password="p")
 
     def test_local_front_off(self, capsys: pytest.CaptureFixture[str]) -> None:
         """--local action='front off' → brightness=0."""
@@ -628,10 +653,15 @@ class TestCmdLight:
             patch.object(bosch_camera, "make_session", return_value=_sess()),
             patch.object(bosch_camera, "get_cameras", return_value=cfg["cameras"]),
             patch.object(bosch_camera, "_resolve_lan_ip", return_value="192.0.2.11"),
+            patch.object(
+                bosch_camera,
+                "_get_local_connection_creds",
+                return_value=("192.0.2.11", "u", "p"),
+            ),
             patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
         ):
             cmd_light(cfg, _args(local=True, action="front off"))
-        mock_rcp.assert_called_once_with("192.0.2.11", 0)
+        mock_rcp.assert_called_once_with("192.0.2.11", 0, user="u", password="p")
 
     def test_override_get_exception_in_status(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Override GET raises → exception swallowed, status still shown."""

@@ -153,32 +153,60 @@ class TestBoschPingSubcommand:
 
 
 class TestBoschPrivacyLocalFlag:
-    """cmd_privacy --local: direct LAN RCP write, no cloud."""
+    """cmd_privacy --local: Digest-authed LAN RCP write.
+
+    Gen2 firmware requires Digest auth on rcp.xml, and the cycling LOCAL
+    credentials can only come from a PUT /connection LOCAL cloud handshake
+    (same as the HA integration's coordinator.local_creds_cache) -- so
+    --local now makes exactly ONE cloud round-trip to fetch fresh
+    credentials before writing. The RCP write itself still goes straight to
+    the camera's LAN IP, never through the cloud proxy.
+    """
+
+    def _patch_creds(self, host: str = "192.0.2.1", user: str = "u", password: str = "p"):
+        return patch.object(
+            bosch_camera, "_get_local_connection_creds", return_value=(host, user, password)
+        )
 
     def test_privacy_local_on_calls_rcp(
         self, tmp_config_dir: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--local on invokes _lan_rcp_write_privacy with enabled=True."""
+        """--local on invokes _lan_rcp_write_privacy with enabled=True and fetched creds."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True) as mock_rcp:
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True) as mock_rcp,
+        ):
             bosch_camera.cmd_privacy(cfg, _make_args(action="on", local=True))
-        mock_rcp.assert_called_once_with("192.0.2.1", True)
+        mock_rcp.assert_called_once_with("192.0.2.1", True, user="u", password="p")
 
     def test_privacy_local_off_calls_rcp(
         self, tmp_config_dir: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--local off invokes _lan_rcp_write_privacy with enabled=False."""
+        """--local off invokes _lan_rcp_write_privacy with enabled=False and fetched creds."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True) as mock_rcp:
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True) as mock_rcp,
+        ):
             bosch_camera.cmd_privacy(cfg, _make_args(action="off", local=True))
-        mock_rcp.assert_called_once_with("192.0.2.1", False)
+        mock_rcp.assert_called_once_with("192.0.2.1", False, user="u", password="p")
 
     def test_privacy_local_success_message(
         self, tmp_config_dir: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """On success, prints confirmation with 'LAN RCP' in output."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True):
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True),
+        ):
             bosch_camera.cmd_privacy(cfg, _make_args(action="on", local=True))
         out = capsys.readouterr().out
         assert "ON" in out
@@ -189,7 +217,12 @@ class TestBoschPrivacyLocalFlag:
     ) -> None:
         """On RCP failure, prints error message."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=False):
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=False),
+        ):
             bosch_camera.cmd_privacy(cfg, _make_args(action="on", local=True))
         out = capsys.readouterr().out
         assert "❌" in out or "failed" in out.lower()
@@ -216,25 +249,57 @@ class TestBoschPrivacyLocalFlag:
         out = capsys.readouterr().out
         assert "on or off" in out.lower() or "action" in out.lower()
 
-    def test_privacy_local_does_not_call_cloud(self, tmp_config_dir: str) -> None:
-        """--local never touches get_token or make_session."""
+    def test_privacy_local_fetches_fresh_digest_creds(self, tmp_config_dir: str) -> None:
+        """--local now DOES call get_token/make_session -- required for Gen2 Digest auth.
+
+        Regression guard for the auth gap fixed this session: the old
+        unauthenticated implementation never needed real creds (and thus
+        never touched the cloud); Gen2 firmware rejects unauthenticated
+        rcp.xml writes with 401, so a one-time credential fetch is now
+        mandatory. Only the credential fetch touches the cloud -- the RCP
+        write itself (_lan_rcp_write_privacy) still goes straight to the
+        camera's LAN IP, never through the cloud proxy.
+        """
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
         with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok") as mock_token,
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()) as mock_session,
             patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True),
-            patch.object(bosch_camera, "get_token") as mock_token,
-            patch.object(bosch_camera, "make_session") as mock_session,
         ):
             bosch_camera.cmd_privacy(cfg, _make_args(action="on", local=True))
-        mock_token.assert_not_called()
-        mock_session.assert_not_called()
+        mock_token.assert_called_once()
+        mock_session.assert_called_once()
+
+    def test_privacy_local_no_creds_available(
+        self, tmp_config_dir: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Credential fetch failure (camera offline/not Gen2) skips the RCP write cleanly."""
+        cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
+        with (
+            patch.object(bosch_camera, "_get_local_connection_creds", return_value=None),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_privacy") as mock_rcp,
+        ):
+            bosch_camera.cmd_privacy(cfg, _make_args(action="on", local=True))
+        mock_rcp.assert_not_called()
+        out = capsys.readouterr().out
+        assert "❌" in out
+        assert "credential" in out.lower()
 
     def test_privacy_local_uses_lan_ips_map(self, tmp_config_dir: str) -> None:
-        """lan_ips map value is used when local_ip is empty."""
+        """lan_ips map value is used for the upfront LAN-IP-known check."""
         cfg = _make_cfg_with_cameras(lan_ip="", cam_id="AAAA-0001")
         cfg["lan_ips"]["AAAA-0001"] = "192.0.2.100"
-        with patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True) as mock_rcp:
+        with (
+            self._patch_creds(host="192.0.2.100"),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_privacy", return_value=True) as mock_rcp,
+        ):
             bosch_camera.cmd_privacy(cfg, _make_args(action="on", local=True))
-        mock_rcp.assert_called_once_with("192.0.2.100", True)
+        mock_rcp.assert_called_once_with("192.0.2.100", True, user="u", password="p")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -243,41 +308,68 @@ class TestBoschPrivacyLocalFlag:
 
 
 class TestBoschLightLocalFlag:
-    """cmd_light --local: direct LAN RCP write for front light."""
+    """cmd_light --local: Digest-authed LAN RCP write for front light.
+
+    Gen2 firmware requires Digest auth on rcp.xml, and the cycling LOCAL
+    credentials can only come from a PUT /connection LOCAL cloud handshake
+    (same as the HA integration's coordinator.local_creds_cache) -- so
+    --local now makes exactly ONE cloud round-trip to fetch fresh
+    credentials before writing. The RCP write itself still goes straight to
+    the camera's LAN IP, never through the cloud proxy.
+    """
+
+    def _patch_creds(self, host: str = "192.0.2.1", user: str = "u", password: str = "p"):
+        return patch.object(
+            bosch_camera, "_get_local_connection_creds", return_value=(host, user, password)
+        )
 
     def test_light_local_on_calls_rcp_brightness_100(self, tmp_config_dir: str) -> None:
-        """'on --local' writes brightness=100."""
+        """'on --local' writes brightness=100 with fetched creds."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(
-            bosch_camera, "_lan_rcp_write_front_light", return_value=True
-        ) as mock_rcp:
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
+        ):
             bosch_camera.cmd_light(cfg, _make_args(action="on", local=True))
-        mock_rcp.assert_called_once_with("192.0.2.1", 100)
+        mock_rcp.assert_called_once_with("192.0.2.1", 100, user="u", password="p")
 
     def test_light_local_off_calls_rcp_brightness_0(self, tmp_config_dir: str) -> None:
-        """'off --local' writes brightness=0."""
+        """'off --local' writes brightness=0 with fetched creds."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(
-            bosch_camera, "_lan_rcp_write_front_light", return_value=True
-        ) as mock_rcp:
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
+        ):
             bosch_camera.cmd_light(cfg, _make_args(action="off", local=True))
-        mock_rcp.assert_called_once_with("192.0.2.1", 0)
+        mock_rcp.assert_called_once_with("192.0.2.1", 0, user="u", password="p")
 
     def test_light_local_intensity_calls_rcp_with_correct_value(self, tmp_config_dir: str) -> None:
-        """'intensity 50 --local' writes brightness=50."""
+        """'intensity 50 --local' writes brightness=50 with fetched creds."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(
-            bosch_camera, "_lan_rcp_write_front_light", return_value=True
-        ) as mock_rcp:
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
+        ):
             bosch_camera.cmd_light(cfg, _make_args(action="intensity 50", local=True))
-        mock_rcp.assert_called_once_with("192.0.2.1", 50)
+        mock_rcp.assert_called_once_with("192.0.2.1", 50, user="u", password="p")
 
     def test_light_local_success_message(
         self, tmp_config_dir: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """On success prints confirmation with 'LAN RCP'."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True):
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True),
+        ):
             bosch_camera.cmd_light(cfg, _make_args(action="on", local=True))
         out = capsys.readouterr().out
         assert "RCP" in out.upper() or "local" in out.lower()
@@ -287,7 +379,12 @@ class TestBoschLightLocalFlag:
     ) -> None:
         """On RCP failure, prints error message."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=False):
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=False),
+        ):
             bosch_camera.cmd_light(cfg, _make_args(action="on", local=True))
         out = capsys.readouterr().out
         assert "❌" in out or "failed" in out.lower()
@@ -314,35 +411,67 @@ class TestBoschLightLocalFlag:
         out = capsys.readouterr().out
         assert "cloud-only" in out.lower() or "wallwasher" in out.lower()
 
-    def test_light_local_does_not_call_cloud(self, tmp_config_dir: str) -> None:
-        """--local never touches get_token or make_session."""
+    def test_light_local_fetches_fresh_digest_creds(self, tmp_config_dir: str) -> None:
+        """--local now DOES call get_token/make_session -- required for Gen2 Digest auth.
+
+        Regression guard, mirrors the equivalent privacy test: the old
+        unauthenticated implementation never needed real creds; Gen2
+        firmware rejects unauthenticated rcp.xml writes with 401, so a
+        one-time credential fetch is now mandatory. Only the credential
+        fetch touches the cloud -- the RCP write itself still goes straight
+        to the camera's LAN IP.
+        """
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
         with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok") as mock_token,
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()) as mock_session,
             patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True),
-            patch.object(bosch_camera, "get_token") as mock_token,
-            patch.object(bosch_camera, "make_session") as mock_session,
         ):
             bosch_camera.cmd_light(cfg, _make_args(action="on", local=True))
-        mock_token.assert_not_called()
-        mock_session.assert_not_called()
+        mock_token.assert_called_once()
+        mock_session.assert_called_once()
+
+    def test_light_local_no_creds_available(
+        self, tmp_config_dir: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Credential fetch failure (camera offline/not Gen2) skips the RCP write cleanly."""
+        cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
+        with (
+            patch.object(bosch_camera, "_get_local_connection_creds", return_value=None),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_front_light") as mock_rcp,
+        ):
+            bosch_camera.cmd_light(cfg, _make_args(action="on", local=True))
+        mock_rcp.assert_not_called()
+        out = capsys.readouterr().out
+        assert "❌" in out
+        assert "credential" in out.lower()
 
     def test_light_local_intensity_clamp_0(self, tmp_config_dir: str) -> None:
-        """Intensity 0 writes brightness=0 (clamp)."""
+        """Intensity 0 writes brightness=0 (clamp) with fetched creds."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(
-            bosch_camera, "_lan_rcp_write_front_light", return_value=True
-        ) as mock_rcp:
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
+        ):
             bosch_camera.cmd_light(cfg, _make_args(action="intensity 0", local=True))
-        mock_rcp.assert_called_once_with("192.0.2.1", 0)
+        mock_rcp.assert_called_once_with("192.0.2.1", 0, user="u", password="p")
 
     def test_light_local_intensity_clamp_100(self, tmp_config_dir: str) -> None:
-        """Intensity 100 writes brightness=100 (no over-clamp)."""
+        """Intensity 100 writes brightness=100 (no over-clamp) with fetched creds."""
         cfg = _make_cfg_with_cameras(lan_ip="192.0.2.1")
-        with patch.object(
-            bosch_camera, "_lan_rcp_write_front_light", return_value=True
-        ) as mock_rcp:
+        with (
+            self._patch_creds(),
+            patch.object(bosch_camera, "get_token", return_value="tok"),
+            patch.object(bosch_camera, "make_session", return_value=MagicMock()),
+            patch.object(bosch_camera, "_lan_rcp_write_front_light", return_value=True) as mock_rcp,
+        ):
             bosch_camera.cmd_light(cfg, _make_args(action="intensity 100", local=True))
-        mock_rcp.assert_called_once_with("192.0.2.1", 100)
+        mock_rcp.assert_called_once_with("192.0.2.1", 100, user="u", password="p")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -507,17 +636,25 @@ class TestLanHelpers:
     # at the deleted internal `_lan_rcp_write` / `requests.get` calls.
 
     def test_lan_rcp_write_privacy_on_delegates_enabled_true(self) -> None:
-        """Privacy ON → bosch_rcp_client.lan_write_privacy(ip, True)."""
+        """Privacy ON → bosch_rcp_client.lan_write_privacy(ip, True, ...)."""
         with patch.object(bosch_rcp_client, "lan_write_privacy", return_value=True) as mock_write:
             result = bosch_camera._lan_rcp_write_privacy("192.0.2.1", True)
-        mock_write.assert_called_once_with("192.0.2.1", True)
+        mock_write.assert_called_once_with("192.0.2.1", True, user="", password="")
         assert result is True
 
     def test_lan_rcp_write_privacy_off_delegates_enabled_false(self) -> None:
-        """Privacy OFF → bosch_rcp_client.lan_write_privacy(ip, False)."""
+        """Privacy OFF → bosch_rcp_client.lan_write_privacy(ip, False, ...)."""
         with patch.object(bosch_rcp_client, "lan_write_privacy", return_value=True) as mock_write:
             bosch_camera._lan_rcp_write_privacy("192.0.2.1", False)
-        mock_write.assert_called_once_with("192.0.2.1", False)
+        mock_write.assert_called_once_with("192.0.2.1", False, user="", password="")
+
+    def test_lan_rcp_write_privacy_forwards_creds(self) -> None:
+        """Digest creds (GitHub #49 fix) are forwarded through, not dropped."""
+        with patch.object(bosch_rcp_client, "lan_write_privacy", return_value=True) as mock_write:
+            bosch_camera._lan_rcp_write_privacy(
+                "192.0.2.1", True, user="cbs-user", password="cbs-pass"
+            )
+        mock_write.assert_called_once_with("192.0.2.1", True, user="cbs-user", password="cbs-pass")
 
     def test_lan_rcp_write_front_light_delegates_brightness(self) -> None:
         """Front-light write delegates the clamped brightness value."""
@@ -525,7 +662,7 @@ class TestLanHelpers:
             bosch_rcp_client, "lan_write_front_light", return_value=True
         ) as mock_write:
             bosch_camera._lan_rcp_write_front_light("192.0.2.1", 75)
-        mock_write.assert_called_once_with("192.0.2.1", 75)
+        mock_write.assert_called_once_with("192.0.2.1", 75, user="", password="")
 
     def test_lan_rcp_write_front_light_clamps_above_100(self) -> None:
         """Brightness > 100 is clamped to 100 before delegating."""
@@ -533,7 +670,7 @@ class TestLanHelpers:
             bosch_rcp_client, "lan_write_front_light", return_value=True
         ) as mock_write:
             bosch_camera._lan_rcp_write_front_light("192.0.2.1", 150)
-        mock_write.assert_called_once_with("192.0.2.1", 100)
+        mock_write.assert_called_once_with("192.0.2.1", 100, user="", password="")
 
     def test_lan_rcp_write_front_light_clamps_below_0(self) -> None:
         """Brightness < 0 is clamped to 0 before delegating."""
@@ -541,7 +678,17 @@ class TestLanHelpers:
             bosch_rcp_client, "lan_write_front_light", return_value=True
         ) as mock_write:
             bosch_camera._lan_rcp_write_front_light("192.0.2.1", -5)
-        mock_write.assert_called_once_with("192.0.2.1", 0)
+        mock_write.assert_called_once_with("192.0.2.1", 0, user="", password="")
+
+    def test_lan_rcp_write_front_light_forwards_creds(self) -> None:
+        """Digest creds (GitHub #49 fix) are forwarded through, not dropped."""
+        with patch.object(
+            bosch_rcp_client, "lan_write_front_light", return_value=True
+        ) as mock_write:
+            bosch_camera._lan_rcp_write_front_light(
+                "192.0.2.1", 75, user="cbs-user", password="cbs-pass"
+            )
+        mock_write.assert_called_once_with("192.0.2.1", 75, user="cbs-user", password="cbs-pass")
 
     def test_lan_rcp_write_privacy_returns_false_on_failure(self) -> None:
         """A False from the library wrapper propagates through unchanged."""
