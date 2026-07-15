@@ -1,5 +1,11 @@
 # Changelog
 
+## [v10.12.2] - 2026-07-15
+
+- **Docs:** documented 8 previously-undocumented CLI commands in README and refreshed stale sibling-repo version references (Integration Comparison table), including a correction to the MCP row's login method (shares the CLI's `bosch_config.json` rather than its own OAuth2 PKCE flow).
+- **Refactor:** migrated the RCP session/read/LOCAL-write protocol layer to the shared `bosch-shc-camera-client` PyPI library (mirrors the same extraction already done in the HA integration), replacing ~170 lines of duplicated protocol code in `bosch_camera.py` with a thin wrapper (`bosch_rcp_client.py`).
+- **Fix:** `cmd_privacy --local` and `cmd_light --local` were left over from the RCP migration writing with placeholder/empty Digest credentials instead of the real, actively-cycling credentials from the camera's own `PUT /connection` LOCAL response — both commands now thread real credentials through to the RCP write, matching the already-correct `cmd_snapshot_mjpeg --local` path. A real hang bug was found and fixed in the same change: both commands previously called `get_token()`/`make_session()` unconditionally before the per-camera loop, even when no camera had a configured LAN IP — now lazily initialized only once actually needed, so an empty/no-LAN-IP config no longer makes a real blocking network call. 1376 pytest / ruff / ruff format / mypy --strict / codespell clean.
+
 ## [v10.12.1] - 2026-07-14
 
 - **Perf/fix: pool HTTP session for live-view snapshot hot path.** `snap_from_proxy()` (shared by `cmd_snapshot`, `cmd_watch`'s motion-triggered auto-snapshot, and both `cmd_live`/frontend live-view poll loops) opened a fresh one-shot `requests.Session` on every call — a full TCP/TLS handshake per poll tick, as fast as every 1s in `cmd_live`'s default interval. New optional `session` parameter on `snap_from_proxy()`, threaded through the cloud PUT /connection and REMOTE snap.jpg GET, falling back to the existing cached session when omitted. A real thread-safety race found during bug-hunting was fixed in the same change: `cmd_live`'s MJPEG-fallback fetcher thread now confines its pooled session's creation/use/close entirely inside its own try/finally instead of sharing it across threads. 1366 pytest / ruff / mypy --strict / codespell clean.
