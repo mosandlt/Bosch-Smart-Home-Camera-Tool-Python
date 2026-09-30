@@ -66,6 +66,7 @@ Standalone Python CLI for Bosch Smart Home cameras (Eyes Außenkamera, 360 Innen
   - [Account](#account)
   - [Firmware Update](#firmware-update)
   - [Reset (Reboot / Factory Reset)](#reset-reboot--factory-reset)
+  - [Local Data Interface (Gen2, firmware 9.40.105+)](#local-data-interface-gen2-firmware-940105)
   - [Maintenance Status](#maintenance-status)
   - [RCP Protocol Reads](#rcp-protocol-reads)
   - [Diagnostics — MJPEG Snapshot, Scopes, RCP Version, Feature Flags](#diagnostics--mjpeg-snapshot-scopes-rcp-version-feature-flags)
@@ -687,6 +688,16 @@ python3 bosch_camera.py reset Outdoor --hard                  # factory reset �
 ```
 
 `--soft` reboots the camera (non-destructive, no re-pairing needed). `--hard` factory-resets it — the camera loses its Bosch account pairing and must be re-commissioned from scratch via the Bosch app; it always requires `--confirm` or an interactive `yes` before it fires. Uses `PUT /v11/video_inputs/{id}/soft_reset` / `/hard_reset`, the same endpoints as the app's Restart / Factory Reset actions. Note: cross-ported from the HA integration, where a live test against a real camera got HTTP 404 `sh:entity.notfound` for soft reset despite matching the app's request byte-for-byte — the endpoint may not be enabled server-side for every account/camera/firmware yet.
+
+### Local Data Interface (Gen2, firmware 9.40.105+)
+
+```bash
+python3 bosch_camera.py local-data                      # status for every camera
+python3 bosch_camera.py local-data set-password Indoor  # prompt for the password printed on the camera sticker
+python3 bosch_camera.py local-data unset-password Indoor
+```
+
+The status is read-only (active / inactive / unsupported) and only queried for Gen2 cameras on qualifying firmware; `info` shows it too. When the interface is active **and** a password is stored, `live`/`stream` read the camera directly over the LAN (`rtsps://localuser@<lan-ip>:9554/live`, video only, no audio track) and open no cloud stream session for that camera. The LAN IP comes from `lan-ips`/`local_ip` and must be a private IPv4 address; without one the command stops instead of falling back to the cloud. The camera closes the stream while privacy mode is on. The password is stored in `bosch_config.json` under `local_passwords`, is never logged, and is shown masked. The `frigate-endpoint` front-door does not serve such cameras. Without a password, or while the interface is inactive, behaviour is unchanged.
 
 ### Maintenance Status
 

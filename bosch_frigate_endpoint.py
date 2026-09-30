@@ -55,6 +55,7 @@ from typing import Any
 from urllib.parse import quote as _urlquote
 
 import requests
+import bosch_local_data_interface as ldi
 from bosch_shc_camera_client.auth_utils import (
     _build_digest_header,
     _parse_digest_challenge,
@@ -894,6 +895,19 @@ def _resolve_camera_target_sync(
 
     token = get_token(cfg)
     session = make_session(token)
+    cam_entry: dict[str, Any] = next(
+        (c for c in cfg.get("cameras", {}).values() if c.get("id") == cam_id), {}
+    )
+    state = ldi.query_state(
+        session, CLOUD_API, cam_id, cam_entry.get("model"), cam_entry.get("firmware")
+    )
+    if state == ldi.STATE_ACTIVE and ldi.get_password(cfg, cam_id):
+        # Local-only camera: never open a cloud session for it.
+        _LOGGER.warning(
+            "frigate front-door: %s uses the local data interface; no cloud session opened",
+            cam_id[:8],
+        )
+        return None
     url = f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection"
     try:
         resp = session.put(

@@ -82,6 +82,7 @@ from urllib.parse import urlparse, urlsplit, urlunsplit
 
 import bosch_rcp_client  # RCP session/read/LOCAL-write via bosch-shc-camera-client
 import bosch_frigate_endpoint  # always-on credential-free RTSP front-door for recorders
+import bosch_local_data_interface as ldi  # local data interface status + LAN-only stream
 from bosch_i18n import t, set_lang, detect_lang
 from bosch_maintenance import MaintenanceWindow, fetch_maintenance
 from bosch_tls import bosch_get  # TOFU fingerprint pinning for LAN cameras
@@ -1054,6 +1055,17 @@ def get_stream_url(
     cam_id = cam_info.get("id", "")
     if not cam_id:
         return None
+    if cfg is not None:
+        action, local_url, _msg = _ldi_plan(cfg, make_session(token), cam_info)
+        if action == ldi.ACTION_BLOCKED:
+            return None
+        if action == ldi.ACTION_LOCAL and local_url:
+            return {
+                "url": local_url,
+                "type": "LOCAL_DATA",
+                "user": ldi.USER,
+                "password": ldi.get_password(cfg, cam_id) or "",
+            }
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     # inst=1 → main (HQ) stream, inst=2 → sub-stream (lighter). Mirror the `hq`
     # flag into the stream selector so callers actually get the quality they ask
@@ -2077,6 +2089,25 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         print(f"\n── Live Stream: {name} ──────────────────────────────────────")
         if use_sub:
             print(f"  ℹ️   {t('cmd.live.using_sub_stream')}")
+        ldi_action, ldi_url, ldi_msg = _ldi_plan(cfg, session, cam_info)
+        if ldi_msg:
+            print(f"  ℹ️   {ldi_msg}" if ldi_action == ldi.ACTION_CLOUD else f"  ❌  {ldi_msg}")
+        if ldi_action == ldi.ACTION_BLOCKED:
+            continue
+        if ldi_action == ldi.ACTION_LOCAL and ldi_url:
+            print("  🏠  Local data interface (LAN only, video only, no audio)")
+            print("  ℹ️   The camera closes the stream while privacy mode is on.")
+            print(f"  📡  RTSPS URL: {redact_rtsp_creds(ldi_url)}")
+            if getattr(args, "webrtc", False):
+                _open_webrtc_stream(
+                    ldi_url,
+                    name,
+                    port=getattr(args, "webrtc_port", 1984),
+                    go2rtc_bin=getattr(args, "go2rtc_binary", "go2rtc"),
+                )
+            else:
+                _open_rtsps_stream(ldi_url, name, "", use_vlc=getattr(args, "vlc", False))
+            continue
         status = api_ping(session, cam_info["id"])
         if status == "ONLINE":
             icon = "🟢"
@@ -2437,33 +2468,45 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         # ── Streaming URLs (live connection) ──────────────────────────────
         # Uses inst=1 for main (max quality) and inst=2 for sub-stream.
         # Both share the same Bosch REMOTE session — sub costs nothing extra.
-        print("      Fetching stream URLs...")
-        try:
-            sr = session.put(
-                f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
-                json={"type": "REMOTE", "highQualityVideo": False},
-                headers={"Content-Type": "application/json"},
-                timeout=15,
-            )
-            if sr.status_code == 200:
-                sd: dict[str, Any] = sr.json()
-                conn_urls: list[str] = sd.get("urls", [])
-                if conn_urls:
-                    u = conn_urls[0]
-                    snap_url = sd.get("imageUrlScheme", "https://{url}/snap.jpg").replace(
-                        "{url}", u
-                    )
-                    main_url, sub_url = _build_stream_urls(cam, sd, inst=1)
-                    print(f"      Snap URL:      {snap_url}")
-                    # `info` deliberately surfaces the copyable stream URLs — it is
-                    # the only CLI path that outputs them, so keep creds UNREDACTED.
-                    print(t("cmd.info.stream_url_main", url=main_url))
-                    print(t("cmd.info.stream_url_sub", url=sub_url))
-                    print("      Stream:        H.264 1920×1080 30fps + AAC 16kHz (session ~60s)")
-            else:
-                print(f"      Stream URLs:   unavailable (HTTP {sr.status_code})")
-        except Exception as e:
-            print(f"      Stream URLs:   error — {e}")
+        ldi_cam = cfg.get("cameras", {}).get(name) or {}
+        ldi_state = ldi.query_state(session, CLOUD_API, cam_id, model, fw)
+        ldi_action, _ldi_url, _ldi_msg = ldi.plan_source(
+            cfg, cam_id, ldi_state, _resolve_lan_ip(cfg, cam_id, ldi_cam)
+        )
+        if ldi_state:
+            print(f"      Local data:    {ldi_state}")
+        if ldi_action != ldi.ACTION_CLOUD:
+            print("      Stream URLs:   local data interface only (use 'live'), no cloud session")
+        else:
+            print("      Fetching stream URLs...")
+            try:
+                sr = session.put(
+                    f"{CLOUD_API}/v11/video_inputs/{cam_id}/connection",
+                    json={"type": "REMOTE", "highQualityVideo": False},
+                    headers={"Content-Type": "application/json"},
+                    timeout=15,
+                )
+                if sr.status_code == 200:
+                    sd: dict[str, Any] = sr.json()
+                    conn_urls: list[str] = sd.get("urls", [])
+                    if conn_urls:
+                        u = conn_urls[0]
+                        snap_url = sd.get("imageUrlScheme", "https://{url}/snap.jpg").replace(
+                            "{url}", u
+                        )
+                        main_url, sub_url = _build_stream_urls(cam, sd, inst=1)
+                        print(f"      Snap URL:      {snap_url}")
+                        # `info` deliberately surfaces the copyable stream URLs — it is
+                        # the only CLI path that outputs them, so keep creds UNREDACTED.
+                        print(t("cmd.info.stream_url_main", url=main_url))
+                        print(t("cmd.info.stream_url_sub", url=sub_url))
+                        print(
+                            "      Stream:        H.264 1920×1080 30fps + AAC 16kHz (session ~60s)"
+                        )
+                else:
+                    print(f"      Stream URLs:   unavailable (HTTP {sr.status_code})")
+            except Exception as e:
+                print(f"      Stream URLs:   error — {e}")
 
         # ── Extra endpoints (--full only) ─────────────────────────────────
         if full:
@@ -2734,6 +2777,21 @@ def _resolve_lan_ip(cfg: dict[str, Any], cam_id: str, cam_info: dict[str, Any]) 
     return legacy or None
 
 
+def _ldi_plan(
+    cfg: dict[str, Any], session: requests.Session, cam_info: dict[str, Any]
+) -> tuple[str, str | None, str | None]:
+    """Stream-source decision for one camera: (action, local_url, message).
+
+    Queries the interface status for eligible cameras only; every other case
+    returns ``ldi.ACTION_CLOUD`` so the existing behaviour stays untouched.
+    """
+    cam_id = str(cam_info.get("id", ""))
+    state = ldi.query_state(
+        session, CLOUD_API, cam_id, cam_info.get("model"), cam_info.get("firmware")
+    )
+    return ldi.plan_source(cfg, cam_id, state, _resolve_lan_ip(cfg, cam_id, cam_info))
+
+
 def _hint_local_on_5xx(status_code: int, command_hint: str = "") -> None:
     """Print a one-line hint when a cloud call returns 5xx.
 
@@ -2800,6 +2858,63 @@ def cmd_ping(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     if as_json:
         print(_json_mod.dumps(results, indent=2))
+
+
+def cmd_local_data(cfg: dict[str, Any], args: argparse.Namespace) -> None:
+    """Local data interface: status and the per-camera stream password.
+
+    Usage:
+      python3 bosch_camera.py local-data [<cam>]                 # status (default)
+      python3 bosch_camera.py local-data set-password <cam>      # prompt, stored in config
+      python3 bosch_camera.py local-data unset-password <cam>
+    """
+    sub = getattr(args, "ldi_sub", None) or "status"
+    cam_arg = getattr(args, "ldi_cam", None)
+
+    if sub in ("set-password", "unset-password"):
+        if not cam_arg:
+            print(f"  Usage: local-data {sub} <camera>")
+            return
+        cams = resolve_cam(cfg, cam_arg)
+        if len(cams) != 1:
+            print("  ❌  Name exactly one camera.")
+            return
+        name, cam_info = next(iter(cams.items()))
+        cam_id = str(cam_info.get("id", ""))
+        passwords: dict[str, str] = cfg.setdefault(ldi.PASSWORDS_KEY, {})
+        if sub == "unset-password":
+            passwords.pop(cam_id, None)
+            save_config(cfg)
+            print(f"  Removed the local password for {name}.")
+            return
+        import getpass
+
+        entered = getpass.getpass(f"  Camera password (sticker) for {name}: ")
+        if not ldi.valid_password(entered):
+            print("  ❌  Invalid password (empty or contains control characters).")
+            return
+        passwords[cam_id] = entered
+        save_config(cfg)
+        print(f"  Stored the local password for {name} ({ldi.MASK}).")
+        return
+
+    cams = resolve_cam(cfg, cam_arg)
+    session: requests.Session | None = None
+    for name, cam_info in cams.items():
+        cam_id = str(cam_info.get("id", ""))
+        model, fw = cam_info.get("model"), cam_info.get("firmware")
+        print(f"  {name}")
+        if not ldi.eligible(model, fw):
+            print("      Local data interface: not applicable (Gen2 with firmware 9.40.105+ only)")
+            continue
+        if session is None:
+            session = make_session(get_token(cfg))
+        state = ldi.fetch_state(session, CLOUD_API, cam_id)
+        print(f"      Local data interface: {state or 'unknown'}")
+        pw = ldi.get_password(cfg, cam_id)
+        print(f"      Password:             {'set (' + ldi.MASK + ')' if pw else 'not set'}")
+        if state == ldi.STATE_ACTIVE and not pw:
+            print(f"      Set it with: local-data set-password {name}")
 
 
 def cmd_lan_ips(cfg: dict[str, Any], args: argparse.Namespace) -> None:
@@ -9723,6 +9838,36 @@ def main() -> None:
         help="LAN IP address (for set)",
     )
 
+    # ── local-data ─────────────────────────────────────────────────────────────
+    p_ldi = subparsers.add_parser(
+        "local-data",
+        help="Local data interface status and stream password",
+        description=(
+            "🏠  local-data — local data interface\n"
+            "\n"
+            "  Shows whether the interface is active (Gen2, firmware 9.40.105+) and\n"
+            "  stores the camera's sticker password. With the interface active and a\n"
+            "  password stored, 'live' reads the camera directly over the LAN (video\n"
+            "  only, no audio) and opens no cloud stream session.\n"
+            "\n"
+            "  Subcommands:\n"
+            "    status [<cam>]          show status (default)\n"
+            "    set-password <cam>      store the password (prompted, never echoed)\n"
+            "    unset-password <cam>    remove it\n"
+            "\n"
+            "  The password is stored in bosch_config.json under 'local_passwords'."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_ldi.add_argument(
+        "ldi_sub",
+        nargs="?",
+        metavar="status|set-password|unset-password",
+        choices=["status", "set-password", "unset-password"],
+        help="Subcommand",
+    )
+    p_ldi.add_argument("ldi_cam", nargs="?", metavar="<camera>", help="Camera name")
+
     # ── privacy ────────────────────────────────────────────────────────────────
     p_priv = subparsers.add_parser(
         "privacy",
@@ -11392,6 +11537,7 @@ def main() -> None:
         # "download" and "events" removed (Bosch request)
         "ping": cmd_ping,
         "lan-ips": cmd_lan_ips,
+        "local-data": cmd_local_data,
         "privacy": cmd_privacy,
         "light": cmd_light,
         "lighting": cmd_lighting,

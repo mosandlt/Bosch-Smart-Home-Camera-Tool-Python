@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [v10.13.0] - 2026-09-30
+
+- **New: local data interface (Gen2, firmware 9.40.105+).** `local-data` shows whether the interface is active (read-only status, also shown by `info`) and stores the per-camera sticker password (`local-data set-password <cam>`, kept under `local_passwords` in `bosch_config.json`, never logged, shown masked). With the interface active and a password stored, `live`/`stream` read the camera directly over the LAN (`rtsps://localuser@<lan-ip>:9554/live`, video only) and open no cloud stream session; a missing or non-private LAN IP stops the command instead of falling back to the cloud. `frigate-endpoint` does not open a cloud session for such cameras either. Behaviour is unchanged without a password or while the interface is inactive.
+
 ## [v10.12.5] - 2026-08-20
 
 - **New: `lighting` command — Gen2 lighting/LED tuning surface.** Cross-ported from the HA integration's `number.py`/`switch.py` (family-parity gap audit). Adds `--white-balance` (-1.0..1.0), `--lens-elevation` (0.5-5.0m), `--darkness-threshold` (0-100%), `--soft-light-fading` (on/off), `--top-led-brightness`/`--bottom-led-brightness` (0-100%), `--power-led-brightness` (0-4, Indoor II), `--motion-light-sensitivity` (1-5), and `--status-led` (on/off). Multiple flags may be combined in one call; with no flags, shows the current value of every endpoint. Distinct from the existing `light` command (manual on/off override via `lighting_override`).
