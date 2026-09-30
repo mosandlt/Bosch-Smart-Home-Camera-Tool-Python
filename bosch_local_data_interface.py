@@ -9,8 +9,9 @@ Only Gen2 cameras on firmware >= ``MIN_FIRMWARE`` are ever queried.
 
 When the interface is active and a password is stored for the camera, the
 stream is read straight from the camera over the LAN (RTSP over TLS, Digest
-auth). The camera serves video only (H.264, no audio track) and closes PLAY
-while privacy mode is on. The password is never logged or printed.
+auth) via ``/rtsp_tunnel``: ``inst=1`` high quality, ``inst=2`` low quality,
+``enableaudio=1`` adds AAC audio (16 kHz mono). The camera allows only a few
+(about 3) concurrent RTSP sessions and closes PLAY while privacy mode is on. The password is never logged or printed.
 """
 
 from __future__ import annotations
@@ -28,7 +29,10 @@ STATUS_ENDPOINT = "onvif_user"
 MIN_FIRMWARE: tuple[int, ...] = (9, 40, 105)
 USER = "localuser"
 PORT = 9554
-STREAM_PATH = "/live"
+STREAM_PATH = "/rtsp_tunnel"
+LINE = 1
+INST_HIGH = 1
+INST_LOW = 2
 PASSWORDS_KEY = "local_passwords"
 
 STATE_ACTIVE = "active"
@@ -138,13 +142,25 @@ def safe_lan_ip(ip: object) -> str | None:
     return str(addr)
 
 
-def build_url(ip: str, password: str) -> str:
-    """Credentialed local stream URL (caller must never log it unredacted)."""
-    return f"rtsps://{USER}:{quote(password, safe='')}@{ip}:{PORT}{STREAM_PATH}"
+def build_url(ip: str, password: str, quality: str = "high", audio: bool = True) -> str:
+    """Credentialed local stream URL (caller must never log it unredacted).
+
+    quality "low" selects inst=2, anything else inst=1 (high); audio adds AAC.
+    """
+    inst = INST_LOW if quality == "low" else INST_HIGH
+    return (
+        f"rtsps://{USER}:{quote(password, safe='')}@{ip}:{PORT}{STREAM_PATH}"
+        f"?line={LINE}&inst={inst}&enableaudio={1 if audio else 0}"
+    )
 
 
 def plan_source(
-    cfg: dict[str, Any], cam_id: str, state: str | None, lan_ip: object
+    cfg: dict[str, Any],
+    cam_id: str,
+    state: str | None,
+    lan_ip: object,
+    quality: str = "high",
+    audio: bool = True,
 ) -> tuple[str, str | None, str | None]:
     """Decide the stream source as (action, url, message).
 
@@ -171,4 +187,4 @@ def plan_source(
             "Local data interface is active but no valid LAN IP is known: "
             "set one with 'lan-ips set <camera> <ip>'. No cloud stream is opened.",
         )
-    return ACTION_LOCAL, build_url(ip, password), None
+    return ACTION_LOCAL, build_url(ip, password, quality, audio), None

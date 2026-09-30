@@ -2,9 +2,13 @@
 
 ## [Unreleased]
 
+## [v10.13.1] - 2026-09-30
+
+- **Fixed: local data interface stream now carries audio and supports both qualities.** `live`/`stream` used the path `/live`, which delivered video only in a single quality. They now use `rtsps://localuser@<lan-ip>:9554/rtsp_tunnel?line=1&inst=<1|2>&enableaudio=1` (`inst=1` high, `inst=2` low, following the quality selection; AAC audio included). The earlier v10.13.0 note describing the stream as video only was wrong.
+
 ## [v10.13.0] - 2026-09-30
 
-- **New: local data interface (Gen2, firmware 9.40.105+).** `local-data` shows whether the interface is active (read-only status, also shown by `info`) and stores the per-camera sticker password (`local-data set-password <cam>`, kept under `local_passwords` in `bosch_config.json`, never logged, shown masked). With the interface active and a password stored, `live`/`stream` read the camera directly over the LAN (`rtsps://localuser@<lan-ip>:9554/live`, video only) and open no cloud stream session; a missing or non-private LAN IP stops the command instead of falling back to the cloud. `frigate-endpoint` does not open a cloud session for such cameras either. Behaviour is unchanged without a password or while the interface is inactive.
+- **New: local data interface (Gen2, firmware 9.40.105+).** `local-data` shows whether the interface is active (read-only status, also shown by `info`) and stores the per-camera sticker password (`local-data set-password <cam>`, kept under `local_passwords` in `bosch_config.json`, never logged, shown masked). With the interface active and a password stored, `live`/`stream` read the camera directly over the LAN (`rtsps://localuser@<lan-ip>:9554/rtsp_tunnel`) and open no cloud stream session; a missing or non-private LAN IP stops the command instead of falling back to the cloud. `frigate-endpoint` does not open a cloud session for such cameras either. Behaviour is unchanged without a password or while the interface is inactive.
 
 ## [v10.12.5] - 2026-08-20
 

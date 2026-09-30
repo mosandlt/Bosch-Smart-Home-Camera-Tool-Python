@@ -186,14 +186,34 @@ class TestPasswordAndIp:
 
     def test_url_quotes_password(self) -> None:
         url = ldi.build_url(IP, "p@ss:w/rd#?")
-        assert url == "rtsps://localuser:p%40ss%3Aw%2Frd%23%3F@10.0.0.5:9554/live"
+        assert (
+            url
+            == "rtsps://localuser:p%40ss%3Aw%2Frd%23%3F@10.0.0.5:9554/rtsp_tunnel?line=1&inst=1&enableaudio=1"
+        )
+
+
+class TestUrlModes:
+    @pytest.mark.parametrize(
+        ("quality", "audio", "inst", "aud"),
+        [("high", True, 1, 1), ("high", False, 1, 0), ("low", True, 2, 1), ("low", False, 2, 0)],
+    )
+    def test_modes(self, quality: str, audio: bool, inst: int, aud: int) -> None:
+        url = ldi.build_url(IP, "pw", quality, audio)
+        assert url.endswith(f"/rtsp_tunnel?line=1&inst={inst}&enableaudio={aud}")
+
+    def test_garbage_quality_defaults_high(self) -> None:
+        assert "inst=1&" in ldi.build_url(IP, "pw", "bogus")
+
+    def test_plan_passes_quality_and_audio(self) -> None:
+        _, url, _ = ldi.plan_source(_cfg(), CAM_ID, "active", IP, "low", False)
+        assert url is not None and url.endswith("inst=2&enableaudio=0")
 
 
 class TestPlan:
     def test_active_with_password_is_local(self) -> None:
         action, url, msg = ldi.plan_source(_cfg(), CAM_ID, "active", IP)
         assert action == ldi.ACTION_LOCAL
-        assert url == f"rtsps://localuser:test-pw@{IP}:9554/live"
+        assert url == f"rtsps://localuser:test-pw@{IP}:9554/rtsp_tunnel?line=1&inst=1&enableaudio=1"
         assert msg is None
 
     def test_active_without_password_stays_cloud_with_hint(self) -> None:
@@ -256,10 +276,22 @@ class TestCmdLive:
         session.put.assert_not_called()
         self.ping.assert_not_called()
         play.assert_called_once()
-        assert play.call_args.args[0] == f"rtsps://localuser:test-pw@{IP}:9554/live"
+        assert (
+            play.call_args.args[0]
+            == f"rtsps://localuser:test-pw@{IP}:9554/rtsp_tunnel?line=1&inst=1&enableaudio=1"
+        )
         out = capsys.readouterr().out
         assert PW not in out
         assert "***:***@" in out
+
+    @pytest.mark.parametrize(
+        ("kw", "inst"),
+        [({}, 1), ({"quality": "high"}, 1), ({"quality": "low"}, 2), ({"sub": True}, 2)],
+    )
+    def test_quality_selects_inst(self, kw: dict[str, Any], inst: int) -> None:
+        _, play, _ = self._run(_cfg(), ACTIVE, **kw)
+        url = play.call_args.args[0]
+        assert f"/rtsp_tunnel?line=1&inst={inst}&enableaudio=1" in url
 
     def test_local_source_webrtc(self) -> None:
         session, play, webrtc = self._run(_cfg(), ACTIVE, webrtc=True)
@@ -306,13 +338,17 @@ class TestCmdLive:
 
 
 class TestGetStreamUrl:
-    def test_local_data_source(self) -> None:
+    @pytest.mark.parametrize(("hq", "inst"), [(True, 1), (False, 2)])
+    def test_local_data_source(self, hq: bool, inst: int) -> None:
         cfg = _cfg()
         with patch.object(bc, "make_session", return_value=_session(ACTIVE)):
-            res = bc.get_stream_url(cfg["cameras"][NAME], "tok", cfg=cfg)
+            res = bc.get_stream_url(cfg["cameras"][NAME], "tok", hq=hq, cfg=cfg)
         assert res is not None
         assert res["type"] == "LOCAL_DATA"
-        assert res["url"] == f"rtsps://localuser:test-pw@{IP}:9554/live"
+        assert (
+            res["url"]
+            == f"rtsps://localuser:test-pw@{IP}:9554/rtsp_tunnel?line=1&inst={inst}&enableaudio=1"
+        )
 
     def test_blocked_returns_none_without_cloud_put(self) -> None:
         cfg = _cfg(ip=None)

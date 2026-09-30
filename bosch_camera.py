@@ -1056,7 +1056,9 @@ def get_stream_url(
     if not cam_id:
         return None
     if cfg is not None:
-        action, local_url, _msg = _ldi_plan(cfg, make_session(token), cam_info)
+        action, local_url, _msg = _ldi_plan(
+            cfg, make_session(token), cam_info, quality="high" if hq else "low"
+        )
         if action == ldi.ACTION_BLOCKED:
             return None
         if action == ldi.ACTION_LOCAL and local_url:
@@ -2089,13 +2091,14 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         print(f"\n── Live Stream: {name} ──────────────────────────────────────")
         if use_sub:
             print(f"  ℹ️   {t('cmd.live.using_sub_stream')}")
-        ldi_action, ldi_url, ldi_msg = _ldi_plan(cfg, session, cam_info)
+        ldi_quality = "low" if (use_sub or quality == "low" or explicit_inst == 2) else "high"
+        ldi_action, ldi_url, ldi_msg = _ldi_plan(cfg, session, cam_info, quality=ldi_quality)
         if ldi_msg:
             print(f"  ℹ️   {ldi_msg}" if ldi_action == ldi.ACTION_CLOUD else f"  ❌  {ldi_msg}")
         if ldi_action == ldi.ACTION_BLOCKED:
             continue
         if ldi_action == ldi.ACTION_LOCAL and ldi_url:
-            print("  🏠  Local data interface (LAN only, video only, no audio)")
+            print(f"  🏠  Local data interface (LAN only, {ldi_quality} quality, with audio)")
             print("  ℹ️   The camera closes the stream while privacy mode is on.")
             print(f"  📡  RTSPS URL: {redact_rtsp_creds(ldi_url)}")
             if getattr(args, "webrtc", False):
@@ -2778,7 +2781,11 @@ def _resolve_lan_ip(cfg: dict[str, Any], cam_id: str, cam_info: dict[str, Any]) 
 
 
 def _ldi_plan(
-    cfg: dict[str, Any], session: requests.Session, cam_info: dict[str, Any]
+    cfg: dict[str, Any],
+    session: requests.Session,
+    cam_info: dict[str, Any],
+    quality: str = "high",
+    audio: bool = True,
 ) -> tuple[str, str | None, str | None]:
     """Stream-source decision for one camera: (action, local_url, message).
 
@@ -2789,7 +2796,9 @@ def _ldi_plan(
     state = ldi.query_state(
         session, CLOUD_API, cam_id, cam_info.get("model"), cam_info.get("firmware")
     )
-    return ldi.plan_source(cfg, cam_id, state, _resolve_lan_ip(cfg, cam_id, cam_info))
+    return ldi.plan_source(
+        cfg, cam_id, state, _resolve_lan_ip(cfg, cam_id, cam_info), quality, audio
+    )
 
 
 def _hint_local_on_5xx(status_code: int, command_hint: str = "") -> None:
