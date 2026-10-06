@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v10.13.2] - 2026-10-06
+
 - **Fixed: `lighting --white-balance` was silently ignored while the front light was off.** The camera discards a white balance write while the front light group's brightness is 0. The command now skips the write with a clear message when the light is off, restores brightness (100%) and switches the light on when it is on at brightness 0, and writes a nudged value first when switching from a colour to white at an unchanged value (the camera ignores that switch otherwise).
 
 ## [v10.13.1] - 2026-09-30
