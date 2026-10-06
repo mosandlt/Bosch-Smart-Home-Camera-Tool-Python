@@ -80,7 +80,7 @@ class TestWhiteBalance:
         sess.get.return_value = MagicMock(
             status_code=200,
             json=lambda: {
-                "frontLightSettings": {"brightness": 0, "color": None, "whiteBalance": 0.0},
+                "frontLightSettings": {"brightness": 60, "color": None, "whiteBalance": 0.0},
                 "topLedLightSettings": {"brightness": 0, "color": None, "whiteBalance": 0.0},
                 "bottomLedLightSettings": {"brightness": 0, "color": None, "whiteBalance": 0.0},
             },
@@ -105,6 +105,90 @@ class TestWhiteBalance:
         out = capsys.readouterr().out
         assert "not supported" in out.lower()
         sess.put.assert_not_called()
+
+
+def _wb_session(front: dict[str, Any], enabled: bool) -> MagicMock:
+    """Session whose GETs are routed by URL (lighting/switch vs lighting/switch/front)."""
+
+    def _get(url: str, **_: Any) -> MagicMock:
+        if url.endswith("lighting/switch/front"):
+            return MagicMock(status_code=200, json=lambda: {"enabled": enabled})
+        return MagicMock(
+            status_code=200,
+            json=lambda: {
+                "frontLightSettings": dict(front),
+                "topLedLightSettings": {"brightness": 0, "color": None, "whiteBalance": 0.0},
+                "bottomLedLightSettings": {"brightness": 0, "color": None, "whiteBalance": 0.0},
+            },
+        )
+
+    sess = MagicMock()
+    sess.get.side_effect = _get
+    sess.put.return_value = MagicMock(status_code=204)
+    return sess
+
+
+class TestWhiteBalanceBrightnessZero:
+    """Camera ignores whiteBalance while the group brightness is 0 (Gen2 FW 9.40.202).
+
+    Mirrors the HA integration fix (v17.2.3-beta-2).
+    """
+
+    def test_light_off_brightness_zero_no_write(self, capsys: Any) -> None:
+        cfg = _make_cfg()
+        sess = _wb_session({"brightness": 0, "color": None, "whiteBalance": 0.0}, False)
+        p1, p2, p3 = _patched(sess, cfg)
+        with p1, p2, p3:
+            cmd_lighting(cfg, _args(white_balance=0.5))
+        sess.put.assert_not_called()
+        assert "light is off" in capsys.readouterr().out.lower()
+
+    def test_light_on_brightness_zero_restores_and_enables(self, capsys: Any) -> None:
+        cfg = _make_cfg()
+        sess = _wb_session({"brightness": 0, "color": None, "whiteBalance": 0.0}, True)
+        p1, p2, p3 = _patched(sess, cfg)
+        with p1, p2, p3:
+            cmd_lighting(cfg, _args(white_balance=0.5))
+        calls = sess.put.call_args_list
+        assert calls[0].args[0].endswith("lighting/switch")
+        body = calls[0].kwargs["json"]
+        assert body["frontLightSettings"] == {
+            "brightness": 100,
+            "color": None,
+            "whiteBalance": 0.5,
+        }
+        assert calls[1].args[0].endswith("lighting/switch/front")
+        assert calls[1].kwargs["json"] == {"enabled": True}
+        assert "White balance set to 0.5" in capsys.readouterr().out
+
+    def test_light_on_with_brightness_writes_only_switch(self) -> None:
+        cfg = _make_cfg()
+        sess = _wb_session({"brightness": 40, "color": None, "whiteBalance": 0.0}, True)
+        p1, p2, p3 = _patched(sess, cfg)
+        with p1, p2, p3:
+            cmd_lighting(cfg, _args(white_balance=0.5))
+        assert len(sess.put.call_args_list) == 1
+        assert sess.put.call_args.kwargs["json"]["frontLightSettings"]["brightness"] == 40
+
+    def test_off_but_led_brightness_still_written_without_wb(self) -> None:
+        cfg = _make_cfg()
+        sess = _wb_session({"brightness": 0, "color": None, "whiteBalance": 0.0}, False)
+        p1, p2, p3 = _patched(sess, cfg)
+        with p1, p2, p3:
+            cmd_lighting(cfg, _args(white_balance=0.5, top_led_brightness=30))
+        body = sess.put.call_args.kwargs["json"]
+        assert body["topLedLightSettings"]["brightness"] == 30
+        assert body["frontLightSettings"]["whiteBalance"] == 0.0
+
+    def test_colour_to_white_same_value_nudges_first(self) -> None:
+        cfg = _make_cfg()
+        sess = _wb_session({"brightness": 50, "color": "#ff0000", "whiteBalance": 0.5}, True)
+        p1, p2, p3 = _patched(sess, cfg)
+        with p1, p2, p3:
+            cmd_lighting(cfg, _args(white_balance=0.5))
+        bodies = [c.kwargs["json"]["frontLightSettings"] for c in sess.put.call_args_list]
+        assert [b["whiteBalance"] for b in bodies] == [0.49, 0.5]
+        assert bodies[1]["color"] is None
 
 
 class TestLedBrightness:

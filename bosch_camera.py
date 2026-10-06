@@ -3512,20 +3512,65 @@ def cmd_lighting(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                     k: dict(cur.get(k) or _LIGHTING_SWITCH_DEFAULT)
                     for k in ("frontLightSettings", "topLedLightSettings", "bottomLedLightSettings")
                 }
+                wb_applied = wb
+                nudge_first = False
+                enable_front = False
                 if wb is not None:
-                    body["frontLightSettings"]["whiteBalance"] = round(wb, 2)
-                    body["frontLightSettings"]["color"] = None
+                    front = body["frontLightSettings"]
+                    f_status, f_sw = _get(cam_id, "lighting/switch/front")
+                    f_on = (
+                        f_status in (200, 201)
+                        and isinstance(f_sw, dict)
+                        and bool(f_sw.get("enabled"))
+                    )
+                    if (front.get("brightness") or 0) <= 0:
+                        # The camera silently ignores a whiteBalance write while the
+                        # group's brightness is 0 (verified live on Gen2 FW 9.40.202).
+                        if not f_on:
+                            wb_applied = None
+                            print(
+                                "  ⚠️  Front light is off (brightness 0) — the camera ignores "
+                                "white balance now. Turn the light on first "
+                                "(`light <cam> --on`), then set --white-balance."
+                            )
+                        else:
+                            front["brightness"] = 100
+                            enable_front = True
+                            print(
+                                "  ℹ️  Front light on with brightness 0 — restoring brightness 100%."
+                            )
+                    if wb_applied is not None:
+                        # colour→white switch is ignored when the target equals the
+                        # stored value: write a nudged value first, then the exact one.
+                        nudge_first = front.get("color") is not None and round(
+                            float(front.get("whiteBalance") or 0.0), 2
+                        ) == round(wb_applied, 2)
+                        front["whiteBalance"] = round(wb_applied, 2)
+                        front["color"] = None
                 if top_b is not None:
                     body["topLedLightSettings"]["brightness"] = round(top_b)
                 if bottom_b is not None:
                     body["bottomLedLightSettings"]["brightness"] = round(bottom_b)
-                pstatus = _put(cam_id, "lighting/switch", body)
+                if wb_applied is None and top_b is None and bottom_b is None:
+                    pstatus = 200
+                    skip_put = True
+                else:
+                    skip_put = False
+                    if nudge_first:
+                        exact = body["frontLightSettings"]["whiteBalance"]
+                        nudged = round(exact - 0.01 if exact > 0 else exact + 0.01, 2)
+                        nb = {k: dict(v) for k, v in body.items()}
+                        nb["frontLightSettings"]["whiteBalance"] = nudged
+                        _put(cam_id, "lighting/switch", nb)
+                    pstatus = _put(cam_id, "lighting/switch", body)
+                    if pstatus in (200, 201, 204) and enable_front:
+                        pstatus = _put(cam_id, "lighting/switch/front", {"enabled": True})
                 perr = _err(pstatus)
                 if perr:
                     print(f"  ❌  lighting/switch PUT failed: {perr}")
-                else:
-                    if wb is not None:
-                        print(f"  ✅  White balance set to {round(wb, 2)}")
+                elif not skip_put:
+                    if wb_applied is not None:
+                        print(f"  ✅  White balance set to {round(wb_applied, 2)}")
                     if top_b is not None:
                         print(f"  ✅  Top LED brightness set to {round(top_b)}%")
                     if bottom_b is not None:

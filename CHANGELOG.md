@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- **Fixed: `lighting --white-balance` was silently ignored while the front light was off.** The camera discards a white balance write while the front light group's brightness is 0. The command now skips the write with a clear message when the light is off, restores brightness (100%) and switches the light on when it is on at brightness 0, and writes a nudged value first when switching from a colour to white at an unchanged value (the camera ignores that switch otherwise).
+
 ## [v10.13.1] - 2026-09-30
 
 - **Fixed: local data interface stream now carries audio and supports both qualities.** `live`/`stream` used the path `/live`, which delivered video only in a single quality. They now use `rtsps://localuser@<lan-ip>:9554/rtsp_tunnel?line=1&inst=<1|2>&enableaudio=1` (`inst=1` high, `inst=2` low, following the quality selection; AAC audio included). The earlier v10.13.0 note describing the stream as video only was wrong.
