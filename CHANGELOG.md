@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [v10.13.3] - 2026-10-12
+
+- **Fixed: stale FCM device token is now logged out after a confirmed registration.** The device token is persisted and the registration `POST` is only repeated when the token changes or after a 7-day refresh; the previous token is deregistered once the new registration is confirmed.
+- **Fixed: a non-JSON HTTP 200 response no longer kills the `watch` daemon.** Such responses raise `InvalidCloudResponse`, and commands exit cleanly with an error message instead of a traceback.
+- **Fixed: light override `GET` failures now abort instead of overwriting with defaults.** Previously a failed read caused the write to replace the existing override settings with default values; 404/204 responses are still treated as an empty override.
+- **Fixed: token and credential material is no longer printed to stdout.**
+
 ## [v10.13.2] - 2026-10-06
 
 - **Fixed: `lighting --white-balance` was silently ignored while the front light was off.** The camera discards a white balance write while the front light group's brightness is 0. The command now skips the write with a clear message when the light is off, restores brightness (100%) and switches the light on when it is on at brightness 0, and writes a nudged value first when switching from a colour to white at an unchanged value (the camera ignores that switch otherwise).

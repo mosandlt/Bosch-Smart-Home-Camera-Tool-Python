@@ -5503,7 +5503,7 @@ def cmd_watch(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
         if push_mode == "polling":
             modes_to_try = []  # skip FCM, go straight to polling
-        else:  # auto: single Android attempt (Sebastian-OSS-sanctioned key handles all platforms)
+        else:  # auto: single Android attempt (the Android key handles all platforms)
             modes_to_try = [("Android", FCM_APP_ID, _get_fcm_api_key)]
 
         for label, app_id, key_fn in modes_to_try:
