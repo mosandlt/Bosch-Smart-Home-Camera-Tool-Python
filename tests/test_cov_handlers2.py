@@ -680,7 +680,7 @@ class TestCmdLight:
         assert "ALWAYS_OFF" in out or "schedule" in out.lower()
 
     def test_override_get_exception_in_action(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Override GET for action path raises → cur defaults to {}, action proceeds."""
+        """Override GET for action path raises → abort, no PUT with defaults."""
         cfg = _make_cfg()
         sess = _sess()
         exc_resp = MagicMock()
@@ -693,9 +693,7 @@ class TestCmdLight:
         ]
         sess.put.return_value = _resp(204)
         self._run(cfg, _args(action="on"), sess)
-        # Should still PUT with defaults when override fetch fails
-        body = sess.put.call_args[1]["json"]
-        assert body["frontLightOn"] is True
+        sess.put.assert_not_called()
 
     def test_schedule_always_on(self, capsys: pytest.CaptureFixture[str]) -> None:
         """scheduleStatus=ALWAYS_ON → icon 💡 shown in status."""

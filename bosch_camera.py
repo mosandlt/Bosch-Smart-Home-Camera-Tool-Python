@@ -596,6 +596,15 @@ def _request_with_retry(
     raise RuntimeError("unreachable: _request_with_retry loop exited without result")
 
 
+def _json_or_exit(r: requests.Response) -> Any:
+    """Parse a 200 response body; a non-JSON body exits cleanly, not with a traceback."""
+    try:
+        return r.json()
+    except ValueError:
+        print("  ❌  Bosch cloud returned an invalid (non-JSON) response — try again later.")
+        sys.exit(1)
+
+
 # ══════════════════════════ CAMERA DISCOVERY ══════════════════════════════════
 
 
@@ -615,7 +624,7 @@ def discover_cameras(cfg: dict[str, Any], session: requests.Session) -> dict[str
         return {}
     r.raise_for_status()
 
-    cam_list = r.json()
+    cam_list = _json_or_exit(r)
     cameras = {}
     for cam in cam_list:
         name = cam.get("title", cam.get("id", "unknown"))
@@ -712,7 +721,7 @@ def api_get_events(session: requests.Session, cam_id: str, limit: int = 400) -> 
     if r.status_code == 401:
         return []
     r.raise_for_status()
-    return cast(list[Any], r.json())
+    return cast(list[Any], _json_or_exit(r))
 
 
 def api_mark_events_read(session: requests.Session, event_ids: list[str]) -> bool:
@@ -2368,12 +2377,12 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     session = make_session(token)
     full = getattr(args, "full", False)
 
-    r = session.get(f"{CLOUD_API}/v11/video_inputs", timeout=15)
+    r = _request_with_retry(session, "GET", f"{CLOUD_API}/v11/video_inputs", timeout=15)
     if r.status_code == 401:
         print("  ❌  Token expired.")
         return
     r.raise_for_status()
-    cameras = r.json()
+    cameras = _json_or_exit(r)
 
     print("\n── Camera Info ──────────────────────────────────────────────")
     print(f"   Token age: {check_token_age(cfg)}")
@@ -3082,7 +3091,7 @@ def cmd_privacy(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         )
         r.raise_for_status()
     r.raise_for_status()
-    cam_list = {cam.get("id"): cam for cam in r.json()}
+    cam_list = {cam.get("id"): cam for cam in _json_or_exit(r)}
 
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
@@ -3271,7 +3280,7 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         )
         r.raise_for_status()
     r.raise_for_status()
-    cam_list = {cam.get("id"): cam for cam in r.json()}
+    cam_list = {cam.get("id"): cam for cam in _json_or_exit(r)}
 
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
@@ -3338,13 +3347,21 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             continue
 
         # Read current override state to preserve components
+        # Abort on failure: writing defaults would clobber the other components.
         try:
-            cur = session.get(
+            cur_r = session.get(
                 f"{CLOUD_API}/v11/video_inputs/{cam_id}/lighting_override",
                 timeout=10,
-            ).json()
-        except Exception:
-            cur = {}
+            )
+            if cur_r.status_code != 200:
+                print(f"  ❌  Cannot read current light state: HTTP {cur_r.status_code}")
+                continue
+            cur = cur_r.json()
+            if not isinstance(cur, dict):
+                raise ValueError("unexpected payload")
+        except Exception as e:
+            print(f"  ❌  Cannot read current light state ({type(e).__name__}) — aborting")
+            continue
         cur_front = cur.get("frontLightOn", False)
         cur_wall = cur.get("wallwasherOn", False)
         cur_int = cur.get("frontLightIntensity") or 1.0
@@ -3745,7 +3762,7 @@ def cmd_pan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         print("  ❌  Token expired.")
         return
     r.raise_for_status()
-    cam_list = {cam.get("id"): cam for cam in r.json()}
+    cam_list = {cam.get("id"): cam for cam in _json_or_exit(r)}
 
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
@@ -3863,7 +3880,7 @@ def cmd_notifications(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         print("  ❌  Token expired.")
         return
     r.raise_for_status()
-    cam_list = {cam.get("id"): cam for cam in r.json()}
+    cam_list = {cam.get("id"): cam for cam in _json_or_exit(r)}
 
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
@@ -3928,6 +3945,55 @@ def _get_fcm_api_key() -> str:
 
 
 FCM_CRED_KEY = "_fcm_credentials"  # key in bosch_config.json settings
+FCM_REGISTERED_KEY = "_fcm_registered_token"  # last token CBS confirmed
+FCM_REGISTERED_AT_KEY = "_fcm_registered_at"  # epoch of that confirmation
+FCM_REREGISTER_AFTER_SEC = 7 * 24 * 3600
+
+
+def _fcm_sync_registration(cfg: dict[str, Any], token: str, fcm_token: str) -> Optional[bool]:
+    """Register fcm_token with Bosch CBS only when new/stale; retire the old one.
+
+    Returns True when registered, False when CBS rejected it, None when the
+    POST was skipped (token unchanged and fresh). The previous token is logged
+    out only after the new registration is confirmed, best-effort and once —
+    a failed logout never raises and is not retried (device tokens expire
+    server-side anyway).
+    """
+    settings = cfg.setdefault("settings", {})
+    prev = settings.get(FCM_REGISTERED_KEY)
+    try:
+        age = time.time() - float(settings.get(FCM_REGISTERED_AT_KEY, 0))
+    except (TypeError, ValueError):
+        age = float("inf")
+    if prev == fcm_token and 0 <= age < FCM_REREGISTER_AFTER_SEC:
+        return None
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    r = requests_post_bosch_cloud(
+        f"{CLOUD_API}/v11/devices",
+        headers=headers,
+        json={"deviceType": "ANDROID", "deviceToken": fcm_token},
+        timeout=10,
+    )
+    if r.status_code not in (200, 201, 204):
+        print(f"  ⚠️   CBS registration: HTTP {r.status_code} — pushes may not arrive")
+        return False
+    print("  ✅  Registered with Bosch CBS!")
+    settings[FCM_REGISTERED_KEY] = fcm_token
+    settings[FCM_REGISTERED_AT_KEY] = time.time()
+    save_config(cfg)
+    if isinstance(prev, str) and prev and prev != fcm_token:
+        try:
+            lr = requests_put_bosch_cloud(
+                f"{CLOUD_API}/v11/registration/logout",
+                headers={"Authorization": f"Bearer {token}"},
+                params={"deviceToken": prev},
+                timeout=10,
+            )
+            if lr.status_code != 204:
+                print(f"  ⚠️   Old FCM token logout: HTTP {lr.status_code}")
+        except Exception as e:
+            print(f"  ⚠️   Old FCM token logout failed: {type(e).__name__}")
+    return True
 
 
 # ── firebase-messaging upstream bug fixes ────────────────────────────────────
@@ -4649,20 +4715,10 @@ def _watch_fcm_push(
         fcm_token = await client.checkin_or_register()
         print(f"  ✅  FCM Token: {fcm_token[:50]}...")
 
-        # Register with Bosch CBS — always ANDROID (Sebastian-OSS-sanctioned key covers both platforms)
-        device_type = "ANDROID"
-        print(f"  🔗  Registering with Bosch CBS (deviceType={device_type})...")
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        r = requests_post_bosch_cloud(
-            f"{CLOUD_API}/v11/devices",
-            headers=headers,
-            json={"deviceType": device_type, "deviceToken": fcm_token},
-            timeout=10,
-        )
-        if r.status_code in (200, 201, 204):
-            print("  ✅  Registered with Bosch CBS!")
-        else:
-            print(f"  ⚠️   CBS registration: HTTP {r.status_code} — pushes may not arrive")
+        # Register with Bosch CBS — always ANDROID (key covers both platforms)
+        print("  🔗  Registering with Bosch CBS (deviceType=ANDROID)...")
+        if _fcm_sync_registration(cfg, token, fcm_token) is None:
+            print("  ✅  Already registered with Bosch CBS")
 
         n_cams = len(cams)
         print(f"\n  📡  Listening for FCM pushes ({n_cams} camera(s), mode={mode_label})...")

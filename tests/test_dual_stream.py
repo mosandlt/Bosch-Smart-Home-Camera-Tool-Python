@@ -255,6 +255,9 @@ class TestCmdInfoOutputsBothUrls:
             patch.object(bc, "get_token", return_value="tok"),
             patch.object(bc, "make_session", return_value=mock_session),
             patch.object(bc, "check_token_age", return_value="0 min"),
+            patch.object(
+                bc, "_request_with_retry", side_effect=lambda s, m, u, **kw: s.get(u, **kw)
+            ),
         ):
             bc.cmd_info(cfg, args)
 
