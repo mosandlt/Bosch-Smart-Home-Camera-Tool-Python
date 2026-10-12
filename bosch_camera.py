@@ -2204,7 +2204,7 @@ def cmd_live(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             proxy_url = img_scheme.replace("{url}", urls[0]) if urls else ""
             print(f"  🌐  Snap URL:  {proxy_url or '(none)'}")
             if user:
-                print(f"  🔑  Creds: {user} / {password}")
+                print(f"  🔑  Creds: {user} / {'*' * 8 if password else '(none)'}")
 
             cfg["cameras"][name]["last_live"] = {
                 "type": result_type,
@@ -4738,7 +4738,7 @@ def _watch_fcm_push(
 
         print("\n  🔑  Registering with FCM...")
         fcm_token = await client.checkin_or_register()
-        print(f"  ✅  FCM Token: {fcm_token[:50]}...")
+        print(f"  ✅  FCM Token: registered ({len(fcm_token)} chars)")
 
         # Register with Bosch CBS — always ANDROID (key covers both platforms)
         print("  🔗  Registering with Bosch CBS (deviceType=ANDROID)...")
@@ -6995,7 +6995,7 @@ def cmd_token(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 
     print("\n── Token Status ─────────────────────────────────────────────")
     if token:
-        print(f"  Access token:  {token[:24]}...  ({len(token)} chars)")
+        print(f"  Access token:  present ({len(token)} chars)")
         try:
             parts = token.split(".")
             pad = len(parts[1]) % 4
@@ -7019,7 +7019,7 @@ def cmd_token(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         expired = True
 
     if refresh:
-        print(f"  Refresh token: {refresh[:20]}...  ({len(refresh)} chars) — auto-renewal ✅")
+        print(f"  Refresh token: present ({len(refresh)} chars) — auto-renewal ✅")
     else:
         print("  Refresh token: (none) — browser login needed")
 
