@@ -596,12 +596,29 @@ def _request_with_retry(
     raise RuntimeError("unreachable: _request_with_retry loop exited without result")
 
 
-def _json_or_exit(r: requests.Response) -> Any:
-    """Parse a 200 response body; a non-JSON body exits cleanly, not with a traceback."""
+class InvalidCloudResponse(ValueError):
+    """HTTP 200 with a non-JSON body (maintenance/proxy page)."""
+
+
+def _json_or_raise(r: requests.Response) -> Any:
+    """Parse a 200 body; library code raises so daemons survive a bad page."""
     try:
         return r.json()
-    except ValueError:
-        print("  ❌  Bosch cloud returned an invalid (non-JSON) response — try again later.")
+    except ValueError as e:
+        raise InvalidCloudResponse(
+            "Bosch cloud returned an invalid (non-JSON) response — try again later."
+        ) from e
+
+
+def _json_or_exit(r: requests.Response) -> Any:
+    """Parse a 200 body; a non-JSON body exits cleanly, not with a traceback.
+
+    Only for cmd_* top-level paths — never call from code a daemon loop uses.
+    """
+    try:
+        return _json_or_raise(r)
+    except InvalidCloudResponse as e:
+        print(f"  ❌  {e}")
         sys.exit(1)
 
 
@@ -624,7 +641,7 @@ def discover_cameras(cfg: dict[str, Any], session: requests.Session) -> dict[str
         return {}
     r.raise_for_status()
 
-    cam_list = _json_or_exit(r)
+    cam_list = _json_or_raise(r)
     cameras = {}
     for cam in cam_list:
         name = cam.get("title", cam.get("id", "unknown"))
@@ -721,7 +738,7 @@ def api_get_events(session: requests.Session, cam_id: str, limit: int = 400) -> 
     if r.status_code == 401:
         return []
     r.raise_for_status()
-    return cast(list[Any], _json_or_exit(r))
+    return cast(list[Any], _json_or_raise(r))
 
 
 def api_mark_events_read(session: requests.Session, event_ids: list[str]) -> bool:
@@ -3353,12 +3370,15 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 f"{CLOUD_API}/v11/video_inputs/{cam_id}/lighting_override",
                 timeout=10,
             )
-            if cur_r.status_code != 200:
+            if cur_r.status_code in (404, 204):
+                cur = {}  # no override state yet (fresh Gen2) — start from defaults
+            elif cur_r.status_code != 200:
                 print(f"  ❌  Cannot read current light state: HTTP {cur_r.status_code}")
                 continue
-            cur = cur_r.json()
-            if not isinstance(cur, dict):
-                raise ValueError("unexpected payload")
+            else:
+                cur = cur_r.json()
+                if not isinstance(cur, dict):
+                    raise ValueError("unexpected payload")
         except Exception as e:
             print(f"  ❌  Cannot read current light state ({type(e).__name__}) — aborting")
             continue
@@ -3980,7 +4000,12 @@ def _fcm_sync_registration(cfg: dict[str, Any], token: str, fcm_token: str) -> O
     print("  ✅  Registered with Bosch CBS!")
     settings[FCM_REGISTERED_KEY] = fcm_token
     settings[FCM_REGISTERED_AT_KEY] = time.time()
-    save_config(cfg)
+    try:
+        save_config(cfg)
+    except Exception as e:
+        # Registration is confirmed; a persistence failure must not end the watch
+        # or skip the old-token logout.
+        print(f"  ⚠️   Could not persist FCM registration state: {type(e).__name__}")
     if isinstance(prev, str) and prev and prev != fcm_token:
         try:
             lr = requests_put_bosch_cloud(
@@ -9573,6 +9598,14 @@ def cmd_notification_types(cfg: dict[str, Any], args: argparse.Namespace) -> Non
 
 
 def main() -> None:
+    try:
+        _main_impl()
+    except InvalidCloudResponse as e:
+        print(f"  ❌  {e}")
+        sys.exit(1)
+
+
+def _main_impl() -> None:
     # ── Top-level parser ───────────────────────────────────────────────────────
     parser = argparse.ArgumentParser(
         prog="bosch_camera.py",

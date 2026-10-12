@@ -77,6 +77,16 @@ class TestFcmSync:
             assert _fcm_sync_registration(cfg, "bearer", NEW) is True
         assert put.call_count == 1
 
+    def test_save_failure_still_logs_out_old_token(self) -> None:
+        cfg = _cfg(OLD)
+        with (
+            patch.object(bosch_camera, "requests_post_bosch_cloud", return_value=_resp(201)),
+            patch.object(bosch_camera, "requests_put_bosch_cloud", return_value=_resp(204)) as put,
+            patch.object(bosch_camera, "save_config", side_effect=OSError(f"disk {NEW}")),
+        ):
+            assert _fcm_sync_registration(cfg, "bearer", NEW) is True
+        put.assert_called_once()
+
     def test_unchanged_fresh_token_skips_post(self) -> None:
         cfg = _cfg(NEW, age=60)
         with (
@@ -133,17 +143,42 @@ class TestNonJson200:
         assert "non-JSON" in capsys.readouterr().out
         sess.request.assert_called_once()
 
-    def test_discover_cameras_exits_cleanly(self) -> None:
+    def test_discover_cameras_raises_not_exits(self) -> None:
         sess = MagicMock()
         sess.get.return_value = self._bad()
-        with pytest.raises(SystemExit):
+        with pytest.raises(bosch_camera.InvalidCloudResponse):
             bosch_camera.discover_cameras({"cameras": {}}, sess)
 
-    def test_api_get_events_exits_cleanly(self) -> None:
+    def test_api_get_events_raises_not_exits(self) -> None:
         sess = MagicMock()
         sess.request.return_value = self._bad()
-        with pytest.raises(SystemExit):
+        with pytest.raises(bosch_camera.InvalidCloudResponse) as ei:
             bosch_camera.api_get_events(sess, "AABBCCDD-0000-1111-2222-333344445555")
+        # Daemon loops catch Exception; this must not be a BaseException.
+        assert isinstance(ei.value, Exception)
+        assert not isinstance(ei.value, SystemExit)
+
+    def test_events_poll_pattern_survives(self) -> None:
+        sess = MagicMock()
+        sess.request.return_value = self._bad()
+        try:
+            events = bosch_camera.api_get_events(sess, "AABBCCDD-0000-1111-2222-333344445555")
+        except Exception:
+            events = []
+        assert events == []
+
+    def test_main_converts_to_clean_exit(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with (
+            patch.object(
+                bosch_camera,
+                "_main_impl",
+                side_effect=bosch_camera.InvalidCloudResponse("non-JSON page"),
+            ),
+            pytest.raises(SystemExit) as ei,
+        ):
+            bosch_camera.main()
+        assert ei.value.code == 1
+        assert "non-JSON" in capsys.readouterr().out
 
 
 CAM_ID = "AABBCCDD-0000-1111-2222-333344445555"
@@ -165,6 +200,7 @@ class TestCmdLightOverrideReadFailure:
             return feat
 
         sess.get.side_effect = _get
+        sess.put.return_value = MagicMock(status_code=200)
         cfg = {
             "account": {"bearer_token": "t"},
             "cameras": {"Cam": {"id": CAM_ID, "name": "Cam", "model": "HOME_Eyes_Outdoor"}},
@@ -187,3 +223,22 @@ class TestCmdLightOverrideReadFailure:
     def test_exception_aborts_without_put(self) -> None:
         sess = self._run(OSError("boom"))
         sess.put.assert_not_called()
+
+    def test_404_continues_with_empty_state(self) -> None:
+        sess = self._run(MagicMock(status_code=404))
+        sess.put.assert_called_once()
+        assert sess.put.call_args.kwargs["json"]["wallwasherOn"] is True
+
+    def test_204_continues_with_empty_state(self) -> None:
+        sess = self._run(MagicMock(status_code=204))
+        sess.put.assert_called_once()
+
+    def test_bad_json_aborts_without_put(self) -> None:
+        r = MagicMock(status_code=200)
+        r.json.side_effect = ValueError("bad")
+        self._run(r).put.assert_not_called()
+
+    def test_non_dict_aborts_without_put(self) -> None:
+        r = MagicMock(status_code=200)
+        r.json.return_value = []
+        self._run(r).put.assert_not_called()
