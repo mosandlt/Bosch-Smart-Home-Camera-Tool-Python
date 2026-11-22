@@ -647,7 +647,7 @@ def discover_cameras(cfg: dict[str, Any], session: requests.Session) -> dict[str
         name = cam.get("title", cam.get("id", "unknown"))
         # Keep existing local config if camera already known
         existing = cfg.get("cameras", {}).get(name, {})
-        feat = cam.get("featureSupport", {})
+        feat = cam.get("featureSupport") or {}
         cameras[name] = {
             "id": cam.get("id", ""),
             "name": name,
@@ -2463,13 +2463,13 @@ def cmd_info(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         if notif_parts:
             print(f"      Notif. types:  {', '.join(notif_parts)}")
 
-        fs = cam.get("featureSupport", {})
+        fs = cam.get("featureSupport") or {}
         print(
             f"      Features:      light={fs.get('light')}, sound={fs.get('sound')}, "
             f"viewAngle={fs.get('viewingAngle')}°, panLimit={fs.get('panLimit')}°"
         )
 
-        fst = cam.get("featureStatus", {})
+        fst = cam.get("featureStatus") or {}
         print(
             f"      Light sched.:  {fst.get('scheduleStatus')}  "
             f"on={fst.get('generalLightOnTime')} off={fst.get('generalLightOffTime')}"
@@ -3302,9 +3302,9 @@ def cmd_light(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
         cam_raw = cam_list.get(cam_id, {})
-        feat_support = cam_raw.get("featureSupport", {})
+        feat_support = cam_raw.get("featureSupport") or {}
         has_light = feat_support.get("light", False)
-        feat_status = cam_raw.get("featureStatus", {})
+        feat_status = cam_raw.get("featureStatus") or {}
 
         print(f"\n── Camera Light: {name} ─────────────────────────────────────")
         if not has_light:
@@ -3787,7 +3787,7 @@ def cmd_pan(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     for name, cam_info in cams.items():
         cam_id = cam_info["id"]
         cam_raw = cam_list.get(cam_id, {})
-        pan_limit = cam_raw.get("featureSupport", {}).get("panLimit", 0)
+        pan_limit = (cam_raw.get("featureSupport") or {}).get("panLimit", 0)
 
         print(f"\n── Pan Control: {name} ──────────────────────────────────────")
         if not pan_limit:
