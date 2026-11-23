@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [v10.13.4] - 2026-11-23
+
+- **Fixed: a camera whose cloud data has `null` for `featureSupport` or `featureStatus` no longer crashes the commands.** `null` is now read like a missing value.
+
 ## [v10.13.3] - 2026-10-12
 
 - **Fixed: stale FCM device token is now logged out after a confirmed registration.** The device token is persisted and the registration `POST` is only repeated when the token changes or after a 7-day refresh; the previous token is deregistered once the new registration is confirmed.
